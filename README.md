@@ -19,6 +19,10 @@ then follow **[docs/INSTALL.md](docs/INSTALL.md)**.
 > games with anti-cheat (EAC, BattlEye, Vanguard, Ricochet) or online multiplayer — you may get
 > banned. Use at your own risk.
 
+**Demo video:** [Optimizer FPS for DLSS5 in action (YouTube)](https://youtu.be/VZTYIaRnkpI)
+
+[![Demo video](https://img.youtube.com/vi/VZTYIaRnkpI/maxresdefault.jpg)](https://youtu.be/VZTYIaRnkpI)
+
 ![The Optimizer FPS tab in ReShade](docs/images/tab.png)
 
 ![The uncompressed center (cyan) and the compressed work region (orange) drawn over a frame](docs/images/zone-outlines.png)
