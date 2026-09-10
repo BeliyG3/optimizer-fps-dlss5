@@ -1,0 +1,33 @@
+/out/
+out/
+/.vs/
+*.user
+*.suo
+*.pdb
+*.ilk
+*.log
+!tools/installer-tests/fixtures/*.log
+*.tmp
+/tools/bench/run/
+*.obj
+
+# FetchContent scratch space (ReShade/Dear ImGui/Detours sources)
+external/
+
+# packaged candidates are built artefacts, not sources
+dist/
+
+# source models the bench scene references (outside the repo's scope)
+Models/
+tools/bench/assets/external/
+__pycache__/
+dist-release/
+
+# written by the release workflow when run locally
+release-notes.md
+
+# bench scenes are local assets (Blender scene + glTF export, ~70 MB); not distributed
+tools/bench/assets/*.glb
+tools/bench/assets/*.blend
+tools/bench/assets/*.blend1
+tools/bench/assets/*.bak

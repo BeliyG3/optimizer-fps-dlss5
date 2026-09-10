@@ -1,0 +1,108 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-x64",
+      "displayName": "Windows x64",
+      "description": "Full build: core, D3D adapters, shaders, tests and the ReShade add-on. Dependencies are fetched into external/.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/x64",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x64",
+        "PW_BUILD_TESTS": "ON",
+        "PW_BUILD_RESHADE_ADDON": "ON"
+      }
+    },
+    {
+      "name": "windows-x64-mt",
+      "displayName": "Windows x64 (static CRT)",
+      "description": "Ships the add-on with /MT so the game process pulls in no MSVCP140/VCRUNTIME140.",
+      "inherits": "windows-x64",
+      "binaryDir": "${sourceDir}/out/build/x64-mt",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x64-mt",
+        "PW_BUILD_TESTS": "OFF",
+        "PW_BUILD_RESHADE_ADDON": "ON",
+        "PW_STATIC_CRT": "ON"
+      }
+    },
+    {
+      "name": "windows-x86",
+      "displayName": "Windows x86",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/out/build/x86",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x86",
+        "PW_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-x86-remote",
+      "displayName": "Windows x86 (remote overlay add-on only)",
+      "description": "Only optimizer-fps-dlss5-remote.addon32: ReShade + Dear ImGui headers, no core, no Detours.",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "Win32",
+      "binaryDir": "${sourceDir}/out/build/x86-remote",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x86-remote",
+        "PW_BUILD_TESTS": "OFF",
+        "PW_BUILD_D3D_ADAPTERS": "OFF",
+        "PW_COMPILE_SHADERS": "OFF",
+        "PW_BUILD_RESHADE_ADDON": "OFF",
+        "PW_BUILD_RESHADE_REMOTE32": "ON",
+        "PW_STATIC_CRT": "ON"
+      }
+    },
+    {
+      "name": "core-only-x64",
+      "displayName": "Core only x64",
+      "inherits": "windows-x64",
+      "binaryDir": "${sourceDir}/out/build/core-x64",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/core-x64",
+        "PW_BUILD_D3D_ADAPTERS": "OFF",
+        "PW_BUILD_RESHADE_ADDON": "OFF",
+        "PW_COMPILE_SHADERS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-x64-release", "configurePreset": "windows-x64", "configuration": "Release" },
+    { "name": "windows-x64-mt-release", "configurePreset": "windows-x64-mt", "configuration": "Release" },
+    { "name": "windows-x86-release", "configurePreset": "windows-x86", "configuration": "Release" },
+    { "name": "core-only-x64-release", "configurePreset": "core-only-x64", "configuration": "Release" },
+    {
+      "name": "windows-x86-remote-release",
+      "configurePreset": "windows-x86-remote",
+      "configuration": "Release",
+      "targets": ["peripheral_warp_reshade_remote"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-x64-release",
+      "configurePreset": "windows-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-x86-release",
+      "configurePreset": "windows-x86",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "core-only-x64-release",
+      "configurePreset": "core-only-x64",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "generatedFor": "0.5.0",
+  "dependencies": [
+    {
+      "name": "ReShade Add-on SDK",
+      "version": "6.8.0",
+      "apiVersion": 20,
+      "source": "https://github.com/crosire/reshade",
+      "license": "BSD-3-Clause",
+      "licenseFile": "third_party/licenses/ReShade-LICENSE.md",
+      "licenseSha256": "F3ED0288FC3A23CBE3AE222A87E4C155A019889C96A16DC32A8411512ED68C5B",
+      "treeSha256": "12C5AC2D1082DD1F6B657C00E5663DB201A47BE80D7ADB58EB413FBE194BFF5C",
+      "treeHashInput": "UTF-8 lines: uppercase file SHA-256, two spaces, slash-normalized relative path, LF; sorted ordinally",
+      "fileCount": 8,
+      "files": {
+        "include/reshade.hpp": "D86932721CB77E47B996DA6BF3861B1A938A1BC843BE04D1E0C5DD09133B7F43",
+        "include/reshade_api.hpp": "DB19051EF285A7A1A3721F2711DE973BE8805D4CA39A38FBADADE7FD22100A17",
+        "include/reshade_api_device.hpp": "8492CB9A4352AB9A25140828226A411BE36C480C23D53D0FCC806A0515076212",
+        "include/reshade_api_format.hpp": "D5FCDF598A9ADBD18DB6CCD0D15133D08C4DFA4909EC8335F76EDAF735AE39CF",
+        "include/reshade_api_pipeline.hpp": "2C592013E46E72C62119C0652786AC21C6536A29A1BAD30973A6069D1D7F7351",
+        "include/reshade_api_resource.hpp": "CAE6D40CBD37E314E5CE5FC2CD22E77D7042892284212972BD986FFABB96363E",
+        "include/reshade_events.hpp": "5B1F8B8144589712584CC8F2E8B6CF7C2AFF05FC1C570B7867CFA1EE841296B7",
+        "include/reshade_overlay.hpp": "771F0CDDE2DACD21CFE04664E1AAADDAE43114A1ABB51BB63AF5645A88C217A6"
+      },
+      "hashNormalization": "Dependency source files are text: their SHA-256 is taken over the content normalized to CRLF line endings, so a git checkout and a GitHub source tarball hash alike. licenseSha256 is the byte-exact hash of the file in this repository.",
+      "tarball": "https://github.com/crosire/reshade/archive/refs/tags/v6.8.0.tar.gz",
+      "tarballSha256": "23197B1D0A032FB875C6C01A45405F1D5F3D753DDCFCF833BE2DF3675724E397"
+    },
+    {
+      "name": "Dear ImGui",
+      "version": "1.92.5-docking",
+      "source": "https://github.com/ocornut/imgui",
+      "license": "MIT",
+      "licenseFile": "third_party/licenses/Dear-ImGui-LICENSE.txt",
+      "licenseSha256": "C80C5789748D955C4A650562BAA0D750494E2C7128C2CA66AAEBE2E3C4E198BF",
+      "treeSha256": "E0ABA2F44982048335C8B787174C174CAD74BF9FE0F1AED3DE9839B3DB3147C9",
+      "treeHashInput": "UTF-8 lines: uppercase file SHA-256, two spaces, slash-normalized relative path, LF; sorted ordinally",
+      "fileCount": 3,
+      "files": {
+        "imgui.h": "2CA314D19C7E1EA85687A9C1E37079E0CC823939A551B3E6B2453FF0AF9FBF13",
+        "imconfig.h": "FB8E32B9AF9AA7DAD5EC5C5BC862537F5624CB39A814E6D3B36B4629A50B6599",
+        "LICENSE.txt": "55E058CC5899E6077A819AD1005D6D1F4528F65AE100795C9692F9FA6525A8CE"
+      },
+      "hashNormalization": "Dependency source files are text: their SHA-256 is taken over the content normalized to CRLF line endings, so a git checkout and a GitHub source tarball hash alike. licenseSha256 is the byte-exact hash of the file in this repository.",
+      "branch": "docking",
+      "tarball": "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5-docking.tar.gz",
+      "tarballSha256": "C816C20E8C75F3E15AE867350E79925502D1A6A85938BB1A73B8927E5F31F9CB"
+    },
+    {
+      "name": "Microsoft Detours",
+      "version": "main@adb07604",
+      "commit": "adb07604aa56508448b95bf037c2a6d0d3b6831a",
+      "source": "https://github.com/microsoft/Detours",
+      "tarball": "https://github.com/microsoft/Detours/archive/adb07604aa56508448b95bf037c2a6d0d3b6831a.tar.gz",
+      "tarballSha256": "42125D318F607CDED3332BB61BB7BEBAC8A58A57E46CED6DE573610F1D4CEDBA",
+      "license": "MIT",
+      "licenseFile": "third_party/licenses/Detours-LICENSE.md",
+      "licenseSha256": "B301808B732CFAA60DF2B4B422D78CD97D2A15058B207E7E33F0535BA5170DD6",
+      "treeSha256": "2C1366F75A87BBB332BFBA34A5E1B0C2ACE7D9182AE9981C211721B50DC40D87",
+      "treeHashInput": "UTF-8 lines: uppercase file SHA-256, two spaces, slash-normalized relative path, LF; sorted ordinally",
+      "hashNormalization": "Dependency source files are text: their SHA-256 is taken over the content normalized to CRLF line endings, so a git checkout and a GitHub source tarball hash alike. licenseSha256 is the byte-exact hash of the file in this repository.",
+      "note": "Only these five translation units are compiled into pw_detours; creatwth.cpp additionally #includes uimports.cpp from the same directory.",
+      "fileCount": 5,
+      "files": {
+        "src/creatwth.cpp": "8CDE51B30714B4B8A31DCFF57EA58878B6110BBCE5F44F5472C623597CC37275",
+        "src/detours.cpp": "E69DE5F30C58DE667763229932614A8F9E099FD953B083D5EE8A4EB744A410ED",
+        "src/disasm.cpp": "D6B3407793CD18788BF527CCC794152425EF1D8A9858D82134BEFCD1BFA07CE9",
+        "src/image.cpp": "9A6840164E87FB452A63845BCC9AC8BCAFC753827709D5D5D1C34C7E67B80E2F",
+        "src/modules.cpp": "7E39DB43C16D6C3E425D33D49C0842620D10BC963DA0C7B57F4565A0942D537B"
+      }
+    }
+  ]
+}

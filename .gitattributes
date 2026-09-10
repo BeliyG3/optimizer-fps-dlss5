@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.dxbc binary
+*.spv binary
+*.addon32 binary
+*.addon64 binary
+
+# internal development notes: kept in the private repo, not exported to the public one
+docs/dev/CHANGELOG_HISTORY.md export-ignore
+docs/dev/CLEANUP_26_26.md export-ignore
+docs/dev/ENV_FLAGS_DISPOSITION.md export-ignore

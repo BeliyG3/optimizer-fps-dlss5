@@ -1,0 +1,209 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (e.g. v26.26). Must already exist in the repo.'
+        required: true
+        type: string
+
+# Never two publishes of the same tag at once, and never cancel one half-way:
+# a cancelled run can leave a draft-less release with no assets attached.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish the release zip
+    runs-on: windows-2022   # VS 2022 image; windows-latest and windows-2025 now ship VS 2026 (the presets use the VS 17 generator)
+    timeout-minutes: 120
+
+    steps:
+      # For a tag push github.ref_name is the tag itself; for workflow_dispatch we check
+      # out the tag the operator named, so a dispatch can never publish a moving branch.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      # The single source of truth for the release number is cmake/Version.cmake. The tag
+      # only mirrors it, so a mismatch means someone tagged without bumping (or bumped
+      # without re-tagging) and the run stops before anything is published.
+      - name: Resolve tag and version, and check they agree
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = if ($env:INPUT_TAG) { $env:INPUT_TAG } else { '${{ github.ref_name }}' }
+          $text = Get-Content -LiteralPath 'cmake/Version.cmake' -Raw
+          $m = [regex]::Match($text, '(?im)^\s*set\s*\(\s*PW_RELEASE_VERSION\s+"([^"]+)"')
+          if (-not $m.Success) {
+            Write-Host '::error file=cmake/Version.cmake::PW_RELEASE_VERSION not found in cmake/Version.cmake.'
+            exit 1
+          }
+          $version = $m.Groups[1].Value
+          $expected = 'v' + $version
+          if ($tag -ne $expected) {
+            Write-Host ("::error::Tag/version mismatch: the tag is '$tag' but cmake/Version.cmake says PW_RELEASE_VERSION=""$version"", which requires the tag '$expected'. Fix cmake/Version.cmake (and CHANGELOG.md) and re-tag, or delete this tag and push the right one.")
+            exit 1
+          }
+          $prerelease = if ($tag -like '*-*') { 'true' } else { 'false' }
+          "tag=$tag"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$version"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Tag $tag matches PW_RELEASE_VERSION $version (prerelease: $prerelease)."
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+
+      # Same guard build.yml runs: the installer scripts that ship inside the zip must
+      # parse under stock Windows PowerShell 5.1.
+      - name: Lint PowerShell 5.1 compatibility
+        shell: powershell
+        run: |
+          .\tools\Lint-PowerShell51.ps1 -Path tools
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Same cache key as build.yml, so a release run reuses whatever the branch build
+      # already fetched into external/ (FETCHCONTENT_BASE_DIR, see cmake/Dependencies.cmake).
+      - name: Restore fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: external
+          key: pw-external-v1-${{ runner.os }}-${{ hashFiles('DEPENDENCIES.lock.json', 'cmake/Dependencies.cmake') }}
+          restore-keys: |
+            pw-external-v1-${{ runner.os }}-
+
+      # Gate: the full x64 build plus ctest. Nothing from this tree is shipped (the zip
+      # takes the /MT build), but a red test must stop the release.
+      - name: Configure windows-x64 (test gate)
+        shell: pwsh
+        run: cmake --preset windows-x64
+
+      - name: Build windows-x64 (test gate)
+        shell: pwsh
+        run: cmake --build --preset windows-x64-release --parallel
+
+      - name: Test windows-x64 (test gate)
+        shell: pwsh
+        run: ctest --preset windows-x64-release --output-on-failure
+
+      # Shipping configuration: /MT add-on, the NGX forwarder and the compiled shaders.
+      - name: Configure windows-x64-mt
+        shell: pwsh
+        run: cmake --preset windows-x64-mt
+
+      - name: Build windows-x64-mt
+        shell: pwsh
+        run: cmake --build --preset windows-x64-mt-release --parallel
+
+      # 32-bit remote overlay add-on (the tab hosted by the 64-bit process).
+      - name: Configure windows-x86-remote
+        shell: pwsh
+        run: cmake --preset windows-x86-remote
+
+      - name: Build windows-x86-remote
+        shell: pwsh
+        run: cmake --build --preset windows-x86-remote-release --parallel
+
+      - name: Verify fetched dependencies against DEPENDENCIES.lock.json
+        shell: pwsh
+        run: .\tools\Verify-Dependencies.ps1
+
+      # -Version is omitted on purpose: the script reads PW_RELEASE_VERSION out of
+      # cmake/Version.cmake exactly the way a local packaging run does, so CI and the
+      # maintainer's box cannot drift apart.
+      - name: Package the release zip
+        id: pack
+        shell: powershell
+        run: |
+          .\tools\Package-Release.ps1 -BuildDirX64 'out\build\x64-mt' -BuildDirX86 'out\build\x86-remote' -Out 'dist-release'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The .sha256 sidecar is written in the same "<hash>  <name>" shape as
+      # payload\files.sha256, so `sha256sum -c` and Get-FileHash both work on it.
+      - name: Hash the zip
+        id: hash
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          $zip = Join-Path 'dist-release' ('Optimizer-FPS-for-DLSS5-' + $version + '.zip')
+          if (-not (Test-Path -LiteralPath $zip)) {
+            Write-Host "::error::Package-Release.ps1 did not produce $zip."
+            exit 1
+          }
+          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $name = Split-Path -Leaf $zip
+          [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $zip) ($name + '.sha256')), "$sha  $name`n", (New-Object Text.UTF8Encoding($false)))
+          "zip=$zip"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha256=$sha"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "$name  SHA-256 $sha"
+
+      # Release notes = the "## <version>" section of CHANGELOG.md, verbatim, from the
+      # heading down to (not including) the next "## " heading. CMake already refuses to
+      # configure when that section is missing, so this cannot come up empty on a build
+      # that got this far - but it is checked anyway rather than publishing a blank body.
+      - name: Extract the changelog section
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          $lines = Get-Content -LiteralPath 'CHANGELOG.md'
+          $out = New-Object System.Collections.Generic.List[string]
+          $inSection = $false
+          foreach ($line in $lines) {
+            if ($inSection -and $line -match '^## ') { break }
+            if ($inSection) { $out.Add($line); continue }
+            if ($line -eq ('## ' + $version)) { $inSection = $true }
+          }
+          if (-not $inSection) {
+            Write-Host "::error file=CHANGELOG.md::CHANGELOG.md has no '## $version' section."
+            exit 1
+          }
+          $body = ($out -join "`n").Trim()
+          if (-not $body) {
+            Write-Host "::error file=CHANGELOG.md::The '## $version' section of CHANGELOG.md is empty."
+            exit 1
+          }
+          $zipName = Split-Path -Leaf '${{ steps.hash.outputs.zip }}'
+          $footer = @(
+            ''
+            '---'
+            ''
+            ('`' + $zipName + '` SHA-256: `' + '${{ steps.hash.outputs.sha256 }}' + '`')
+            ''
+            'Unzip, run `Install-OptimizerFPS.cmd "<path to the game .exe>"`, start the game, then `Verify-OptimizerFPS.ps1` to confirm. See `README.txt` in the zip.'
+          ) -join "`n"
+          [IO.File]::WriteAllText('release-notes.md', $body + "`n" + $footer + "`n", (New-Object Text.UTF8Encoding($false)))
+          Write-Host "release-notes.md: $($out.Count) changelog line(s)."
+
+      # Keep the exact zip that was published available even if the release is later
+      # deleted, so a yanked build can still be inspected.
+      - name: Upload the zip as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimizer-fps-for-dlss5-${{ steps.ver.outputs.version }}
+          if-no-files-found: error
+          path: |
+            dist-release/*.zip
+            dist-release/*.zip.sha256
+
+      - name: Publish the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Optimizer FPS for DLSS5 ${{ steps.ver.outputs.version }}
+          body_path: release-notes.md
+          prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
+          draft: false
+          fail_on_unmatched_files: true
+          files: |
+            dist-release/*.zip
+            dist-release/*.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

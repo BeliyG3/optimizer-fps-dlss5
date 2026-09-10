@@ -1,0 +1,8 @@
+23:37:02:900 [72896] | INFO  | Initializing crosire's ReShade version '6.8.0' (64-bit) built on '2026-01-14' loaded from ...\dxgi.dll into ...\pw_bench.exe ...
+23:37:02:961 [72896] | INFO  | Registered add-on "Optimizer FPS for DLSS5" v0.0.0.0 using ReShade API version 20.
+23:37:05:340 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: nvngx_dlssnr.dll feature 18 create/evaluate/release hooked (attempt 1)
+23:37:05:344 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: feature 18 created, native 3840x2160, model 3456x1944 (warped)
+23:37:05:558 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: first warped evaluate completed (model 3456x1944)
+23:37:05:730 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: temporal mode 3 running (full pass every 4 frames, model in the background)
+23:37:06:120 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: background pass 12 adopted (age 3 frames at adoption, average 2.4, 1.80 ms on the compute queue, 58.1 passes/s, forced waits 0, stalls 0, failures 0, queue cap wait 0.20 ms/frame over 240 frames)
+23:37:06:530 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: background pass 13 adopted (age 3 frames at adoption, average 2.4, 1.79 ms on the compute queue, 58.4 passes/s, forced waits 0, stalls 0, failures 0, queue cap wait 0.20 ms/frame over 244 frames)

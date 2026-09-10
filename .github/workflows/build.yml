@@ -1,0 +1,116 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per branch/PR; a new push cancels the previous one.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: windows-latest (MSVC 2022)
+    runs-on: windows-2022   # VS 2022 image; windows-latest and windows-2025 now ship VS 2026 (the presets use the VS 17 generator)
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Cheap, no build inputs needed: fails fast on PowerShell 7-only syntax in
+      # the scripts a user is expected to run on a stock Windows box (5.1).
+      # Run under Windows PowerShell so the parse check uses the 5.1 parser.
+      - name: Lint PowerShell 5.1 compatibility
+        shell: powershell
+        run: |
+          .\tools\Lint-PowerShell51.ps1 -Path tools
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # cmake/Dependencies.cmake points FETCHCONTENT_BASE_DIR at external/, so the
+      # ReShade / Dear ImGui / Detours tarballs, their unpacked trees and the
+      # FetchContent stamp files all live there. Bump the "v1" prefix to drop
+      # stale caches without touching the lock file.
+      - name: Restore fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: external
+          key: pw-external-v1-${{ runner.os }}-${{ hashFiles('DEPENDENCIES.lock.json', 'cmake/Dependencies.cmake') }}
+          restore-keys: |
+            pw-external-v1-${{ runner.os }}-
+
+      # No vcvars call anywhere in this workflow: the "Visual Studio 17 2022"
+      # generator locates the toolchain itself, and cmake/CompileShaders.cmake
+      # finds fxc.exe by globbing "C:/Program Files (x86)/Windows Kits/10/bin/*"
+      # rather than by reading %WindowsSdkVerBinPath% from a developer prompt.
+      - name: Configure windows-x64
+        shell: pwsh
+        run: cmake --preset windows-x64
+
+      - name: Build windows-x64
+        shell: pwsh
+        run: cmake --build --preset windows-x64-release --parallel
+
+      # 7 tests, including peripheral_warp_d3d11_smoke / peripheral_warp_d3d12_smoke,
+      # which create a WARP device and are expected to pass headless on the runner.
+      # If a runner image ever breaks them, do NOT silence the whole step: gate just
+      # those two with
+      #   ctest --preset windows-x64-release --output-on-failure -E "d3d1[12]_smoke"
+      # and open an issue, so the rest of the suite keeps failing loudly.
+      - name: Test windows-x64
+        shell: pwsh
+        run: ctest --preset windows-x64-release --output-on-failure
+
+      # Shipping configuration: /MT add-on plus the NGX forwarder.
+      - name: Configure windows-x64-mt
+        shell: pwsh
+        run: cmake --preset windows-x64-mt
+
+      - name: Build windows-x64-mt
+        shell: pwsh
+        run: cmake --build --preset windows-x64-mt-release --parallel
+
+      # 32-bit remote overlay add-on only (no core, no Detours, no shaders).
+      - name: Configure windows-x86-remote
+        shell: pwsh
+        run: cmake --preset windows-x86-remote
+
+      - name: Build windows-x86-remote
+        shell: pwsh
+        run: cmake --build --preset windows-x86-remote-release --parallel
+
+      # Win32 core + D3D adapters + shaders + tests (no ReShade add-on).
+      - name: Configure windows-x86
+        shell: pwsh
+        run: cmake --preset windows-x86
+
+      - name: Build windows-x86
+        shell: pwsh
+        run: cmake --build --preset windows-x86-release --parallel
+
+      - name: Test windows-x86
+        shell: pwsh
+        run: ctest --preset windows-x86-release --output-on-failure
+
+      # Runs after the first configure, which is what populates external\.
+      - name: Verify fetched dependencies against DEPENDENCIES.lock.json
+        shell: pwsh
+        run: .\tools\Verify-Dependencies.ps1
+
+      - name: Upload add-on artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimizer-fps-dlss5-windows
+          if-no-files-found: error
+          path: |
+            out/build/x64-mt/adapters/reshade/Release/optimizer-fps-dlss5.addon64
+            out/build/x64-mt/adapters/reshade/ngx_forwarder/Release/nvngx.dll_optimizerfps.dll
+            out/build/x64-mt/shaders/*.dxbc
+            out/build/x86-remote/adapters/reshade/Release/optimizer-fps-dlss5-remote.addon32

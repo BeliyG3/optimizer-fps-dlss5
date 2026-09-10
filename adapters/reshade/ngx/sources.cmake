@@ -1,0 +1,30 @@
+# Sources of the NGX hook (feature-18 interception, warp recording, temporal machine, background pass).
+# Paths are relative to adapters/reshade. Stage 27.D moves code from ngx_hook.cpp into this folder.
+set(PW_NGX_SOURCES
+    ngx/async_scheduler.cpp
+    ngx/async_scheduler.h
+    ngx/debug_readback.cpp
+    ngx/debug_readback.h
+    ngx/feature_state.cpp
+    ngx/feature_state.h
+    ngx/hook_common.h
+    ngx/hook_context.cpp
+    ngx/hook_context.h
+    ngx/hook_dispatch.cpp
+    ngx/hook_dispatch.h
+    ngx/host_depth_state.cpp
+    ngx/host_depth_state.h
+    ngx/ngx_common.cpp
+    ngx/ngx_common.h
+    ngx/ngx_hook_api.cpp
+    ngx/ngx_params.cpp
+    ngx/ngx_params.h
+    ngx/ngx_temporal.cpp
+    ngx/ngx_temporal.h
+    ngx/temporal_controller.cpp
+    ngx/temporal_controller.h
+    ngx/timing.cpp
+    ngx/timing.h
+    ngx/warp_recorder.cpp
+    ngx/warp_recorder.h
+    ngx_hook.h)

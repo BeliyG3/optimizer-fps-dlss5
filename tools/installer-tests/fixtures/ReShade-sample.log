@@ -1,0 +1,10 @@
+23:37:02:900 [72896] | INFO  | Initializing crosire's ReShade version '6.8.0' (64-bit) built on '2026-01-14' loaded from ...\dxgi.dll into ...\pw_bench.exe ...
+23:37:02:946 [72896] | INFO  | Registered add-on "DLSS 5 DX11 Bridge 1.0.20" v1.0.20.0 using ReShade API version 18.
+23:37:02:961 [72896] | INFO  | Registered add-on "Optimizer FPS for DLSS5" v0.0.0.0 using ReShade API version 20.
+23:37:02:964 [72896] | INFO  | Registered add-on "DLSS 5 Neural Rendering" v0.2026.828.517 using ReShade API version 18.
+23:37:05:328 [72896] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: feature 18 created via the signed snippet after DLSS/DLAA for NR input 3840x2160 -> output 3840x2160 with guides 3840x2160
+23:37:05:340 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: nvngx_dlssnr.dll feature 18 create/evaluate/release hooked (attempt 1)
+23:37:05:356 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: feature 18 adopted (created before the hooks were installed), native 3840x2160
+23:37:05:558 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: first warped evaluate completed (model 3456x1944)
+23:37:05:730 [72896] | INFO  | [Optimizer FPS for DLSS5] Optimizer FPS NGX hook: temporal mode 1 running (full pass every 4 frames)
+23:37:06:530 [72896] | INFO  | [DLSS 5 Neural Rendering] DLSS5 Generic: inline feature 18 evaluation succeeded (count=60, NR input 3840x2160 (guides 2258x1270), output 3840x2160 [native])
