@@ -152,6 +152,9 @@ Bugs: open a GitHub Issue and attach `ReShade.log` and the output of
 `Verify-OptimizerFPS.ps1 -Json`. To disable the add-on, uncheck it in ReShade's **Add-ons** tab (or
 remove the files) and **restart the game**; the hooks stay in place until the process exits.
 
+Development notes, and a way to support the work if the add-on is useful to you:
+[patreon.com/YGLabs](https://www.patreon.com/c/YGLabs).
+
 ## Notices and license
 
 This project is **not affiliated with NVIDIA, ReShade, or RenoDX**. DLSS, NGX, and GeForce are
