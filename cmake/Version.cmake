@@ -11,4 +11,4 @@
 # in DESCRIPTION and in the overlay banner instead.
 
 set(PW_SDK_VERSION "0.5.0")
-set(PW_RELEASE_VERSION "26.26")
+set(PW_RELEASE_VERSION "26.27")

@@ -137,7 +137,11 @@ static int VerdictFromLogs()
 
 using Microsoft::WRL::ComPtr;
 
-static const UINT kRenderW = 2258, kRenderH = 1270, kOutW = 3840, kOutH = 2160;
+static const UINT kOutW = 3840, kOutH = 2160;
+// --dlaa sets the render size to the output size (DLAA): the upscaler guides then match the colour, as in
+// games that run DLSS at native resolution, which the external frame-generation export requires.
+static UINT kRenderW = 2258, kRenderH = 1270;
+static bool gDlaa = false;
 
 using PFN_Init = NVSDK_NGX_Result(NVSDK_CONV *)(unsigned long long, const wchar_t *, ID3D11Device *, const NVSDK_NGX_FeatureCommonInfo *, NVSDK_NGX_Version);
 using PFN_Alloc = NVSDK_NGX_Result(NVSDK_CONV *)(NVSDK_NGX_Parameter **);
@@ -689,6 +693,8 @@ int main(int argc, char **argv)
     bool movingBoxes = false;
     bool frametime = false; // --frametime: statistics of the intervals between Present calls
     double fpsCap = 0.0;    // --fps-cap N: CPU-paced frame budget (emulates a game with idle GPU time)
+    double fpsJitterMs = 0.0; // --fps-jitter MS: adds a uniform random 0..MS ms to each capped frame (uneven game pacing)
+    bool fullscreenWindow = false; // --fullscreen: borderless popup covering the primary monitor (independent flip for an external presenter)
     const char *gltfPath = nullptr; // --gltf <file.glb>: replaces the procedural scene (camera from the file unless --camera is given)
     bool cameraGiven = false;
     float faceYaw = 180.0f, faceRadius = 0.0f, faceSweep = 25.0f; // --camera face (180: in front of a character that faces glTF -Z); radius 0 = auto (see kFaceFill)
@@ -735,6 +741,9 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--gltf") == 0 && i + 1 < argc) gltfPath = argv[++i];
         else if (strcmp(argv[i], "--frametime") == 0) frametime = true;
         else if (strcmp(argv[i], "--fps-cap") == 0 && i + 1 < argc) fpsCap = atof(argv[++i]);
+        else if (strcmp(argv[i], "--fps-jitter") == 0 && i + 1 < argc) fpsJitterMs = atof(argv[++i]);
+        else if (strcmp(argv[i], "--fullscreen") == 0) fullscreenWindow = true;
+        else if (strcmp(argv[i], "--dlaa") == 0) { gDlaa = true; kRenderW = kOutW; kRenderH = kOutH; }
         else if (strcmp(argv[i], "--yaw-speed") == 0 && i + 1 < argc) g_yawSpeed = (float) atof(argv[++i]);
         else if (strcmp(argv[i], "--moving-boxes") == 0) movingBoxes = true;
         else if (strcmp(argv[i], "--reference") == 0) reference = true;
@@ -821,7 +830,9 @@ int main(int argc, char **argv)
     }
     WNDCLASSW wc{}; wc.lpfnWndProc = WndProc; wc.hInstance = GetModuleHandleW(nullptr); wc.lpszClassName = L"pw_bench";
     RegisterClassW(&wc);
-    HWND hwnd = CreateWindowW(L"pw_bench", L"PeripheralWarp bench", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 40, 40, 1600, 900, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = fullscreenWindow
+        ? CreateWindowW(L"pw_bench", L"PeripheralWarp bench", WS_POPUP | WS_VISIBLE, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr)
+        : CreateWindowW(L"pw_bench", L"PeripheralWarp bench", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 40, 40, 1600, 900, nullptr, nullptr, wc.hInstance, nullptr);
 
     ComPtr<ID3D11Device> dev; ComPtr<ID3D11DeviceContext> ctx; ComPtr<IDXGISwapChain> sc;
     DXGI_SWAP_CHAIN_DESC sd{};
@@ -1269,7 +1280,7 @@ int main(int argc, char **argv)
         params->Set(NVSDK_NGX_Parameter_Height, kRenderH);
         params->Set(NVSDK_NGX_Parameter_OutWidth, kOutW);
         params->Set(NVSDK_NGX_Parameter_OutHeight, kOutH);
-        params->Set(NVSDK_NGX_Parameter_PerfQualityValue, (int) NVSDK_NGX_PerfQuality_Value_Balanced);
+        params->Set(NVSDK_NGX_Parameter_PerfQualityValue, (int) (gDlaa ? NVSDK_NGX_PerfQuality_Value_DLAA : NVSDK_NGX_PerfQuality_Value_Balanced));
         params->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, (int) (NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_DepthInverted | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure));
         params->Set(NVSDK_NGX_Parameter_CreationNodeMask, 1u);
         params->Set(NVSDK_NGX_Parameter_VisibilityNodeMask, 1u);
@@ -1292,7 +1303,7 @@ int main(int argc, char **argv)
         HMODULE addon = GetModuleHandleW(L"optimizer-fps-dlss5.addon64");
         setTemporal = addon ? (PFN_SetTemporal) GetProcAddress(addon, "PeripheralWarpSetTemporalV1") : nullptr;
         std::printf("[info] temporal mode %d every %d: export %s\n", temporalMode, temporalEvery, setTemporal ? "found" : "MISSING");
-        if (!setTemporal) return 1;
+        if (!setTemporal) std::printf("[warn] add-on not loaded: the temporal mode is not applied (renodx-only run)\n");
     }
     static const unsigned int kCycle[] = {0, 1, 2};
     int cycleIndex = 0;
@@ -1663,7 +1674,8 @@ int main(int argc, char **argv)
         if (fpsCap > 0.0) {
             static LARGE_INTEGER capStart{}; static LARGE_INTEGER capFreq{};
             if (capFreq.QuadPart == 0) QueryPerformanceFrequency(&capFreq);
-            const long long budget = (long long) (capFreq.QuadPart / fpsCap);
+            long long budget = (long long) (capFreq.QuadPart / fpsCap);
+            if (fpsJitterMs > 0.0) budget += (long long) (capFreq.QuadPart * (fpsJitterMs * (rand() / (double) RAND_MAX)) / 1000.0);
             if (capStart.QuadPart != 0) { LARGE_INTEGER now; do { QueryPerformanceCounter(&now); } while (now.QuadPart - capStart.QuadPart < budget); capStart.QuadPart += budget; if (now.QuadPart - capStart.QuadPart > budget) capStart = now; }
             else QueryPerformanceCounter(&capStart);
         }

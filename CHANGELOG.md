@@ -1,5 +1,27 @@
 # Changelog
 
+## 26.27
+_2026-09-13_ — compatibility hotfix for renodx-dlss5 5.2.1.
+
+**Fixed**
+
+* renodx-dlss5 5.2.1 (2026-09-11) creates the Neural Rendering model at the render resolution first,
+  commits the working resolution after a settle period and re-creates the model with worksets while the
+  previous one is still alive. Models that belong to another consumer ("foreign" feature-18 instances)
+  were passed to the original NGX entry points; the second creation failed with `0xBAD00002` and the
+  consumer fell back to "install a Neural Rendering Consumer". Foreign models now go through the
+  add-on's own forwarder, like the models the add-on manages itself. Verified on the bench with
+  renodx-dlss5 4.55, 4.70 and 5.2.1.
+* A per-frame `host resources` log line: the input signature was compared before it was cleared.
+
+**Bench (`toolsench`, not shipped)**
+
+* `--dlaa` (render size = output size, guides at native resolution), `--fps-jitter MS`, `--fullscreen`;
+  the bench warns instead of exiting when the add-on is not loaded; a broken string literal that kept
+  `pw_bench.cpp` from compiling is fixed.
+
+No behaviour change for games where it already worked; settings, files and the installer are the same as 26.26.
+
 ## 26.26
 _2026-09-10_ — first public release.
 

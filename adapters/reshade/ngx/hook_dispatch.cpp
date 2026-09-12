@@ -86,10 +86,13 @@ int __cdecl HookCreate(ID3D12GraphicsCommandList *cmd, int featureId, void *para
     // inline NR) gets a plain pass-through feature. Two warped features fed by two different hosts crashed inside
     // D3D12 a second after the first warped frame; one warped feature per process is the safe default.
     if (warp && !Ctx().features.empty()) {
-        Log(true, "Optimizer FPS NGX hook: another NR feature is alive in this process; this one is left to its host untouched (created through the original entry point) until it is the only one left");
-        const int r = Ctx().realCreate(cmd, featureId, params, outHandle);
+        // 26.27: the untouched call still has to go through the forwarder. The snippet checks the caller's module
+        // name, and a call made from this add-on (the Detours trampoline) fails with 0xBAD00002; renodx 5.2.1 keeps
+        // several features alive (worksets), so this path is hit in every game, not only with two consumers.
+        Log(true, "Optimizer FPS NGX hook: another NR feature is alive in this process; this one is left to its host untouched (forwarded as-is) until it is the only one left");
+        const int r = CallCreate(cmd, featureId, params, outHandle);
         if (r == kNgxSuccess && *outHandle != nullptr) Ctx().foreign.insert(*outHandle);
-        else Log(true, "Optimizer FPS NGX hook: the second consumer's feature 18 create returned %d through the original entry point", r);
+        else Log(true, "Optimizer FPS NGX hook: the second consumer's feature 18 create returned %d (forwarded as-is)", r);
         Ctx().status.lastNgxResult = r;
         return r;
     }
@@ -121,7 +124,7 @@ int __cdecl HookCreate(ID3D12GraphicsCommandList *cmd, int featureId, void *para
 int __cdecl HookRelease(void *handle)
 {
     std::lock_guard<std::mutex> lock(Ctx().mutex);
-    if (Ctx().foreign.erase(handle) != 0) return Ctx().realRelease(handle);
+    if (Ctx().foreign.erase(handle) != 0) return CallRelease(handle);
     auto it = Ctx().features.find(handle);
     if (it == Ctx().features.end()) return CallRelease(handle);
     FeatureState &st = *it->second;
@@ -254,7 +257,7 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
             Log(false, "Optimizer FPS NGX hook: the other NR feature is gone; the second consumer's feature is adopted now");
         } else {
             lock.unlock();
-            return Ctx().realEvaluate(cmd, handle, params, callback);
+            return CallEvaluate(cmd, handle, params, callback);
         }
     }
     if (Ctx().safeMode && it == Ctx().features.end()) {
@@ -441,6 +444,7 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
     const std::uint32_t packSet = FeatureState::kPackSlots * 2 + (st.nextPackSet++ % FeatureState::kPackSetRing);
     pw::AdapterStatus status = st.adapter->WriteSourceSetV2(packSet, sources, input);
     FeatureState::InputSignature sig;
+    std::memset(&sig, 0, sizeof(sig)); // padding bytes take part in the memcmp below; leave none indeterminate
     sig.colorFormat = colorDesc.Format; sig.depthFormat = depthDesc.Format; sig.motionFormat = motionDesc.Format; sig.outputFormat = outputDesc.Format;
     sig.motionW = (std::uint32_t) motionDesc.Width; sig.motionH = motionDesc.Height;
     sig.colorRect = colorRect; sig.depthRect = depthRect; sig.motionRect = motionRect;
