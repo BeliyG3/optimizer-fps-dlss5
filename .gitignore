@@ -9,6 +9,7 @@ out/
 !tools/installer-tests/fixtures/*.log
 *.tmp
 /tools/bench/run/
+/tools/bench12/run_addon/
 *.obj
 
 # FetchContent scratch space (ReShade/Dear ImGui/Detours sources)

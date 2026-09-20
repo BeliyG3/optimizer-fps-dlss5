@@ -481,7 +481,8 @@ if (Test-FileHere $manifestPath) {
     $manifestSource = 'payload'
     if (-not $script:Result.Version) {
         $vf = Join-Safe $Payload 'VERSION.txt'
-        if (Test-FileHere $vf) { $script:Result.Version = (Read-TextSafe $vf).Trim() }
+        $vt = Read-TextSafe $vf
+        if ($vt) { $script:Result.Version = $vt.Trim() }
     }
 }
 elseif ($receipt) { $manifestSource = 'receipt' }

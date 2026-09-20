@@ -25,12 +25,19 @@ are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 The forwarder exists because the NR snippet checks its caller: it accepts calls only from a module
 whose file name contains `nvngx.dll`. It is ours; nothing of NVIDIA's is redistributed.
 
-The shader set is ten `.dxbc` blobs: one vertex shader, `fullscreen_vs`, and nine pixel shaders —
-`pack_ps`, `unpack_ps`, `preview_ps`, `outline_ps` and the five temporal passes
-`temporal_residual_ps`, `temporal_downsample_ps`, `temporal_accumulate_ps`, `temporal_reproject_ps`,
-`temporal_compose_ps` (see `cmake/CompileShaders.cmake`). Pack and Unpack are required; the rest
-degrade gracefully (a missing `temporal_*.dxbc` disables the temporal modes with a reason in the
-tab). "Beside the add-on" honors `[ADDON] AddonPath` in `ReShade.ini`.
+The shader set is twenty `.dxbc` blobs: one vertex shader (`fullscreen_vs`), the four pixel shaders
+`pack_ps`, `unpack_ps`, `preview_ps` and `outline_ps`, and the fifteen temporal passes, which are
+compute — `temporal_<Name>_cs.dxbc`, the names listed in `shaders/temporal_passes.def`. Pack and
+Unpack are required; of the temporal passes, Residual, Accumulate, Reproject and Expect are required
+for the temporal modes and the rest degrade gracefully — a missing one disables just the pass it
+belongs to, and a missing required one disables the temporal modes with a reason in the tab. "Beside
+the add-on" honors `[ADDON] AddonPath` in `ReShade.ini`. Earlier releases shipped the same passes as
+pixel shaders (`temporal_*_ps.dxbc`); the installer deletes those when it updates.
+
+The temporal passes are compiled from `shaders/temporal_cs.hlsl`, a thin wrapper that sets the
+feature macros and the thread group; the maths itself lives in `shaders/temporal.hlsl`, which is
+shared verbatim with the experimental OptiScaler build. Compile a pass without the wrapper and it
+reads a different register set than the add-on binds.
 
 ## Where the tab lives
 
@@ -50,9 +57,12 @@ Internal identifiers (the `[PeripheralWarp]` ini section, exports `PeripheralWar
 namespaces, CMake targets) keep the historical name PeripheralWarp so existing installs and the
 OptiScaler bridge keep working.
 
-Two version numbers live in `cmake/Version.cmake`: `PW_SDK_VERSION` (the library and the
-`find_package` version) and `PW_RELEASE_VERSION` (the 26.x add-on release the changelog is written
-in).
+Two version numbers live in `cmake/Version.cmake`. `PW_SDK_VERSION` is the library's semantic
+version, the one `find_package` sees; it moves only when the API or the ABI does.
+`PW_RELEASE_VERSION` is the add-on release the changelog is written in: the year and the month it
+came out, plus a third component for a second release inside one month (2026.9, then 2026.9.1).
+Releases up to 26.29 were numbered after the work stage they came out of — that line ended with the
+switch, and the old numbers stay in the changelog and in the code comments that cite them.
 
 ## The tab
 
@@ -261,6 +271,14 @@ how often a new one starts (1 = continuous). Every displayed frame is the curren
 last finished pass's residual moved along the accumulated vectors, with the hole fill; the plain
 color until the first pass completes.
 
+Expected depth travels with both chains and is promoted with the finished pass. Expected depth and
+model-motion validation are enabled by default. Background phase-in is off: repeated measurements
+with free GPU memory favoured the mean error of the two-feature combination. An explicit
+`DebugTemporalPhaseIn=-1` enables the automatic adoption fade over `min(N-1, 3)` carried frames;
+a positive value selects its length. Synchronous phase-in remains automatic by default.
+`DebugTemporalNoModelMotion=1` disables validation in both modes; an absent key enables it.
+See [the background bench report](../tools/bench/BACKGROUND_26_28.md).
+
 Two accumulation chains run: one to the residual on screen, one to the frame of the pass in flight.
 The second becomes the first when a pass is adopted, which is what gives each new pass the
 displacement to the *previous pass's* frame rather than a one-frame vector — without it the model's
@@ -377,11 +395,23 @@ and talks to the host through shared memory.
 
 The protocol is [`adapters/reshade/pw_remote_ipc.h`](../adapters/reshade/pw_remote_ipc.h): a fixed
 POD layout (offsets and size asserted, both sides built from the header) in the file mapping
-`Local\PeripheralWarpRemoteV1`. One writer per direction, no locks — the overlay writes `settings`
+`Local\PeripheralWarpRemoteV3`. One writer per direction, no locks — the overlay writes `settings`
 and publishes by bumping `settingsGeneration` last; the host writes `status`, `applied` and
 `hostHeartbeatTick` and publishes them with `statusGeneration`. Both sides copy whole sub-structs, so
-a torn read is at worst one frame of a mixed value that the next generation corrects. Version 2 adds
-the optical-flow fields; v1 is tolerated in both directions.
+a torn read is at worst one frame of a mixed value that the next generation corrects.
+
+Version 2 added the optical-flow fields, version 3 the model passes (`modelPasses`, `spreadPasses`,
+and back from the host `modelPassesRunning`, `modelPassReason` and `temporalReason`). Each addition
+moves everything after `settings`, so the header keeps the older layouts verbatim and the tab reads
+whichever one it finds: a version-3 tab still drives a host that has not been updated, hiding the
+groups that host cannot act on. The section name carries the version because the other direction
+cannot work — a host writes only its own layout — and because two games of different ages can run at
+the same time; versions 1 and 2 shared `Local\PeripheralWarpRemoteV1`, which the tab still tries
+second. The host refuses a section of its own name that is smaller than its block rather than
+writing past the end of someone else's.
+
+Zero means "no opinion" in every field added after version 1, so a flag is carried as 1 = off and
+2 = on: that is how the host tells an older tab's silence from a deliberate "off".
 
 The host side runs on every present without a linked layout bridge and applies incoming settings
 exactly as the local tab does, through the same setters and ini writers. The generation seen at
@@ -408,10 +438,12 @@ read.
 | `adapters/reshade/addon/` | the add-on shell: registration and `DllMain` (`addon_main.cpp`), the overlay, `[PeripheralWarp]` persistence and its ini schema, the OptiScaler layout bridge, the crash guard, the queue registration, the remote host side |
 | `adapters/reshade/ngx/` | the NGX interposer: Detours and dispatch, feature lifetime and state, Pack/model/Unpack, the graveyard, the temporal machine and the background scheduler |
 | `adapters/reshade/ngx_forwarder/` | `nvngx.dll_optimizerfps.dll` |
-| `adapters/reshade/producer_remote.cpp` | the 32-bit remote tab, its own target |
+| `adapters/reshade/producer_remote.cpp` | the 32-bit remote tab: what it draws |
+| `adapters/reshade/remote/remote_link.{h,cpp}` | the tab's half of the shared block: finding it, reading any known version, sending an edit |
 | `adapters/reshade/diagnostics.h` | the `Debug*` switch block |
 | `adapters/reshade/pw_remote_ipc.h`, `pw_ofa_cfg.h` | the shared-memory protocol; the host's optical-flow cfg |
-| `shaders/temporal.hlsl` | the five temporal passes |
+| `shaders/temporal.hlsl` | the temporal maths, shared verbatim with the OptiScaler build |
+| `shaders/temporal_ps.hlsl` | the pixel entry points: the feature macros the add-on supports, plus `PSApply` |
 
 The per-file maps of those two folders are [dev/NGX_MODULES.md](dev/NGX_MODULES.md) and
 [dev/ADDON_MODULES.md](dev/ADDON_MODULES.md).
@@ -419,3 +451,21 @@ The per-file maps of those two folders are [dev/NGX_MODULES.md](dev/NGX_MODULES.
 ## Deployment
 
 The build deployed to games is the static-CRT one, `out/build/x64-mt` — see [BUILD.md](BUILD.md).
+
+### Model passes
+
+The Neural Rendering tab includes **Model passes** (1?3, default 1) and **Spread passes over frames**
+(default on). Their `[PeripheralWarp]` keys are `ModelPasses` and `SpreadPasses`. Each additional pass
+runs an independent model on the previous pass's output. With temporal mode on, spreading runs one
+stage per host frame, carries the previous completed result until the new cycle finishes, and raises
+N to at least the pass count. Spreading uses the host queue even if background mode is selected;
+with spreading off, background mode retains its background queue.
+
+The tab shows the running/requested count and creation/allocation/evaluate warnings. Extra passes
+are expensive: the fork measured 13?15 ms per extra evaluate at 4K on a 4080 SUPER, roughly 1 GB for
+a second model and another ~0.5 GB for spread carry buffers. Gains fade after pass 2, and each pass
+can darken the image by about 1%. The fork's 007 First Light test exceeded VRAM capacity at two passes
+and reached 0.4?0.6 seconds per frame. These observations are also in the tooltips.
+
+See [local bench report](../tools/bench/MODEL_PASSES_26_28.md); this port has not been installed into or
+tested in games.

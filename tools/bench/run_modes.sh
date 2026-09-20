@@ -20,6 +20,11 @@ for kv in sys.argv[2:]:
 s = s[:m.start(1)] + body + s[m.end(1):]
 io.open(p, "w", encoding="utf-8", newline="").write(s)
 PY
-cd "$O" && rm -f dump_*.bmp && ./pw_bench.exe ${BENCH_FRAMES:-232} --temporal $temporal --fps-cap 60 ${BENCH_EXTRA} --dump ${BENCH_DUMPS:-200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219} 2>&1 | grep -E "frametime|MAD|average|passes|\[fail\]|error" | head -8
+cd "$O" || exit 1
+rm -f dump_*.bmp
+./pw_bench.exe ${BENCH_FRAMES:-232} --temporal $temporal --fps-cap 60 ${BENCH_EXTRA} --dump ${BENCH_DUMPS:-200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219} > bench_stdout.log 2>&1
+bench_status=$?
+grep -E "frametime|MAD|average|passes|\[fail\]|error|bench finished" bench_stdout.log | head -8
 mkdir -p "$O/$label" && rm -f "$O/$label"/dump_*.bmp && mv "$O"/dump_*.bmp "$O/$label/" 2>/dev/null
 grep -E "temporal|async|forced|stopped" "$O/ReShade.log" | tail -3 | cut -c1-200
+exit "$bench_status"

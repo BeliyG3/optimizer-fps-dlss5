@@ -151,14 +151,21 @@ private:
 // ---- shaders (the SDK's own DXBC beside the add-on in optimizer-fps-dlss5\)
 struct Shaders {
     std::vector<char> vertex, pack, unpack, outline;
-    // Temporal NR passes (optional: absent files leave these empty and the temporal modes off).
-    std::vector<char> temporalResidual, temporalAccumulate, temporalReproject;
-    std::vector<char> temporalDownsample; // optional: without it the hole fill is off
-    std::vector<char> temporalCompose;    // optional: without it the guided smoothing of the addition is off (26.6.X)
+    // Compute shader binaries, generated from the shared SDK manifest.
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) std::vector<char> temporal##name;
+#include "../../../shaders/temporal_passes.def"
+#undef PW_TEMPORAL_PASS
     bool loaded = false;
     bool tried = false;
     pw::ShaderSet Set() const;
-    bool TemporalLoaded() const { return !temporalResidual.empty() && !temporalAccumulate.empty() && !temporalReproject.empty(); }
+    // No partial temporal installation: the manifest is the binary compatibility boundary.
+    bool TemporalLoaded() const
+    {
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (temporal##name.empty()) return false;
+#include "../../../shaders/temporal_passes.def"
+#undef PW_TEMPORAL_PASS
+        return true;
+    }
 };
 bool LoadShaders(const std::wstring &addonDirectory, Shaders &shaders);
 

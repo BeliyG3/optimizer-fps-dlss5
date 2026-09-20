@@ -449,11 +449,10 @@ bool LoadShaders(const std::wstring &addonDirectory, Shaders &s)
     s.loaded = ReadWholeFile(dir + L"fullscreen_vs.dxbc", s.vertex) && ReadWholeFile(dir + L"pack_ps.dxbc", s.pack) &&
                ReadWholeFile(dir + L"unpack_ps.dxbc", s.unpack);
     ReadWholeFile(dir + L"outline_ps.dxbc", s.outline);
-    ReadWholeFile(dir + L"temporal_residual_ps.dxbc", s.temporalResidual);
-    ReadWholeFile(dir + L"temporal_accumulate_ps.dxbc", s.temporalAccumulate);
-    ReadWholeFile(dir + L"temporal_reproject_ps.dxbc", s.temporalReproject);
-    ReadWholeFile(dir + L"temporal_downsample_ps.dxbc", s.temporalDownsample);
-    ReadWholeFile(dir + L"temporal_compose_ps.dxbc", s.temporalCompose);
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) \
+    ReadWholeFile(dir + L"temporal_" L## #name L"_cs.dxbc", s.temporal##name);
+#include "../../../shaders/temporal_passes.def"
+#undef PW_TEMPORAL_PASS
     if (!s.loaded) Log(true, "Optimizer FPS NGX: shaders were not found in optimizer-fps-dlss5\\ beside the add-on");
     return s.loaded;
 }

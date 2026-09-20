@@ -16,6 +16,9 @@ struct Rect {
     std::uint32_t x = 0, y = 0, w = 0, h = 0;
 };
 
+// Everything the machine owns on the GPU (temporal_resources.h).
+struct Resources;
+
 // The host's inputs for one frame, all in their own texture spaces.
 struct FrameInputs {
     ID3D12Resource *color = nullptr;   // native colour the model saw / would see
@@ -53,6 +56,11 @@ struct FrameInputs {
     ID3D12Resource *base = nullptr;
     D3D12_RESOURCE_STATES baseState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     D3D12_RESOURCE_STATES colorState = D3D12_RESOURCE_STATE_COMMON; // set by the machine: the colour's resting state (hostInputState or baseState)
+    // Shared compute wrapper: shaders/temporal_cs.hlsl.
+    bool expectedDepth = true;      // PW_T_EXPECT: carry the depth a surface had in the residual's frame along the chain
+    bool background = false;       // host depth advances separately; residual inputs belong to the saved kick
+    bool cells = true;              // PW_T_CELLS: paint rejected pixels from cells of the accepted addition
+    std::uint32_t phaseInFrames = 0; // PW_T_RAMP: carried frames a new pass is phased in over (0 = shown at once)
 };
 
 class Machine final : public pwngx::Disposable {
@@ -88,13 +96,32 @@ public:
     ID3D12Resource *Acc() const;
     // The texture the next RecordAccumulate writes (so descriptors can be prepared before recording).
     ID3D12Resource *NextAcc() const;
+    // 26.28: the chain as the model's OWN motion vectors - pixels whose chain does not end on their
+    // surface in the residual's frame get a vector that leaves the picture, so the model treats them as
+    // its own disocclusion instead of dragging the occluder's history onto them. Record it with
+    // RecordModelMotion after RecordAccumulate; null when the pass is not available (hand out Acc()).
+    ID3D12Resource *ModelMv() const;
+    void RecordModelMotion(ID3D12GraphicsCommandList *cmd, const FrameInputs &in);
+    // 26.28: a new pass is phased in and this frame must be shown as "colour + the residual mix"
+    // (RecordApply) rather than as the model's raw answer.
+    bool PhaseInActive() const;
+    void RecordApply(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *hostOutput,
+                     D3D12_RESOURCE_STATES hostOutputState, std::uint32_t dstX, std::uint32_t dstY);
+    // Format-converting snapshot without advancing the displayed residual's phase clock.
+    void RecordRaw(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *target,
+                   D3D12_RESOURCE_STATES state, std::uint32_t dstX = 0, std::uint32_t dstY = 0);
     bool AccValid() const { return accValid_; }
     bool HasResidual() const { return hasResidual_; }
     // Second accumulation chain for the background mode: the displacement from the current frame back
     // to the frame whose model pass is in flight. RecordAccumulatePending once per frame after the kick;
     // PromotePending when that pass is adopted (it becomes the main chain, the pending one restarts).
     void RecordAccumulatePending(ID3D12GraphicsCommandList *cmd, const FrameInputs &in);
-    void ResetPending() { pendingValid_ = false; pendingMirror_ = false; }
+    void ResetPending() { pendingValid_ = false; pendingMirror_ = false; expectPendingValid_ = false; }
+    void RecordBackgroundAccumulate(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, bool pending);
+    // Save the kick's expectation for residual alignment; optionally validate a private model chain.
+    void RecordBackgroundKick(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, bool pending,
+                              ID3D12Resource *modelVectors, D3D12_RESOURCE_STATES vectorState,
+                              ID3D12Resource *kickColor, ID3D12Resource *kickDepth, bool validate);
     void PromotePending();
     bool PendingValid() const { return pendingValid_; }
     // After an adoption without a new kick the displacement to the last pass's frame is the main
@@ -110,13 +137,22 @@ public:
     void RecordDebugCopies(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *readback, std::uint32_t x, std::uint32_t y);
 
 private:
-    struct Impl;
-    Impl *impl_ = nullptr;
+    // The expectation's own link chain (PW_T_EXPECT): recorded before the accumulation, which reads it.
+    void RecordExpect(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, bool on, bool pending = false);
+    void RecordDepthPrev(ID3D12GraphicsCommandList *cmd, const FrameInputs &in);
+    // The host depth into one of our snapshots; the depth plane alone for planar depth-stencil guides.
+    static void CopyDepth(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *dst);
+    void CopyInterp(ID3D12GraphicsCommandList *cmd, ID3D12Resource *hostOutput, D3D12_RESOURCE_STATES hostOutputState,
+                    std::uint32_t dstX, std::uint32_t dstY);
+
+    Resources *res_ = nullptr;
     ID3D12Device *device_ = nullptr;
     bool accValid_ = false;
     bool pendingValid_ = false;
     bool pendingMirror_ = false;
     bool hasResidual_ = false;
+    bool expectValid_ = false;
+    bool expectPendingValid_ = false;
 };
 
 } // namespace pwtemporal

@@ -11,8 +11,17 @@
 # The .blend on disk is not modified. Other materials export as they are.
 import bpy, sys, os
 import numpy as np
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from character_export import append_characters, validate_glb
+
+character_rigs = append_characters()
 
 out = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else os.path.splitext(bpy.data.filepath)[0] + ".glb"
+
+
+if Path(out).suffix.lower() != '.glb':
+    raise ValueError('Output must be a .glb file')
 
 
 def srgb_to_linear(c):
@@ -79,6 +88,11 @@ for mat in bpy.data.materials:
     nt.links.new(node.outputs["Color"], bsdf.inputs["Base Color"])
     print(f"[export] {mat.name}: base colour composed from {src.name} ({w}x{h}), mean value {rgb.max(axis=2).mean():.3f}")
 
-bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_animations=True, export_apply=True,
+options = dict(export_animation_mode='SCENE', export_anim_scene_split_object=False, export_skins=True, export_force_sampling=True,
+               export_frame_range=True, export_frame_step=1) if character_rigs else {}
+
+bpy.ops.export_scene.gltf(**options, filepath=out, export_format="GLB", export_animations=True, export_apply=True,
                           export_cameras=True, export_yup=True, export_image_format="AUTO")
 print("[export] written", out)
+
+validate_glb(out, character_rigs)

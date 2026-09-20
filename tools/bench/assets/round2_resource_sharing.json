@@ -1,0 +1,46 @@
+{
+  "olivia": [
+    {
+      "name": "olivia_talking_mesh_0",
+      "same_mesh": false,
+      "same_materials": true
+    }
+  ],
+  "chad": [
+    {
+      "name": "chad_talking_mesh_0",
+      "same_mesh": false,
+      "same_materials": true
+    },
+    {
+      "name": "chad_talking_mesh_1",
+      "same_mesh": false,
+      "same_materials": true
+    },
+    {
+      "name": "chad_talking_mesh_2",
+      "same_mesh": false,
+      "same_materials": true
+    },
+    {
+      "name": "chad_talking_mesh_3",
+      "same_mesh": false,
+      "same_materials": true
+    },
+    {
+      "name": "chad_talking_mesh_4",
+      "same_mesh": false,
+      "same_materials": true
+    },
+    {
+      "name": "chad_talking_mesh_5",
+      "same_mesh": false,
+      "same_materials": true
+    },
+    {
+      "name": "chad_talking_mesh_6",
+      "same_mesh": false,
+      "same_materials": true
+    }
+  ]
+}

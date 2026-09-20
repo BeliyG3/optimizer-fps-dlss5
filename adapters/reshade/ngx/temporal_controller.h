@@ -17,6 +17,7 @@ struct TemporalPlan {
 };
 
 void TemporalReason(FeatureState &st, const char *fmt, ...);
+bool EnsureTemporalDevice(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *output);
 bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *output, ID3D12Resource *motion,
                     ID3D12Resource *depth);
 bool BackgroundModeUsable(FeatureState &st);

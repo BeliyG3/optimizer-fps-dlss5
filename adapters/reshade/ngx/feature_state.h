@@ -6,6 +6,7 @@
 #include "async_scheduler.h"
 #include "hook_common.h"
 #include "ngx_temporal.h"
+#include "spread_passes.h"
 
 #include "peripheral_warp/types_v2.h"
 
@@ -23,6 +24,14 @@ struct Tracked {
 };
 
 struct FeatureState {
+    std::unique_ptr<SpreadState> spread;
+    int activeModelStage = -1;
+    void *passHandles[2] = {};
+    int passesRequested = 1;
+    int passesReady = 1;
+    bool passReset[2] = {true, true};
+    ID3D12Resource *passStaging = nullptr;
+    D3D12_RESOURCE_STATES passStagingState = D3D12_RESOURCE_STATE_COMMON;
     void *realHandle = nullptr;
     void *params = nullptr;
     std::uint32_t nativeWidth = 0, nativeHeight = 0;
@@ -107,6 +116,10 @@ struct FeatureState {
     bool temporalLogged = false;
     void ReleaseGpu()
     {
+        if (passStaging) { passStaging->Release(); passStaging = nullptr; }
+        passStagingState = D3D12_RESOURCE_STATE_COMMON;
+        spread.reset();
+        activeModelStage = -1;
         adapter.reset();
         async.reset();
         temporal.reset();

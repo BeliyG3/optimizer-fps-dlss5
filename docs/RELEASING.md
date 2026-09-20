@@ -10,7 +10,7 @@ never decides *what* the version is, it only checks that the tag agrees with the
 
 | Variable | What it is | When it moves |
 |----------|------------|---------------|
-| `PW_RELEASE_VERSION` | The user-facing release number of the add-on (the `26.x` line the CHANGELOG is written in). This is what the tag mirrors: tag `vX.Y` ⇔ `PW_RELEASE_VERSION "X.Y"`. | Every shipped build. |
+| `PW_RELEASE_VERSION` | The user-facing release number of the add-on: the year and the month it comes out, plus a third component for a second release inside one month (`2026.9`, then `2026.9.1`). Releases up to `26.29` were numbered after the work stage instead. This is what the tag mirrors: tag `vX.Y[.Z]` ⇔ `PW_RELEASE_VERSION "X.Y[.Z]"`. | Every shipped build. |
 | `PW_SDK_VERSION` | The semantic version of the Optimizer FPS core library — the CMake `project(... VERSION ...)`, the installed package version, the ABI story. | Only when the public API/ABI changes. |
 
 Everything downstream reads `PW_RELEASE_VERSION` rather than carrying its own copy:
@@ -27,14 +27,14 @@ generated `pw_version.h` and `NOTICE`, and the banner line in the add-on's tab.
 
 ### 1. Write the changelog section
 
-Add a `## X.Y` section at the top of `CHANGELOG.md` with the notes for the release. This is the
-**source of the release body** — `release.yml` copies the section verbatim, from the `## X.Y`
+Add a `## X.Y[.Z]` section at the top of `CHANGELOG.md` with the notes for the release. This is the
+**source of the release body** — `release.yml` copies the section verbatim, from the `## X.Y[.Z]`
 heading down to the next `## ` heading, into `release-notes.md`. Write it for users of the mod, not
 for the diff.
 
 ### 2. Bump `cmake/Version.cmake`
 
-Set `PW_RELEASE_VERSION` to `X.Y` (and `PW_SDK_VERSION` too, if the public API/ABI moved).
+Set `PW_RELEASE_VERSION` to `X.Y[.Z]` — the month without a leading zero, so `2026.9`, never `2026.09`, because CMake compares the CHANGELOG heading with it character for character (and `PW_SDK_VERSION` too, if the public API/ABI moved).
 
 Order matters: CMake **refuses to configure** when `CHANGELOG.md` has no line reading exactly
 `## <PW_RELEASE_VERSION>`. So bumping the version before writing the changelog breaks every local
@@ -62,7 +62,7 @@ powershell.exe -NoProfile -File tools\Package-Release.ps1 `
 The script prints the zip path and its SHA-256 — **write the SHA-256 down**, you will compare it
 against the one CI publishes in step 7.
 
-Output: `dist-release\Optimizer-FPS-for-DLSS5-X.Y.zip` (installer `.cmd`/`.ps1`, `Verify-OptimizerFPS.ps1`,
+Output: `dist-release\Optimizer-FPS-for-DLSS5-X.Y[.Z].zip` (installer `.cmd`/`.ps1`, `Verify-OptimizerFPS.ps1`,
 `README.txt` generated from `docs\INSTALL.md`, `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.txt`, and
 `payload\` with `VERSION.txt` + `files.sha256`).
 
@@ -107,7 +107,7 @@ there touched. Compare against a directory listing taken before the install if i
 ### 6. Tag and push
 
 ```
-git tag vX.Y
+git tag vX.Y[.Z]
 git push --tags
 ```
 
@@ -142,16 +142,17 @@ If a published release turns out to be broken:
 1. Delete the GitHub Release (this does not delete the tag).
 2. Delete the tag, locally and on the remote:
    ```
-   git tag -d vX.Y
-   git push origin :refs/tags/vX.Y
+   git tag -d vX.Y[.Z]
+   git push origin :refs/tags/vX.Y[.Z]
    ```
-3. **Bump to a new version rather than re-using `X.Y`.** Fix the bug, add a `## X.Y+1` section to
-   `CHANGELOG.md` that says what was wrong with `X.Y`, bump `PW_RELEASE_VERSION`, and run the
+3. **Bump to a new version rather than re-using a number.** Fix the bug, add a section for the next
+   number to `CHANGELOG.md` saying what was wrong with the withdrawn one, bump `PW_RELEASE_VERSION`,
+   and run the
    checklist from the top. Re-pushing a tag that people may already have fetched, or re-publishing
    a different zip under the same version, makes `payload\VERSION.txt` and any bug report quoting it
    meaningless.
 
-The zip is also kept as a workflow artifact on the release run (`optimizer-fps-for-dlss5-X.Y`), so a
+The zip is also kept as a workflow artifact on the release run (`optimizer-fps-for-dlss5-X.Y[.Z]`), so a
 yanked build can still be fetched for post-mortem after the release itself is gone.
 
 Users who already installed the yanked version are covered by the normal uninstall path

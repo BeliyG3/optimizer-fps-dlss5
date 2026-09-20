@@ -34,6 +34,9 @@ struct Status {
     std::uint64_t evaluations = 0;   // evaluates that went through the warp
     std::uint64_t passthroughs = 0;  // evaluates forwarded untouched
     int lastNgxResult = 0;
+    int modelPassesRunning = 1;
+    std::uint64_t modelPassEvaluations[3] = {};
+    char modelPassReason[192] = {};
     char reason[512] = {};
     // What the host hands the model for motion (the last input set seen): texture size, subrect,
     // the MVecScale it wrote and whether that value could be read from the parameter block.
@@ -71,6 +74,8 @@ struct Status {
 // on a background queue. (Mode 2, "centre every frame", was withdrawn in 26.26; the value is still
 // accepted on the ABI and mapped to 1.)
 struct TemporalSettings {
+    int modelPasses = 1;
+    bool spreadPasses = true;
     int mode = 0;                  // 0 every frame, 1 Interpolate (sync), 2 withdrawn (maps to 1), 3 Interpolate with the model in the background
     int every = 2;                 // 1..4 (mode 1: 2..4); mode 3: frames given to one background pass (1 = continuous)
     int maxAge = 8;                // mode 3: residual age (frames) after which the host queue waits for the background pass

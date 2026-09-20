@@ -61,6 +61,18 @@ void RemoteEnsureBlock()
             "Optimizer FPS: could not map the remote overlay block");
         return;
     }
+    // A section of this name that is smaller than the block would be someone else's (another
+    // build): writing the struct into it would run off the end, so leave it alone.
+    MEMORY_BASIC_INFORMATION region{};
+    if (VirtualQuery(g_remoteBlock, &region, sizeof(region)) == 0 || region.RegionSize < sizeof(PwRemoteBlockV1)) {
+        UnmapViewOfFile(g_remoteBlock);
+        CloseHandle(g_remoteMapping);
+        g_remoteBlock = nullptr;
+        g_remoteMapping = nullptr;
+        reshade::log::message(reshade::log::level::warning,
+            "Optimizer FPS: the remote overlay section belongs to another build; the 32-bit tab will not connect");
+        return;
+    }
     if (!existed || g_remoteBlock->magic != PW_REMOTE_MAGIC || g_remoteBlock->version != PW_REMOTE_VERSION ||
         g_remoteBlock->size != sizeof(PwRemoteBlockV1))
         std::memset(g_remoteBlock, 0, sizeof(PwRemoteBlockV1));
@@ -100,6 +112,8 @@ PwRemoteSettingsV1 RemoteSettingsFrom(const pw::ConfigV2 &config)
                                      : PwRemoteOfaUnset;
     settings.ofaGrid = g_ofaLoaded ? g_ofa.grid : 0;
     settings.ofaPerf = g_ofaLoaded ? g_ofa.perf : 0;
+    settings.modelPasses = State().temporal.modelPasses;
+    settings.spreadPasses = State().temporal.spreadPasses ? PwRemoteFlagOn : PwRemoteFlagOff;
     return settings;
 }
 
@@ -166,6 +180,13 @@ void RemoteApplySettings(const PwRemoteSettingsV1 &settings)
     State().temporal.mode = mode;
     State().temporal.every = std::clamp(settings.temporalEvery, mode == 3 ? 1 : 2, 8);
     State().temporal.maxQueue = std::clamp(settings.temporalMaxQueue, 0, 8);
+    // Model passes. Zero means an older tab that never heard of them, and then the host keeps its
+    // own. The "spread" rule is the local overlay's: a spread cycle needs N at least as long as it.
+    if (settings.modelPasses != 0) State().temporal.modelPasses = std::clamp(settings.modelPasses, 1, 3);
+    if (settings.spreadPasses != PwRemoteFlagUnset)
+        State().temporal.spreadPasses = settings.spreadPasses == PwRemoteFlagOn;
+    if (State().temporal.mode != 0 && State().temporal.spreadPasses && State().temporal.modelPasses > 1)
+        State().temporal.every = std::max(State().temporal.every, State().temporal.modelPasses);
     SaveTemporalToReShadeIni();
     pw_ngx::SetTemporal(State().temporal);
 }
@@ -263,6 +284,10 @@ void RemotePublish()
     status.ofaActive = g_ofaLoaded ? (g_ofa.source == pw_ofa::SourceShader ? 0 : 1) : -1;
     status.ofaGrid = g_ofaLoaded ? g_ofa.grid : 0;
     status.ofaPerf = g_ofaLoaded ? g_ofa.perf : 0;
+    status.modelPasses = State().temporal.modelPasses;
+    status.modelPassesRunning = hook.modelPassesRunning;
+    std::snprintf(status.modelPassReason, sizeof(status.modelPassReason), "%s", hook.modelPassReason);
+    std::snprintf(status.temporalReason, sizeof(status.temporalReason), "%s", hook.temporalReason);
     const PwRemoteSettingsV1 applied = RemoteSettingsFrom(config);
     std::memcpy(&block.status, &status, sizeof(status));
     std::memcpy(&block.applied, &applied, sizeof(applied));

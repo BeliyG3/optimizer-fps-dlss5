@@ -14,7 +14,7 @@ Two independent version sources live in `cmake/Version.cmake`:
   installed package version and what `find_package(PeripheralWarp <ver>)` matches. It moves only
   when the library or its public API/ABI changes. The ABI version numbers above (`1`, `2`, `3`) are
   separate and are not derived from it.
-- `PW_RELEASE_VERSION` - the user-facing release number of the ReShade add-on (the 26.x line the
+- `PW_RELEASE_VERSION` - the user-facing release number of the ReShade add-on (its year and month; the line
   changelog is written in). It moves with every shipped add-on build and never affects the SDK.
 
 CMake generates `pw_version.h` from `cmake/pw_version.h.in` into the build tree with

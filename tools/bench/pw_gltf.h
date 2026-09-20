@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -104,10 +105,17 @@ struct JsonParser {
 
 // ---- scene data ---------------------------------------------------------------------------------
 struct Quat { float x = 0, y = 0, z = 0, w = 1; };
-struct Vertex { Vec3 pos, normal; float material; float localY; float stripe; float colour[3]; float uv[2] = {0, 0}; int texture = -1; bool alphaMask = false; float alphaCutoff = 0.5f; };
+struct Vertex { Vec3 pos, normal; float material; float localY; float stripe; float colour[3]; float uv[2] = {0, 0}; int texture = -1; bool alphaMask = false; float alphaCutoff = 0.5f;
+    int metallicRoughnessTexture = -1, normalTexture = -1; float metallic = 0, normalScale = 1; };
+// A light the host shades with: every emissive primitive becomes one (its area-weighted centre, its
+// radiance times its area), so a scene lit by lamp tubes needs no separate light list.
+struct Light { Vec3 pos; float power[3] = {0, 0, 0}; };
 struct Primitive { std::vector<Vec3> positions; std::vector<Vec3> normals; std::vector<float> uvs; std::vector<uint32_t> indices; float colour[3] = {1, 1, 1}; bool stripes = false; bool hasColour = false; std::string materialName; int texture = -1; bool alphaMask = false; float alphaCutoff = 0.5f;
+    float emission[3] = {0, 0, 0}; // emissiveFactor x KHR_materials_emissive_strength: linear radiance, may be far above 1
+    float roughness = 1.0f;
     std::vector<std::vector<Vec3>> targets; // morph targets: POSITION deltas per target (facial animation)
-    std::vector<uint16_t> joints; std::vector<float> skinWeights; }; // JOINTS_0 / WEIGHTS_0, 4 per vertex (empty = not skinned)
+    std::vector<uint16_t> joints; std::vector<float> skinWeights; // JOINTS_0 / WEIGHTS_0, 4 per vertex (empty = not skinned)
+    int metallicRoughnessTexture = -1, normalTexture = -1; float metallic = 0, normalScale = 1; };
 // Embedded image of a .glb (baseColorTexture source): the encoded bytes (PNG / JPEG) for the host to decode.
 struct Image { std::vector<uint8_t> bytes; std::string mime; };
 // A run of consecutive vertices from BuildVertices that share one texture (draw ranges for the host).
@@ -190,19 +198,24 @@ struct Scene {
     }
     // World matrices of every node at time t in one pass (WorldAt is O(depth * channels) per call;
     // skinning needs all 100+ joints, so the whole hierarchy is evaluated once instead).
-    void WorldsAt(float t, std::vector<Mat4> &out) const
+    void WorldsAt(float t, std::vector<Mat4> &out, std::vector<Mat4> &local, std::vector<int> &stack) const
     {
         const size_t n = nodes.size();
         out.assign(n, Identity());
-        std::vector<Mat4> local(n);
+        local.resize(n);
         for (size_t i = 0; i < n; ++i) local[i] = LocalAt((int) i, t);
-        std::vector<int> stack(roots.begin(), roots.end());
+        stack.clear(); stack.reserve(n); stack.insert(stack.end(), roots.begin(), roots.end());
         while (!stack.empty()) {
             const int i = stack.back(); stack.pop_back();
             const int p = nodes[i].parent;
             out[i] = p >= 0 ? Mul(out[p], local[i]) : local[i];
             for (int c : nodes[i].children) if (c >= 0 && (size_t) c < n) stack.push_back(c);
         }
+    }
+    void WorldsAt(float t, std::vector<Mat4> &out) const
+    {
+        std::vector<Mat4> local; std::vector<int> stack;
+        WorldsAt(t, out, local, stack);
     }
     // Joint matrices of the skin on `index`: J_k = inverse(world(node)) * world(joint_k) * inverseBind_k,
     // i.e. mesh-local -> skinned mesh-local, so the node's own world matrix still applies afterwards.
@@ -240,7 +253,14 @@ inline void Sampler::Sample(float t, float *out) const
     size_t k = 1; while (k < times.size() && times[k] < t) ++k;
     const float t0 = times[k - 1], t1 = times[k];
     const float f = step ? 0.0f : (t1 > t0 ? (t - t0) / (t1 - t0) : 0.0f);
-    for (int i = 0; i < c; ++i) out[i] = values[(k - 1) * c + i] * (1.0f - f) + values[k * c + i] * f;
+    // q and -q are the same rotation and exporters emit either: blending across a sign change takes
+    // the long way round and throws the bone sideways for one frame (seen at a walk cycle's seam).
+    float sign = 1.0f;
+    if (quaternion && c == 4) {
+        float dot = 0.0f; for (int i = 0; i < 4; ++i) dot += values[(k - 1) * c + i] * values[k * c + i];
+        if (dot < 0.0f) sign = -1.0f;
+    }
+    for (int i = 0; i < c; ++i) out[i] = values[(k - 1) * c + i] * (1.0f - f) + sign * values[k * c + i] * f;
     if (quaternion && c == 4) { // normalise the interpolated quaternion (nlerp is fine for per-frame keys)
         const float l = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
         if (l > 0) for (int i = 0; i < 4; ++i) out[i] /= l;
@@ -363,17 +383,34 @@ inline bool Load(const char *path, Scene &scene)
     }
     std::vector<int> textureImage;
     if (const Json *ts = doc.Get("textures")) for (size_t i = 0; i < ts->Size(); ++i) textureImage.push_back(ts->At(i).IntField("source", -1));
-    struct Mat { float colour[3] = {1, 1, 1}; std::string name; bool stripes = false; bool hasColour = false; int texture = -1; bool alphaMask = false; float alpha = 1.0f; };
+    struct Mat { float colour[3] = {1, 1, 1}; std::string name; bool stripes = false; bool hasColour = false; int texture = -1; bool alphaMask = false; float alpha = 1.0f; float emission[3] = {0, 0, 0}; float roughness = 1.0f;
+        int metallicRoughnessTexture = -1, normalTexture = -1; float metallic = 0, normalScale = 1; };
     std::vector<Mat> materials;
     if (const Json *ms = doc.Get("materials")) for (size_t i = 0; i < ms->Size(); ++i) {
         Mat m; m.name = ms->At(i).StrField("name");
+        auto imageIndex = [&](const Json *slot) {
+            const int ti = slot ? slot->IntField("index", -1) : -1;
+            const int image = ti >= 0 && (size_t) ti < textureImage.size() ? textureImage[ti] : -1;
+            return image >= 0 && (size_t) image < scene.images.size() ? image : -1;
+        };
+        m.normalTexture = imageIndex(ms->At(i).Get("normalTexture"));
+        if (const Json *normal = ms->At(i).Get("normalTexture")) m.normalScale = (float) normal->NumField("scale", 1.0);
         if (const Json *pbr = ms->At(i).Get("pbrMetallicRoughness")) {
+            // Preserve the legacy bench's dielectric default when the factor is absent.
+            m.metallic = (float) pbr->NumField("metallicFactor", 0.0);
+            m.metallicRoughnessTexture = imageIndex(pbr->Get("metallicRoughnessTexture"));
             if (const Json *c = pbr->Get("baseColorFactor")) { m.hasColour = true; for (int k = 0; k < 3; ++k) m.colour[k] = (float) c->At(k).Num(1.0); m.alpha = (float) c->At(3).Num(1.0); }
             if (const Json *t = pbr->Get("baseColorTexture")) {
                 const int ti = t->IntField("index", -1);
                 if (ti >= 0 && (size_t) ti < textureImage.size()) m.texture = textureImage[ti];
                 if (m.texture >= 0 && (size_t) m.texture >= scene.images.size()) m.texture = -1;
             }
+        }
+        if (const Json *pbr = ms->At(i).Get("pbrMetallicRoughness")) if (const Json *r = pbr->Get("roughnessFactor")) m.roughness = (float) r->Num(1.0);
+        if (const Json *e = ms->At(i).Get("emissiveFactor")) {
+            float strength = 1.0f;
+            if (const Json *ext = ms->At(i).Get("extensions")) if (const Json *es = ext->Get("KHR_materials_emissive_strength")) if (const Json *s = es->Get("emissiveStrength")) strength = (float) s->Num(1.0);
+            for (int k = 0; k < 3; ++k) m.emission[k] = (float) e->At(k).Num(0.0) * strength;
         }
         const std::string alpha = ms->At(i).StrField("alphaMode");
         m.alphaMask = alpha == "MASK" || alpha == "BLEND"; // cut-outs (eyelashes, hair cards): alpha below 0.5 is discarded
@@ -418,7 +455,11 @@ inline bool Load(const char *path, Scene &scene)
             if (mi >= 0 && (size_t) mi < materials.size()) { memcpy(prim.colour, materials[mi].colour, sizeof(prim.colour)); prim.stripes = materials[mi].stripes; prim.hasColour = materials[mi].hasColour; prim.materialName = materials[mi].name; prim.texture = prim.uvs.empty() ? -1 : materials[mi].texture; prim.alphaMask = materials[mi].alphaMask;
                 // The cut-out tests the texture alpha alone, so fold baseColorFactor.a into the threshold
                 // (eye occlusion / tearline are BLEND overlays with a low constant alpha).
-                prim.alphaCutoff = materials[mi].alpha > 0.5f ? 0.5f / materials[mi].alpha : 1.01f; }
+                prim.alphaCutoff = materials[mi].alpha > 0.5f ? 0.5f / materials[mi].alpha : 1.01f;
+                memcpy(prim.emission, materials[mi].emission, sizeof(prim.emission)); prim.roughness = materials[mi].roughness;
+                prim.metallic = materials[mi].metallic; prim.normalScale = materials[mi].normalScale;
+                prim.metallicRoughnessTexture = prim.uvs.empty() ? -1 : materials[mi].metallicRoughnessTexture;
+                prim.normalTexture = prim.uvs.empty() ? -1 : materials[mi].normalTexture; }
             mesh.primitives.push_back(std::move(prim));
         }
         if (mesh.minY > 1e29f) mesh.minY = 0.0f;
@@ -536,24 +577,73 @@ inline void DeformPrimitive(const Primitive &prim, const std::vector<float> &w, 
 // Builds the vertex list for one instant: world positions at time t and t - dt (previous frame),
 // already converted to the bench's coordinate system.  Morph targets and CPU skinning are applied
 // per unique vertex, then expanded through the index buffer.
-inline void BuildVertices(const Scene &scene, float t, float dt, std::vector<Vertex> &out, std::vector<Vec3> &prevOut, std::vector<DrawRange> *ranges = nullptr)
+struct PrimitiveRef { size_t node, primitive; };
+inline bool DynamicNode(const Scene &scene, size_t index)
+{
+    if (scene.nodes[index].skin >= 0) return true;
+    for (const Channel &c : scene.channels) if (c.node == (int) index && c.path == 3) return true;
+    for (int ancestor = (int) index; ancestor >= 0; ancestor = scene.nodes[ancestor].parent)
+        for (const Channel &c : scene.channels) if (c.node == ancestor && c.path >= 0 && c.path < 3) return true;
+    return false;
+}
+inline std::vector<PrimitiveRef> Primitives(const Scene &scene, int dynamic = -1)
+{
+    std::vector<PrimitiveRef> result;
+    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+        const Node &n = scene.nodes[i];
+        if (n.mesh < 0 || (size_t) n.mesh >= scene.meshes.size()) continue;
+        if (dynamic >= 0 && DynamicNode(scene, i) != (dynamic != 0)) continue;
+        for (size_t p = 0; p < scene.meshes[n.mesh].primitives.size(); ++p) result.push_back({i, p});
+    }
+    return result;
+}
+// Caller-owned scratch permits allocation-free repeated subset evaluation on independent workers.
+struct VertexWorkspace {
+    std::vector<Mat4> worlds, worldsPrev, local, jm, jmPrev;
+    std::vector<int> stack;
+    std::vector<Vec3> dp, dn, dpPrev, dnPrev;
+    std::vector<float> wNow, wPrev;
+    void Reserve(const Scene &scene, const std::vector<PrimitiveRef> &selection)
+    {
+        const size_t nodes = scene.nodes.size();
+        worlds.reserve(nodes); worldsPrev.reserve(nodes); local.reserve(nodes); stack.reserve(nodes);
+        size_t vertices = 0, weights = 0, joints = 0;
+        for (const auto &ref : selection) {
+            const auto &n = scene.nodes[ref.node];
+            vertices = std::max(vertices, scene.meshes[n.mesh].primitives[ref.primitive].positions.size());
+            weights = std::max(weights, n.weights.size());
+            if (n.skin >= 0 && (size_t) n.skin < scene.skins.size()) joints = std::max(joints, scene.skins[n.skin].joints.size());
+        }
+        for (const auto &c : scene.channels) if (c.path == 3) weights = std::max(weights, (size_t) c.sampler.components);
+        dp.reserve(vertices); dn.reserve(vertices); dpPrev.reserve(vertices); dnPrev.reserve(vertices);
+        wNow.reserve(weights); wPrev.reserve(weights); jm.reserve(joints); jmPrev.reserve(joints);
+    }
+};
+inline void BuildVerticesSubset(const Scene &scene, float t, float dt, const std::vector<PrimitiveRef> &selection,
+    VertexWorkspace &scratch, std::vector<Vertex> &out, std::vector<Vec3> &prevOut,
+    std::vector<DrawRange> *ranges = nullptr, std::vector<Light> *lights = nullptr,
+    float previousTime = std::numeric_limits<float>::quiet_NaN())
 {
     Trace("build vertices");
     out.clear(); prevOut.clear();
     if (ranges) ranges->clear();
-    std::vector<Mat4> worlds, worldsPrev, jm, jmPrev;
-    scene.WorldsAt(t, worlds); scene.WorldsAt(t - dt, worldsPrev);
-    std::vector<Vec3> dp, dn, dpPrev, dnPrev; // deform scratch, reused by every primitive
-    std::vector<float> wNow, wPrev;
-    for (size_t i = 0; i < scene.nodes.size(); ++i) {
+    const float previous = std::isnan(previousTime) ? t - dt : previousTime;
+    auto &worlds = scratch.worlds; auto &worldsPrev = scratch.worldsPrev;
+    auto &jm = scratch.jm; auto &jmPrev = scratch.jmPrev;
+    auto &dp = scratch.dp; auto &dn = scratch.dn; auto &dpPrev = scratch.dpPrev; auto &dnPrev = scratch.dnPrev;
+    auto &wNow = scratch.wNow; auto &wPrev = scratch.wPrev;
+    scene.WorldsAt(t, worlds, scratch.local, scratch.stack); scene.WorldsAt(previous, worldsPrev, scratch.local, scratch.stack);
+    for (const auto &ref : selection) {
+        const size_t i = ref.node;
         const Node &n = scene.nodes[i];
         if (n.mesh < 0 || (size_t) n.mesh >= scene.meshes.size()) continue;
         const Mat4 world = worlds[i], worldPrev = worldsPrev[i];
         const Mesh &mesh = scene.meshes[n.mesh];
-        scene.WeightsAt((int) i, t, wNow); scene.WeightsAt((int) i, t - dt, wPrev);
+        scene.WeightsAt((int) i, t, wNow); scene.WeightsAt((int) i, previous, wPrev);
         scene.JointMatrices(worlds, (int) i, jm); scene.JointMatrices(worldsPrev, (int) i, jmPrev);
-        if (getenv("PW_GLTF_TRACE")) { fprintf(stderr, "[gltf] node %zu mesh %d prims %zu weights %zu joints %zu\n", i, n.mesh, mesh.primitives.size(), wNow.size(), jm.size()); fflush(stderr); }
-        for (const Primitive &prim : mesh.primitives) {
+        static const bool traceNodes = getenv("PW_GLTF_TRACE") != nullptr;
+        if (traceNodes) { fprintf(stderr, "[gltf] node %zu mesh %d prims %zu weights %zu joints %zu\n", i, n.mesh, mesh.primitives.size(), wNow.size(), jm.size()); fflush(stderr); }
+        { const Primitive &prim = mesh.primitives[ref.primitive];
             if (ranges) {
                 // Consecutive primitives with the same texture and cut-out flag share one range.
                 if (ranges->empty() || ranges->back().texture != prim.texture || ranges->back().alphaMask != prim.alphaMask) {
@@ -564,24 +654,50 @@ inline void BuildVertices(const Scene &scene, float t, float dt, std::vector<Ver
             DeformPrimitive(prim, wNow, jm, dp, dn);
             if (deformed) DeformPrimitive(prim, wPrev, jmPrev, dpPrev, dnPrev);
             const std::vector<Vec3> &pp = deformed ? dpPrev : dp;
+            const bool emissive = prim.emission[0] + prim.emission[1] + prim.emission[2] > 0.0f;
+            if (emissive && lights) {
+                // One light per emissive primitive: area-weighted centre, radiance x area.
+                Vec3 centre{0, 0, 0}; float area = 0.0f;
+                for (size_t k = 0; k + 2 < prim.indices.size(); k += 3) {
+                    const uint32_t ia = prim.indices[k], ib = prim.indices[k + 1], ic = prim.indices[k + 2];
+                    if (ia >= dp.size() || ib >= dp.size() || ic >= dp.size()) continue;
+                    const Vec3 a = ToBench(TransformPoint(world, dp[ia])), b = ToBench(TransformPoint(world, dp[ib])), c = ToBench(TransformPoint(world, dp[ic]));
+                    const Vec3 e1 = b - a, e2 = c - a;
+                    const Vec3 cr{e1.y * e2.z - e1.z * e2.y, e1.z * e2.x - e1.x * e2.z, e1.x * e2.y - e1.y * e2.x};
+                    const float tri = 0.5f * std::sqrt(cr.x * cr.x + cr.y * cr.y + cr.z * cr.z);
+                    centre = centre + (a + b + c) * (tri / 3.0f); area += tri;
+                }
+                if (area > 0.0f) { Light l; l.pos = centre * (1.0f / area); for (int k = 0; k < 3; ++k) l.power[k] = prim.emission[k] * area; lights->push_back(l); }
+            }
             for (uint32_t index : prim.indices) {
                 if (index >= prim.positions.size()) continue;
                 Vertex v{};
                 if (index * 2 + 1 < prim.uvs.size()) { v.uv[0] = prim.uvs[index * 2]; v.uv[1] = prim.uvs[index * 2 + 1]; }
                 v.texture = prim.texture; v.alphaMask = prim.alphaMask; v.alphaCutoff = prim.alphaCutoff;
+                v.metallic = prim.metallic; v.normalScale = prim.normalScale;
+                v.metallicRoughnessTexture = prim.metallicRoughnessTexture; v.normalTexture = prim.normalTexture;
                 v.pos = ToBench(TransformPoint(world, dp[index]));
                 v.normal = Normalize(ToBench(TransformDir(world, dn[index])));
-                v.material = n.isGround ? -1.0f : -2.0f;
+                // -1 ground, -2 plain, -4 emissive (colour = radiance), -5 glossy (roughness under 0.3: a polished floor)
+                v.material = n.isGround ? -1.0f : (emissive ? -4.0f : (prim.roughness < 0.3f ? -5.0f : -2.0f));
                 v.localY = (dp[index].y - mesh.minY) * n.scale.y;
                 v.stripe = prim.stripes ? 1.0f : 0.0f;
                 if (!prim.hasColour && n.pwColour >= 0) memcpy(v.colour, kPalette[n.pwColour % 6], sizeof(v.colour));
                 else memcpy(v.colour, prim.colour, sizeof(v.colour));
+                if (emissive) memcpy(v.colour, prim.emission, sizeof(v.colour));
                 out.push_back(v);
                 prevOut.push_back(ToBench(TransformPoint(worldPrev, pp[index])));
                 if (ranges) ++ranges->back().count;
             }
         }
     }
+}
+
+inline void BuildVertices(const Scene &scene, float t, float dt, std::vector<Vertex> &out, std::vector<Vec3> &prevOut,
+    std::vector<DrawRange> *ranges = nullptr, std::vector<Light> *lights = nullptr)
+{
+    VertexWorkspace scratch;
+    BuildVerticesSubset(scene, t, dt, Primitives(scene), scratch, out, prevOut, ranges, lights);
 }
 
 // World-space bounds (bench coordinates) of the meshes in the subtree of `anchor` at time t,

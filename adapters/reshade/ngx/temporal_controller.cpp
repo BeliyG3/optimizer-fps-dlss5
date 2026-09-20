@@ -1,3 +1,4 @@
+#include "model_passes.h"
 #include "temporal_controller.h"
 
 #include "debug_readback.h"
@@ -26,19 +27,27 @@ void TemporalReason(FeatureState &st, const char *fmt, ...)
     }
 }
 
-// Creates or re-creates the machine for the current host textures. False (with a reason) when the
-// temporal mode cannot run on this feature.
-bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *output, ID3D12Resource *motion,
-                    ID3D12Resource *depth)
+bool EnsureTemporalDevice(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *output)
 {
-    if (st.temporalDisabled) return false;
     if (st.device == nullptr) {
         if (FAILED(cmd->GetDevice(IID_PPV_ARGS(&st.device))) || st.device == nullptr) {
             TemporalReason(st, "command list has no device");
             return false;
         }
-        output->GetDevice(IID_PPV_ARGS(&st.realDevice));
     }
+    if (st.realDevice == nullptr && (output == nullptr || FAILED(output->GetDevice(IID_PPV_ARGS(&st.realDevice))))) {
+        TemporalReason(st, "output has no device");
+        return false;
+    }
+    return true;
+}
+
+// Creates or re-creates the machine for the current host textures. False (with a reason) when the
+// temporal mode cannot run on this feature.
+bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *output, ID3D12Resource *motion,
+                    ID3D12Resource *depth)
+{
+    if (st.temporalDisabled || !EnsureTemporalDevice(st, cmd, output)) return false;
     if (!LoadShaders() || !Ctx().shaders.TemporalLoaded()) {
         st.temporalDisabled = true;
         TemporalReason(st, "temporal_*.dxbc missing in optimizer-fps-dlss5\\ beside the add-on");
@@ -137,6 +146,14 @@ pwtemporal::FrameInputs TemporalInputs(ID3D12Resource *color, ID3D12Resource *mo
         t.smoothRadius = smooth >= 0.0f ? smooth : std::clamp(Ctx().temporal.smoothRadiusPx, 0.0f, 128.0f);
     }
     t.residualCatmullRom = Ctx().temporal.residualCatmullRom;
+    // 26.28: the passes ported from the OptiScaler fork. A new pass fades in over the shorter of the
+    // cadence and three frames - long enough that the model's new opinion of the whole picture is not
+    // a click, short enough that the picture is not held back by a residual two passes old.
+    t.expectedDepth = !Ctx().diag.temporalNoExpect;
+    t.cells = !Ctx().diag.temporalNoCells;
+    const int every = std::clamp(Ctx().temporal.every, 2, 8);
+    t.phaseInFrames = Ctx().diag.temporalPhaseIn >= 0 ? static_cast<std::uint32_t>(Ctx().diag.temporalPhaseIn)
+                                                      : static_cast<std::uint32_t>(std::min(every - 1, 3));
     return t;
 }
 
@@ -196,15 +213,22 @@ int NativeTemporalBody(NativeTemporal &n)
     }
     n.stage = StageParamsWrite;
     if (st.temporal->AccValid() && !Ctx().temporal.debugSingleFrameMotion) {
-        // The model's history is as old as the residual: give it the accumulated displacement.
-        SetResource(params, "DLSSNR.MVec", st.temporal->Acc());
+        // The model's history is as old as the residual: give it the accumulated displacement. 26.28:
+        // where the chain does not end on the pixel's own surface in the residual's frame, hand the
+        // model a vector that leaves the picture instead - there is no history for it there.
+        ID3D12Resource *vectors = st.temporal->Acc();
+        if (!Ctx().diag.temporalNoModelMotion && st.temporal->ModelMv() != nullptr) {
+            st.temporal->RecordModelMotion(cmd, n.tin);
+            vectors = st.temporal->ModelMv();
+        }
+        SetResource(params, "DLSSNR.MVec", vectors);
         SetFloat(params, "DLSSNR.MVecScaleX", 1.0f);
         SetFloat(params, "DLSSNR.MVecScaleY", 1.0f);
         n.motionRewritten = true;
     }
     n.stage = StageModel;
     TimingBegin(st, cmd);
-    const int result = CallEvaluate(cmd, st.realHandle, params, n.callback);
+    const int result = EvaluateModelPasses(st, cmd, params, n.callback);
     TimingEnd(st, cmd);
     Ctx().status.lastNgxResult = result;
     n.stage = StageParamsRestore;
@@ -226,6 +250,10 @@ int NativeTemporalBody(NativeTemporal &n)
     pwtemporal::FrameInputs tinR = n.tin;
     tinR.residualBlend = Ctx().temporal.debugSingleFrameMotion ? 0.0f : kResidualBlend;
     st.temporal->RecordResidual(cmd, tinR, n.output, kHostOutputState);
+    // 26.28: while a pass is being phased in, the full frame is shown as "colour + the residual mix"
+    // too - otherwise the phase-in would only steady the carried frames and the full frame itself
+    // would still snap to the model's new version once per cadence.
+    st.temporal->RecordApply(cmd, tinR, n.output, kHostOutputState, n.outputRect.x, n.outputRect.y);
     n.stage = StageDone;
     return result;
 }

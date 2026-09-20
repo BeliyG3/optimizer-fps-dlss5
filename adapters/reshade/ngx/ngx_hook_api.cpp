@@ -185,6 +185,7 @@ void SetTemporal(const TemporalSettings &settings)
 {
     std::lock_guard<std::mutex> lock(Ctx().mutex);
     TemporalSettings s = settings;
+    s.modelPasses = std::clamp(s.modelPasses, 1, 3);
     s.mode = std::clamp(s.mode, 0, 3);
     s.every = std::clamp(s.every, s.mode == 3 ? 1 : 2, 8);
     s.maxAge = std::clamp(s.maxAge, 3, 16);
@@ -195,10 +196,14 @@ void SetTemporal(const TemporalSettings &settings)
     s.colorTolerance = std::clamp(s.colorTolerance, 0.0f, 1.0f);
     if (!std::isfinite(s.mvSearchRadiusPx)) s.mvSearchRadiusPx = 16.0f;
     s.mvSearchRadiusPx = std::clamp(s.mvSearchRadiusPx, 0.0f, 128.0f);
-    const bool modeChanged = s.mode != Ctx().temporal.mode;
+    if (s.mode != 0 && s.modelPasses > 1 && s.spreadPasses) s.every = std::max(s.every, s.modelPasses);
+    const bool multiChanged = (s.modelPasses > 1 || Ctx().temporal.modelPasses > 1) &&
+        (s.spreadPasses != Ctx().temporal.spreadPasses || s.modelPasses != Ctx().temporal.modelPasses || s.every != Ctx().temporal.every);
+    const bool modeChanged = s.mode != Ctx().temporal.mode || multiChanged;
     Ctx().temporal = s;
     if (modeChanged) {
         for (auto &entry : Ctx().features) {
+            RetireSpread(*entry.second, pwngx::SignalGate(entry.second->realDevice, entry.second->device));
             entry.second->temporalDisabled = false;
             entry.second->temporalLogged = false;
             if (entry.second->temporal) entry.second->temporal->Invalidate();

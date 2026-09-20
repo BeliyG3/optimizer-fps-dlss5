@@ -43,9 +43,10 @@ inline constexpr const char *kIniKeys[] = {
     "WorkShiftEnabled",                                            // SaveWorkShiftEnabledToStore
     "Brightness", "Gamma",                                         // SaveColorAdjustToStore
     "TemporalMode", "TemporalEvery", "TemporalMaxQueue",           // SaveTemporalToStore
+    "ModelPasses", "SpreadPasses",
     "OptiScalerTakeover",                                          // the takeover checkbox
 };
-static_assert(std::size(kIniKeys) == 21, "keep the list in step with the Save* functions below");
+static_assert(std::size(kIniKeys) == 23, "keep the list in step with the Save* functions below");
 
 // Only the mode, N and the queue cap are user settings (26.6.J). Everything else of the temporal machine
 // is fixed at the values that were verified on the bench and in the game (depth 0.05, colour 0.08, no
@@ -132,14 +133,18 @@ void LoadTemporalFromStore(const Store &store, pw_ngx::TemporalSettings &tempora
     if (store.GetInt("TemporalMode", integer)) t.mode = TemporalModeFromIni(integer);
     if (store.GetInt("TemporalEvery", integer)) t.every = std::clamp(integer, 1, 8);
     if (store.GetInt("TemporalMaxQueue", integer)) t.maxQueue = std::clamp(integer, 0, 8);
+    if (store.GetInt("ModelPasses", integer)) t.modelPasses = std::clamp(integer, 1, 3);
+    if (store.GetInt("SpreadPasses", integer)) t.spreadPasses = integer != 0;
     temporal = t;
 }
 
-// Only these three temporal keys are ever written. The read-only Debug* diagnostics keys
+// Cadence and model-pass settings are persisted together. The read-only Debug* diagnostics keys
 // (see LoadDiagnosticsFromReShadeIni) are deliberately absent from every Save function.
 template <class Store>
 void SaveTemporalToStore(Store &store, const pw_ngx::TemporalSettings &temporal)
 {
+    store.SetInt("ModelPasses", temporal.modelPasses);
+    store.SetInt("SpreadPasses", temporal.spreadPasses ? 1 : 0);
     store.SetInt("TemporalMode", temporal.mode);
     store.SetInt("TemporalEvery", temporal.every);
     store.SetInt("TemporalMaxQueue", temporal.maxQueue);

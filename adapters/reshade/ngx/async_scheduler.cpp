@@ -1,3 +1,4 @@
+#include "model_passes.h"
 #include "async_scheduler.h"
 
 #include "debug_readback.h"
@@ -93,6 +94,7 @@ bool EnsureAsync(FeatureState &st, const D3D12_RESOURCE_DESC &colorDesc, const D
         !pwngx::CreateTexture(a.device, (UINT) depthDesc.Width, depthDesc.Height, depthDesc.Format, D3D12_RESOURCE_FLAG_NONE, &a.depthBg) ||
         !pwngx::CreateTexture(a.device, (UINT) motionDesc.Width, motionDesc.Height, motionDesc.Format, D3D12_RESOURCE_FLAG_NONE, &a.mvBg) ||
         !pwngx::CreateTexture(a.device, (UINT) motionDesc.Width, motionDesc.Height, DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_FLAG_NONE, &a.accBg) ||
+        !pwngx::CreateTexture(a.device, (UINT) motionDesc.Width, motionDesc.Height, DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_FLAG_NONE, &a.modelAccBg) ||
         !pwngx::CreateTexture(a.device, (UINT) outputDesc.Width, outputDesc.Height, outputDesc.Format, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, &a.outputBg[0]) ||
         !pwngx::CreateTexture(a.device, (UINT) outputDesc.Width, outputDesc.Height, outputDesc.Format, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, &a.outputBg[1]))
         return fail("private copies could not be allocated");
@@ -189,7 +191,10 @@ int AsyncBody(AsyncCtx &c)
             static_cast<unsigned long long>(Ctx().evalCounter), a.inflight ? 1 : 0, static_cast<unsigned long long>(a.jobId),
             static_cast<unsigned long long>(a.fModel->GetCompletedValue()), static_cast<unsigned long long>(a.fInputs->GetCompletedValue()), a.sinceKick, a.age, a.signalPending ? 1 : 0);
     ID3D12GraphicsCommandList *cmd = c.cmd;
+    c.tin.background = true;
     const int every = std::clamp(Ctx().temporal.every, 1, 8);
+    const int phaseIn = Ctx().diag.temporalBackgroundPhaseIn;
+    c.tin.phaseInFrames = static_cast<std::uint32_t>(phaseIn >= 0 ? phaseIn : std::min(every - 1, 3));
     const std::uint32_t maxAge = static_cast<std::uint32_t>(std::clamp(Ctx().temporal.maxAge, 3, 16));
     D3D12_RESOURCE_STATES bgInputState = kHostInputState; // private copies rest in the host's input state
 
@@ -254,8 +259,7 @@ int AsyncBody(AsyncCtx &c)
     //    handed the model the plain one-frame vector: its history was then misaligned by age-1 frames,
     //    which doubled the edges of far objects on every pass - the background-mode flicker.)
     c.stage = StageTemporalAccumulate;
-    if (st.temporal->HasResidual()) st.temporal->RecordAccumulate(cmd, c.tin);
-    if (a.jobId > 0 && !st.temporal->PendingMirrorsAcc()) st.temporal->RecordAccumulatePending(cmd, c.tin);
+    st.temporal->RecordBackgroundAccumulate(cmd, c.tin, a.jobId > 0 && !a.discard && (a.inflight || st.temporal->HasResidual()));
 
     // 2. Adopt the finished pass (or force the host queue to wait for it when the residual is too old).
     bool ready = a.inflight && a.fModel->GetCompletedValue() >= a.jobId;
@@ -330,8 +334,6 @@ int AsyncBody(AsyncCtx &c)
         }
         c.stage = StageCopyOut;
         D3D12_RESOURCE_STATES s = bgInputState;
-        AsyncCopyInput(cmd, c.color, a.colorBg, s);
-        AsyncCopyInput(cmd, c.depth, a.depthBg, s, c.depthState, c.depthSub);
         if (st.temporal->PendingMirrorsAcc() && st.temporal->AccValid() && !Ctx().temporal.debugSingleFrameMotion) {
             // Adopted since the last kick: the main chain is the displacement to the last pass's frame.
             st.temporal->RecordCopyAcc(cmd, false, a.accBg, bgInputState);
@@ -343,6 +345,13 @@ int AsyncBody(AsyncCtx &c)
             AsyncCopyInput(cmd, c.motion, a.mvBg, s);
             a.mvIsAcc = false;
         }
+        Barrier(cmd, a.modelAccBg, a.modelAccState, bgInputState);
+        st.temporal->RecordBackgroundKick(cmd, c.tin, !st.temporal->PendingMirrorsAcc(),
+                                          a.mvIsAcc ? a.modelAccBg : nullptr, bgInputState,
+                                          a.colorBg, a.depthBg, !Ctx().diag.temporalNoBackgroundModelMotion);
+        // Validation still needs the previous kick's guides. Replace them only after the host pass.
+        AsyncCopyInput(cmd, c.color, a.colorBg, s);
+        AsyncCopyInput(cmd, c.depth, a.depthBg, s, c.depthState, c.depthSub);
         const int next = 1 - a.outIndex;
         ID3D12CommandAllocator *alloc = a.allocators[slot];
         ID3D12GraphicsCommandList *list = a.lists[slot];
@@ -374,7 +383,7 @@ int AsyncBody(AsyncCtx &c)
                 input.colorEncoding = EncodingFor(st.colorView);
                 const pw::D3D12SourceResources sources = {{a.colorBg, st.colorView},
                                                           {a.depthBg, TypedView(a.depthDesc.Format, true)},
-                                                          {a.mvIsAcc ? a.accBg : a.mvBg, a.mvIsAcc ? DXGI_FORMAT_R16G16_FLOAT : TypedView(a.motionDesc.Format, false)},
+                                                          {a.mvIsAcc ? a.modelAccBg : a.mvBg, a.mvIsAcc ? DXGI_FORMAT_R16G16_FLOAT : TypedView(a.motionDesc.Format, false)},
                                                           {nullptr, DXGI_FORMAT_UNKNOWN}};
                 st.packKeys[FeatureState::kBgPackSlot] = FeatureState::SlotKey{};
                 st.unpackValid[FeatureState::kBgPackSlot] = false;
@@ -392,7 +401,7 @@ int AsyncBody(AsyncCtx &c)
             }
             EvalContext bg{};
             bg.st = &st; bg.cmd = list; bg.params = c.params; bg.callback = c.callback;
-            bg.color = a.colorBg; bg.depth = a.depthBg; bg.motion = a.mvIsAcc ? a.accBg : a.mvBg; bg.output = a.outputBg[next];
+            bg.color = a.colorBg; bg.depth = a.depthBg; bg.motion = a.mvIsAcc ? a.modelAccBg : a.mvBg; bg.output = a.outputBg[next];
             bg.ui = c.ui; bg.uiAlpha = c.uiAlpha; bg.backbuffer = c.backbuffer;
             bg.colorRect = c.colorRect; bg.depthRect = c.depthRect; bg.motionRect = c.motionRect; bg.outputRect = c.outputRect;
             bg.mvScaleX = a.mvIsAcc ? 1.0f : c.mvScaleX; bg.mvScaleY = a.mvIsAcc ? 1.0f : c.mvScaleY;
@@ -414,12 +423,12 @@ int AsyncBody(AsyncCtx &c)
             c.stage = StageParamsWrite;
             SetResource(c.params, "DLSSNR.Color", a.colorBg);
             SetResource(c.params, "DLSSNR.Depth", a.depthBg);
-            SetResource(c.params, "DLSSNR.MVec", a.mvIsAcc ? a.accBg : a.mvBg);
+            SetResource(c.params, "DLSSNR.MVec", a.mvIsAcc ? a.modelAccBg : a.mvBg);
             SetResource(c.params, "DLSSNR.Output", a.outputBg[next]);
             if (a.mvIsAcc) { SetFloat(c.params, "DLSSNR.MVecScaleX", 1.0f); SetFloat(c.params, "DLSSNR.MVecScaleY", 1.0f); }
             c.paramsRewritten = true;
             c.stage = StageModel;
-            result = CallEvaluate(list, st.realHandle, c.params, c.callback);
+            result = EvaluateModelPasses(st, list, c.params, c.callback);
             c.stage = StageParamsRestore;
             AsyncRestoreParams(c);
         }

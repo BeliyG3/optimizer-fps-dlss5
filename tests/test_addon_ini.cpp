@@ -126,6 +126,8 @@ bool SameSettings(const pw_addon::AddonPersisted &lhs, const pw_addon::AddonPers
            lhs.optiTakeover == rhs.optiTakeover &&
            Near(lhs.brightnessPercent, rhs.brightnessPercent) &&
            Near(lhs.gamma, rhs.gamma) &&
+           lhs.temporal.modelPasses == rhs.temporal.modelPasses &&
+           lhs.temporal.spreadPasses == rhs.temporal.spreadPasses &&
            lhs.temporal.mode == rhs.temporal.mode &&
            lhs.temporal.every == rhs.temporal.every &&
            lhs.temporal.maxQueue == rhs.temporal.maxQueue;
@@ -167,6 +169,8 @@ pw_addon::AddonPersisted NonDefaultPersisted()
     persisted.optiTakeover = false;
     persisted.brightnessPercent = -3.5f;
     persisted.gamma = 1.15f;
+    persisted.temporal.modelPasses = 3;
+    persisted.temporal.spreadPasses = false;
     persisted.temporal.mode = 3;
     persisted.temporal.every = 4;
     persisted.temporal.maxQueue = 1;
@@ -176,7 +180,7 @@ pw_addon::AddonPersisted NonDefaultPersisted()
 // (a) A save writes exactly kIniKeys[] - no read-only key, no Debug* diagnostic, nothing left out.
 void TestSavedKeySet()
 {
-    Check(std::size(pw_addon::kIniKeys) == 21, "the add-on persists 21 keys");
+    Check(std::size(pw_addon::kIniKeys) == 23, "the add-on persists 23 keys");
 
     MemoryIni ini;
     pw_addon::SaveToStore(ini, NonDefaultPersisted());
@@ -273,7 +277,7 @@ void TestLegacySection()
     const std::size_t before = ini.Keys().size();
     pw_addon::SaveToStore(ini, loaded);
     const std::vector<std::string> after = ini.Keys();
-    Check(after.size() == before + 1, "a save adds only the one missing key and removes none");
+    Check(after.size() == before + 3, "a save adds the takeover and model-pass keys and removes none");
     for (const char *foreign : {"TemporalFeather", "TemporalSeparateZone", "TemporalToneMatch",
                                 "TemporalToneSmoothing", "TemporalCatmullRom", "TemporalHoleFill",
                                 "TemporalWarpBase", "TemporalMaxMotion", "TemporalResidualBlend",
@@ -370,6 +374,13 @@ int main()
     TestTemporalMode();
     TestClamps();
     TestDefaults();
+    {
+        pw_ngx::TemporalSettings t;
+        pw_addon::LoadTemporalFromStore(MemoryIni("ModelPasses=99\nSpreadPasses=0\n"), t);
+        Check(t.modelPasses == 3 && !t.spreadPasses, "model passes clamp high and spread reads false");
+        pw_addon::LoadTemporalFromStore(MemoryIni("ModelPasses=-4\n"), t);
+        Check(t.modelPasses == 1 && t.spreadPasses, "model passes clamp low and spread defaults on");
+    }
     if (failures == 0) std::cout << "addon ini schema tests passed\n";
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

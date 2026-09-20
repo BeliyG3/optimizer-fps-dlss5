@@ -36,6 +36,8 @@ struct AsyncJob final : public pwngx::Disposable {
     std::uint64_t slotJob[kSlots] = {};
     ID3D12Resource *colorBg = nullptr, *depthBg = nullptr, *mvBg = nullptr, *outputBg[2] = {};
     ID3D12Resource *accBg = nullptr; // 26.23: the machine's accumulated chain (R16G16_FLOAT) - separate from mvBg, whose format is the host's (R32G32_FLOAT in Fallen Order)
+    ID3D12Resource *modelAccBg = nullptr; // validated model vectors; accBg stays unfiltered for residual alignment
+    D3D12_RESOURCE_STATES modelAccState = D3D12_RESOURCE_STATE_COMMON;
     D3D12_RESOURCE_STATES outputState[2] = {D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON};
     ID3D12Resource *baseBg[2] = {}; // warped: the pass's packed colour unpacked without the model (temporal base)
     D3D12_RESOURCE_STATES baseState[2] = {D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON};
@@ -85,7 +87,10 @@ struct AsyncJob final : public pwngx::Disposable {
         if (!queue || !fModel) return;
         if (AsyncVerbose()) pwngx::Log(false, "Optimizer FPS NGX hook [async] settle: job %llu inflight %d fModel %llu fInputs %llu signalPending %d", (unsigned long long) jobId, inflight ? 1 : 0, (unsigned long long) fModel->GetCompletedValue(), (unsigned long long) fInputs->GetCompletedValue(), signalPending ? 1 : 0);
         if (signalPending && fInputs) {
-            pwngx::SignalRegisteredQueues(device, nullptr, fInputs, jobId);
+            // Retirement can precede the next evaluate. Use the observed host queue just as the
+            // normal frame path does; its registry entry may use the proxy device, not this device.
+            if (submitSeen && submitQueue) submitQueue->Signal(fInputs, jobId);
+            else pwngx::SignalRegisteredQueues(device, nullptr, fInputs, jobId);
             signalPending = false;
         }
         if (inflight && fModel->GetCompletedValue() < jobId) {
@@ -108,7 +113,7 @@ struct AsyncJob final : public pwngx::Disposable {
         if (AsyncVerbose() && queue) pwngx::Log(false, "Optimizer FPS NGX hook [async] releasing the background job objects");
         for (auto &l : lists) if (l) { l->Release(); l = nullptr; }
         for (auto &a : allocators) if (a) { a->Release(); a = nullptr; }
-        for (ID3D12Resource **r : {&colorBg, &depthBg, &mvBg, &accBg, &outputBg[0], &outputBg[1], &baseBg[0], &baseBg[1], &queryReadback}) if (*r) { (*r)->Release(); *r = nullptr; }
+        for (ID3D12Resource **r : {&colorBg, &depthBg, &mvBg, &accBg, &modelAccBg, &outputBg[0], &outputBg[1], &baseBg[0], &baseBg[1], &queryReadback}) if (*r) { (*r)->Release(); *r = nullptr; }
         if (baseRtvHeap) { baseRtvHeap->Release(); baseRtvHeap = nullptr; }
         if (queryHeap) { queryHeap->Release(); queryHeap = nullptr; }
         if (fInputs) { fInputs->Release(); fInputs = nullptr; }

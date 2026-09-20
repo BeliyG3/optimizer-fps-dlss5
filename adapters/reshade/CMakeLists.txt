@@ -23,7 +23,8 @@ set_target_properties(peripheral_warp_reshade PROPERTIES
     SUFFIX "${_pw_addon_suffix}")
 if(MSVC)
     # d3d12.dll is delay-loaded: the add-on's mere load then pulls nothing but kernel32/user32 into the game, like renodx.
-    target_link_options(peripheral_warp_reshade PRIVATE /DELAYLOAD:d3d12.dll /DELAYLOAD:d3d11.dll)
+    # D3D11 is used through host interfaces, so there is no DLL import to delay-load.
+    target_link_options(peripheral_warp_reshade PRIVATE /DELAYLOAD:d3d12.dll)
     target_link_libraries(peripheral_warp_reshade PRIVATE delayimp)
 endif()
 if(MSVC)
@@ -37,6 +38,10 @@ endif()
 if(PW_BUILD_RESHADE_REMOTE32)
     add_library(peripheral_warp_reshade_remote MODULE
         producer_remote.cpp
+        remote/remote_link.cpp
+        remote/remote_link.h
+        remote/overlay_event.cpp
+        remote/overlay_event.h
         pw_remote_ipc.h)
     target_compile_features(peripheral_warp_reshade_remote PRIVATE cxx_std_20)
     target_include_directories(peripheral_warp_reshade_remote PRIVATE

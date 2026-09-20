@@ -120,7 +120,8 @@ if(PW_BUILD_D3D_ADAPTERS)
             DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/peripheral_warp/adapters/d3d12)
 endif()
 install(DIRECTORY shaders/ DESTINATION ${CMAKE_INSTALL_DATADIR}/peripheral-warp/shaders
-        FILES_MATCHING PATTERN "*.hlsl" PATTERN "*.hlsli")
+        FILES_MATCHING PATTERN "*.hlsl" PATTERN "*.hlsli" PATTERN "temporal_layout.h"
+        PATTERN "temporal_passes.def" PATTERN "temporal_passes.md")
 install(EXPORT PeripheralWarpTargets
         FILE PeripheralWarpTargets.cmake
         NAMESPACE PeripheralWarp::

@@ -34,6 +34,7 @@ struct EvalContext {
     bool temporalFull;       // this frame runs the model on the whole frame
     bool accumulate;         // record the motion accumulation this frame
     bool motionIsAcc;        // Pack reads the accumulated displacement instead of the host's motion
+    bool modelMotion;        // 26.28: that displacement is the tested one (PSModelMotion), recorded after the accumulation
     pwtemporal::FrameInputs tin;
     // Temporal base (stage 26.3): after Pack, unpack the packed colour without the model into
     // `baseTarget` (native, output format) and base the residual / reprojection on it.

@@ -21,6 +21,14 @@ struct DiagnosticsConfig {
     float temporalBlend = -1.0f;      // DebugTemporalBlend: cross-pass residual weight (<0: the built-in 0.6)
     float temporalDepth = -1.0f;      // DebugTemporalDepth: depth tolerance override (<0: the setting's value)
     float temporalSmooth = -1.0f;     // DebugTemporalSmooth: compose radius override, 0 = off (<0: the setting's value)
+    // 26.28: switches for the passes ported from the OptiScaler fork, so a regression can be bisected
+    // in a game without a rebuild. Background defaults follow the uncontended GPU comparison.
+    bool temporalNoExpect = false;      // DebugTemporalNoExpect: depth tests compare this frame's depth, as before 26.28
+    bool temporalNoCells = false;       // DebugTemporalNoCells: rejected pixels are not painted from the accepted cells
+    bool temporalNoModelMotion = false; // DebugTemporalNoModelMotion: the model gets the plain chain, not the tested one
+    bool temporalNoBackgroundModelMotion = false; // Same key; validation improves the measured background combination
+    int temporalPhaseIn = -1;           // DebugTemporalPhaseIn: carried frames a new pass fades in over (0 = off, <0 = automatic)
+    int temporalBackgroundPhaseIn = -1; // Same key; automatic phase-in, evaluated on the D3D12 path-traced lab
     bool debugLayerLog = false;       // DebugLayer=1 (which also turns the D3D12 debug layer on): dump its messages
     bool asyncCompute = false;        // DebugAsyncCompute: background pass on a compute queue instead of a direct one
     bool asyncNormalPriority = false; // DebugAsyncNormalPriority: normal instead of high queue priority

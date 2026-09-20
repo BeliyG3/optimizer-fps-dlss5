@@ -235,6 +235,18 @@ void DrawTemporal(const pw_ngx::Status &hook)
             ImGui::PopID();
             return edited;
         };
+        temporalChanged |= tsliderInt("Model passes", &t.modelPasses, 1, 3, 1);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Each extra pass runs the whole model again on its previous output. Fork bench: 13-15 ms per extra pass at 4K\non a 4080 SUPER; gains fade after the second pass, each pass darkens the picture by about 1%%.\nA second model needs about 1 GB VRAM. In 007 First Light two passes exceeded the VRAM budget: 0.4-0.6 s/frame.");
+        temporalChanged |= ImGui::Checkbox("Spread passes over frames", &t.spreadPasses);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("With temporal mode and 2-3 passes: one model pass per frame. Only the completed cycle is shown;\nthe previous cycle is carried until then. N is raised to the number of passes. Extra carry buffers cost about 0.5 GB VRAM.\nSpreading uses the host queue, including when background mode is selected.");
+        ImGui::Text("Model passes running: %d / %d", hook.modelPassesRunning, t.modelPasses);
+        if (hook.modelPassReason[0]) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.15f, 1.0f), "%s", hook.modelPassReason);
+            ImGui::PopTextWrapPos();
+        }
         // Two modes that work (the centre-every-frame mode 2 was withdrawn on 2026-09-06; ini TemporalMode=2 falls back to 1).
         const char *shownModes[] = {"Every frame", "Interpolate: full NR every N-th frame (sync)", "Interpolate: model in the background (async)"};
         if (t.mode == 2) t.mode = 1;
@@ -258,6 +270,7 @@ void DrawTemporal(const pw_ngx::Status &hook)
         }
         if (temporalChanged) {
             t.every = std::clamp(t.every, t.mode == 3 ? 1 : 2, 8);
+            if (t.mode != 0 && t.spreadPasses && t.modelPasses > 1) t.every = std::max(t.every, t.modelPasses);
             SaveTemporalToReShadeIni();
             pw_ngx::SetTemporal(t);
         }

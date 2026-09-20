@@ -1,3 +1,4 @@
+#include "model_passes.h"
 #include "hook_dispatch.h"
 
 #include "async_scheduler.h"
@@ -44,6 +45,7 @@ int RecreateReal(FeatureState &st, ID3D12GraphicsCommandList *cmd, std::uint32_t
         }
         st.realHandle = nullptr;
     }
+    RetireModelPasses(st, gate.Empty() ? pwngx::SignalGate(st.realDevice, st.device) : gate);
     WriteSizes(st.params, w, h);
     // The host's UI/backbuffer resources stay native-sized while the model works on the packed frame,
     // so the model's UI correction is switched off for a warped feature (its UI inputs are withheld).
@@ -133,6 +135,7 @@ int __cdecl HookRelease(void *handle)
     pwngx::GateSet gate;
     BuryAsync(st, &gate);
     if (gate.Empty() && !st.asyncTicket.Empty()) { gate = st.asyncTicket; st.asyncTicket.Clear(); }
+    RetireModelPasses(st, gate.Empty() ? pwngx::SignalGate(st.realDevice, st.device) : gate);
     if (!gate.Empty()) {
         // A background pass may still run the model: everything waits in the graveyard for its fence.
         BuryGpu(st, gate);
@@ -314,7 +317,20 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
         SetUInt(params, "DLSSNR.Reset", 1);
     }
 
-    const int effectiveMode = EffectiveTemporalMode(st);
+    if (PrepareModelPasses(st, cmd, params)) return kNgxSuccess;
+
+    if (SpreadRequested(st)) {
+        const int spread = SpreadEvaluate(st, cmd, params, callback);
+        if (spread != kNotHandled) return spread;
+    } else if (st.spread) {
+        RetireSpread(st, pwngx::SignalGate(st.realDevice, st.device));
+        if (st.temporal) st.temporal->Invalidate();
+    }
+
+    // Layout recreation retires both device aliases. Restore them before checking the host queues,
+    // or the first native frame falsely falls back to synchronous interpolation after every switch.
+    const bool temporalDeviceReady = Ctx().temporal.mode != 3 || EnsureTemporalDevice(st, cmd, GetResource(params, "DLSSNR.Output"));
+    const int effectiveMode = temporalDeviceReady ? EffectiveTemporalMode(st) : 1;
     if (!st.warped && !st.disabled && effectiveMode == 3) {
         const int handled = AsyncTemporalEvaluate(st, cmd, params, callback, nullptr);
         if (handled != kNotHandled) return handled;
@@ -331,11 +347,14 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
             if (st.config.mode == pw::WarpMode::Off) SetReason("mode is Off");
             else SetReason("the layout does not reduce the frame (work size equals native)");
         }
-        void *real = st.realHandle;
         TimingBegin(st, cmd);
-        lock.unlock();
-        const int result = CallEvaluate(cmd, real, params, callback);
-        lock.lock();
+        int result = kNgxSuccess;
+        if (st.passesReady == 1) {
+            void *real = st.realHandle;
+            lock.unlock();
+            result = CallEvaluate(cmd, real, params, callback);
+            lock.lock();
+        } else result = EvaluateModelPasses(st, cmd, params, callback);
         TimingEnd(st, cmd);
         return result;
     }
@@ -409,7 +428,11 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
     if (plan.active && EffectiveTemporalMode(st) == Ctx().temporal.mode) Ctx().status.temporalReason[0] = 0;
     const bool useAcc = plan.active && plan.full && EffectiveTemporalMode(st) != 3 && st.temporal->AccValid() && !Ctx().temporal.debugSingleFrameMotion;
     ID3D12Resource *const hostMotion = motion;
-    if (useAcc) motion = st.temporal->NextAcc(); // written by the accumulation recorded before Pack
+    // 26.28: where the chain does not end on the pixel's own surface in the residual's frame the model
+    // must be told there is no history there (PSModelMotion), or it blends its old picture of the
+    // occluder into the wall he has left. Both textures are written before Pack reads them.
+    const bool useModelMv = useAcc && !Ctx().diag.temporalNoModelMotion && st.temporal->ModelMv() != nullptr;
+    if (useAcc) motion = useModelMv ? st.temporal->ModelMv() : st.temporal->NextAcc(); // written by the accumulation recorded before Pack
     pwtemporal::FrameInputs tin = TemporalInputs(color, hostMotion, depth, st.colorView, TypedView(motionDesc.Format, false),
                                                  TypedView(depthDesc.Format, true), colorRect, motionRect, depthRect, mvScaleX,
                                                  mvScaleY, depthInverted != 0);
@@ -557,6 +580,7 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
     c.temporalFull = plan.full;
     c.accumulate = plan.active && (!plan.full || useAcc);
     c.motionIsAcc = useAcc;
+    c.modelMotion = useModelMv;
     c.tin = tin;
     c.wantBase = plan.active && Ctx().temporal.warpBase && st.unpackBase != nullptr;
     c.baseTarget = st.unpackBase;

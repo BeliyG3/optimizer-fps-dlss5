@@ -1,0 +1,72 @@
+{
+  "lanes": [
+    {
+      "x": -6.8,
+      "collisions": []
+    },
+    {
+      "x": 6.8,
+      "collisions": []
+    }
+  ],
+  "bay_spacing_failures": [],
+  "standing_clearances": [
+    {
+      "character": "hiphop_armature",
+      "xy": [
+        -1.600000023841858,
+        -4.900000095367432
+      ],
+      "clearance": 0.01102619171142577,
+      "nearest": "metal_office_desk_drawer_01"
+    },
+    {
+      "character": "salsa_armature",
+      "xy": [
+        1.5,
+        17.0
+      ],
+      "clearance": 2.1110256195068358,
+      "nearest": "metal_office_desk.008"
+    },
+    {
+      "character": "mannequin_armature",
+      "xy": [
+        2.450000047683716,
+        -2.0999996662139893
+      ],
+      "clearance": 0.6110260963439942,
+      "nearest": "metal_office_desk.041"
+    },
+    {
+      "character": "dummy_armature",
+      "xy": [
+        2.450000047683716,
+        -1.0999996662139893
+      ],
+      "clearance": 0.5565874308347702,
+      "nearest": "metal_office_desk.009"
+    },
+    {
+      "character": "olivia_talking_armature",
+      "xy": [
+        -2.3499999046325684,
+        0.09999978542327881
+      ],
+      "clearance": 0.3714774186461038,
+      "nearest": "booth_plinth"
+    },
+    {
+      "character": "chad_talking_armature",
+      "xy": [
+        -2.3499999046325684,
+        1.0999997854232788
+      ],
+      "clearance": 0.06499986648559569,
+      "nearest": "booth_plinth"
+    }
+  ],
+  "walker_minimum_separation": 0.8001570109863925,
+  "salsa_floor_lift": 0.005986785817891359,
+  "salsa_floor_minimum": 0.001
+}

@@ -43,6 +43,9 @@ void BuryGpu(FeatureState &st, const pwngx::GateSet &gate)
 {
     pwngx::Grave g;
     g.gate = gate;
+    if (st.spread) g.disposables.push_back(std::move(st.spread));
+    if (st.passStaging) g.objects.push_back(st.passStaging);
+    st.passStaging = nullptr;
     g.adapter12 = std::move(st.adapter);
     if (st.temporal) g.disposables.push_back(std::move(st.temporal));
     if (st.async) g.disposables.push_back(std::move(st.async));

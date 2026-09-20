@@ -1,3 +1,4 @@
+#include "model_passes.h"
 #include "warp_recorder.h"
 
 #include "hook_context.h"
@@ -188,6 +189,8 @@ int WarpedBody(EvalContext &c)
     if (c.temporalActive && c.accumulate) {
         c.stage = StageTemporalAccumulate;
         st.temporal->RecordAccumulate(cmd, c.tin);
+        // The vectors the model gets on this full pass (hook_dispatch pointed Pack's source at them).
+        if (c.modelMotion) st.temporal->RecordModelMotion(cmd, c.tin);
     }
 
     // ---- Pack ----
@@ -218,7 +221,7 @@ int WarpedBody(EvalContext &c)
 
     c.stage = StageModel;
     TimingBegin(st, cmd);
-    const int result = CallEvaluate(cmd, st.realHandle, params, c.callback);
+    const int result = EvaluateModelPasses(st, cmd, params, c.callback);
     TimingEnd(st, cmd);
     Ctx().status.lastNgxResult = result;
 
@@ -282,10 +285,17 @@ int WarpedBody(EvalContext &c)
                     st.temporal->RecordResidual(cmd, tinR, st.unpackTarget, st.unpackState);
                 }
                 c.stage = StageCopyOut;
-                Barrier(cmd, st.unpackTarget, st.unpackState, D3D12_RESOURCE_STATE_COPY_SOURCE);
-                BarrierExternal(cmd, c.output, kHostOutputState, D3D12_RESOURCE_STATE_COPY_DEST);
-                cmd->CopyResource(c.output, st.unpackTarget);
-                BarrierExternal(cmd, c.output, D3D12_RESOURCE_STATE_COPY_DEST, kHostOutputState);
+                if (c.temporalActive && st.temporal->PhaseInActive()) {
+                    // 26.28: while a pass is being phased in, the full frame is shown as "colour + the
+                    // residual mix" too; otherwise it would still snap to the model's new version once
+                    // per cadence while only the carried frames faded.
+                    st.temporal->RecordApply(cmd, tinB, c.output, kHostOutputState, c.outputRect.x, c.outputRect.y);
+                } else {
+                    Barrier(cmd, st.unpackTarget, st.unpackState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                    BarrierExternal(cmd, c.output, kHostOutputState, D3D12_RESOURCE_STATE_COPY_DEST);
+                    cmd->CopyResource(c.output, st.unpackTarget);
+                    BarrierExternal(cmd, c.output, D3D12_RESOURCE_STATE_COPY_DEST, kHostOutputState);
+                }
             }
             ++Ctx().status.evaluations;
             Ctx().status.active = true;

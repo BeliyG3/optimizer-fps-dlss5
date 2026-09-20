@@ -36,7 +36,19 @@ set(_pw_shader_sources
     "${PROJECT_SOURCE_DIR}/shaders/fullscreen.hlsli"
     "${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_common.hlsli"
     "${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_pack.hlsli"
-    "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl")
+    "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl"
+    "${PROJECT_SOURCE_DIR}/shaders/temporal_cs.hlsl")
+
+# One manifest drives both products' temporal binaries and pipeline tables.
+set(PW_TEMPORAL_SOURCE "${PROJECT_SOURCE_DIR}/shaders/temporal_cs.hlsl")
+list(APPEND _pw_shader_sources "${PROJECT_SOURCE_DIR}/shaders/temporal_passes.def" "${PROJECT_SOURCE_DIR}/shaders/temporal_layout.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/shaders/temporal_passes.def")
+file(STRINGS "${PROJECT_SOURCE_DIR}/shaders/temporal_passes.def" _pw_pass_rows REGEX "^PW_TEMPORAL_PASS")
+foreach(_pw_row IN LISTS _pw_pass_rows)
+    string(REGEX REPLACE "PW_TEMPORAL_PASS\\(([A-Za-z]+),.*" "\\1" _pw_name "${_pw_row}")
+    list(APPEND PW_TEMPORAL_PASSES_NAMES "temporal_${_pw_name}_cs")
+    list(APPEND PW_TEMPORAL_PASSES_ENTRIES "CS${_pw_name}")
+endforeach()
 
 function(pw_compile_dxbc name source entry profile)
     set(output "${PW_SHADER_OUTPUT_DIR}/${name}.dxbc")
@@ -54,18 +66,19 @@ pw_compile_dxbc(pack_ps "${PROJECT_SOURCE_DIR}/shaders/pack.hlsl" PSMain ps_5_0)
 pw_compile_dxbc(unpack_ps "${PROJECT_SOURCE_DIR}/shaders/unpack.hlsl" PSMain ps_5_0)
 pw_compile_dxbc(preview_ps "${PROJECT_SOURCE_DIR}/shaders/preview.hlsl" PSMain ps_5_0)
 pw_compile_dxbc(outline_ps "${PROJECT_SOURCE_DIR}/shaders/outline.hlsl" PSMain ps_5_0)
-pw_compile_dxbc(temporal_residual_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSResidual ps_5_0)
-pw_compile_dxbc(temporal_accumulate_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSAccumulate ps_5_0)
-pw_compile_dxbc(temporal_reproject_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSReproject ps_5_0)
-pw_compile_dxbc(temporal_downsample_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSDownsample ps_5_0)
-pw_compile_dxbc(temporal_compose_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSCompose ps_5_0)
+foreach(_pw_pass_name _pw_pass_entry IN ZIP_LISTS PW_TEMPORAL_PASSES_NAMES PW_TEMPORAL_PASSES_ENTRIES)
+    pw_compile_dxbc("${_pw_pass_name}" "${PW_TEMPORAL_SOURCE}" "${_pw_pass_entry}" cs_5_0)
+endforeach()
 
 if(PW_DXC_EXECUTABLE)
     function(pw_compile_spirv name source entry profile)
         set(output "${PW_SHADER_OUTPUT_DIR}/${name}.spv")
         add_custom_command(
             OUTPUT "${output}"
-            COMMAND "${PW_DXC_EXECUTABLE}" -spirv -fspv-target-env=vulkan1.1 -Ges -WX -O3
+            # -Wno-ambig-lit-shift: dxc warns (and -WX fails) on `1 << ring` with an int literal;
+            # the temporal shader is kept byte-identical with the OptiScaler fork's copy, which is
+            # built with fxc alone, so the suffix cannot be added there.
+            COMMAND "${PW_DXC_EXECUTABLE}" -spirv -fspv-target-env=vulkan1.1 -Ges -WX -O3 -Wno-ambig-lit-shift
                     -T "${profile}" -E "${entry}" -I "${PROJECT_SOURCE_DIR}/shaders"
                     -Fo "${output}" "${source}"
             DEPENDS ${_pw_shader_sources}
@@ -77,11 +90,9 @@ if(PW_DXC_EXECUTABLE)
     pw_compile_spirv(unpack_ps "${PROJECT_SOURCE_DIR}/shaders/unpack.hlsl" PSMain ps_6_0)
     pw_compile_spirv(preview_ps "${PROJECT_SOURCE_DIR}/shaders/preview.hlsl" PSMain ps_6_0)
     pw_compile_spirv(outline_ps "${PROJECT_SOURCE_DIR}/shaders/outline.hlsl" PSMain ps_6_0)
-    pw_compile_spirv(temporal_residual_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSResidual ps_6_0)
-    pw_compile_spirv(temporal_accumulate_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSAccumulate ps_6_0)
-    pw_compile_spirv(temporal_reproject_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSReproject ps_6_0)
-    pw_compile_spirv(temporal_downsample_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSDownsample ps_6_0)
-    pw_compile_spirv(temporal_compose_ps "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl" PSCompose ps_6_0)
+    foreach(_pw_pass_name _pw_pass_entry IN ZIP_LISTS PW_TEMPORAL_PASSES_NAMES PW_TEMPORAL_PASSES_ENTRIES)
+        pw_compile_spirv("${_pw_pass_name}" "${PW_TEMPORAL_SOURCE}" "${_pw_pass_entry}" cs_6_0)
+    endforeach()
 else()
     message(STATUS "dxc.exe was not found; SPIR-V artefacts will not be generated (set PW_DXC_EXECUTABLE to enable them)")
 endif()

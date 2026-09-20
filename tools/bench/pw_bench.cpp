@@ -190,6 +190,7 @@ static Mat4 LookAt(Vec3 eye, Vec3 target)
 }
 // Reverse-Z perspective (depth 1 at the near plane, 0 at the far plane) with a sub-pixel jitter in
 // pixels of the target (x right, y down), as games do for DLSS.
+static bool g_standardDepth = false; // --depth standard
 static Mat4 Perspective(float fovYDeg, float aspect, float n, float f, float jx, float jy, float w, float h)
 {
     const float ys = 1.0f / std::tan(fovYDeg * 3.14159265f / 360.0f);
@@ -202,6 +203,12 @@ static Mat4 Perspective(float fovYDeg, float aspect, float n, float f, float jx,
     p.m[2][2] = n / (n - f);
     p.m[2][3] = n * f / (f - n);
     p.m[3][2] = 1.0f;
+    if (g_standardDepth) {
+        // --depth standard: near = 0, far = 1. Everything past a few metres sits within a few percent of
+        // 1, which is what broke a relative depth test in 007 First Light.
+        p.m[2][2] = f / (f - n);
+        p.m[2][3] = -n * f / (f - n);
+    }
     return p;
 }
 
@@ -386,6 +393,10 @@ cbuffer Frame : register(b0) {
     float4 hdriParams;    // x: ambient radiance clamp (the sun disk must not leak into the diffuse lookup), yzw unused
     float4 env;           // xy: cos/sin of the HDRI yaw (world -> HDRI space), z: shadow-map normalized depth
                           //     per world unit (bias in world units -> ndc), w: PCF penumbra radius in shadow texels
+    // Interior scenes (--gltf with emissive lamps): the lamps as point lights, and what a game hands DLSS.
+    float4 lab;           // x: light count, y: 1 = --hdr (linear radiance out, no tone mapper), z: --boil amplitude, w: 1 = standard depth (far = 1)
+    float4 lightPos[24];  // xyz world position
+    float4 lightPower[24]; // rgb: radiance x area of the emissive surface (scaled by the exposure)
 };
 cbuffer Instances : register(b1) {
     float4 boxPos[64];    // world position (centre), w = unused
@@ -525,13 +536,14 @@ float3 Palette(float k) {
     if (i == 4) return float3(0.8,0.3,0.8);
     return float3(0.9,0.9,0.9);
 }
+)" R"(
 struct PSOut { float4 color : SV_Target0; float2 motion : SV_Target1; };
 PSOut PS(VSOut i) {
     PSOut o;
     float3 albedo;
     if (i.material < -1.5) {
         // glTF mesh: the material's base colour, optionally with the 0.2 m stripes by local height.
-        float stripe = i.material < -2.5 ? (fmod(abs(floor(i.localY * 5.0)), 2.0) < 1.0 ? 1.0 : 0.55) : 1.0;
+        float stripe = (i.material < -2.5 && i.material > -3.5) ? (fmod(abs(floor(i.localY * 5.0)), 2.0) < 1.0 ? 1.0 : 0.55) : 1.0;
         albedo = i.vcolor * stripe;
         if (i.texFlags > 0.5) {
             float4 t = meshTex.Sample(meshSmp, i.uv); // sRGB texture: the view converts to linear
@@ -572,9 +584,37 @@ PSOut PS(VSOut i) {
         ambient = lerp(float3(0.10,0.11,0.13), float3(0.20,0.26,0.36), n.y * 0.5 + 0.5) * 1.5; // hemisphere: ground bounce / sky
         sun = 0.85;
     }
+    if (i.material < -1.5 && !(i.material < -3.5 && i.material > -4.5)) albedo *= hdriParams.z; // --albedo: a dim interior's surfaces (the exporter drops a texture's darkening tint)
+    ambient *= hdriParams.y; // --ambient: an interior lit by its lamps wants little of the environment
     float3 radiance = albedo * (ndl * ShadowFactor(i.world, n, ndl, i.pos.xy) * sun + ambient);
-    // The --hdri none path keeps its historical 0..~1.15 look; the HDRI path is tone mapped.
-    o.color = float4(hdriLit ? PBRNeutralToneMapping(radiance) : radiance, 1);
+    // Lamps: every emissive surface of the scene is a point light (inverse square, no shadows). A
+    // polished floor (material -5) also mirrors them as a tight highlight. The highlight slides over the
+    // floor with the view while the floor's motion vectors describe the floor: what a game's reflections
+    // do to anything that trusts the vectors.
+    const bool emissive = i.material < -3.5 && i.material > -4.5;
+    const bool glossy = i.material < -4.5 && i.material > -5.5;
+    const float3 V = normalize(eyePos.xyz - i.world);
+    [loop] for (int li = 0; li < (int) lab.x; ++li) {
+        float3 toLight = lightPos[li].xyz - i.world;
+        float d2 = max(dot(toLight, toLight), 0.04);
+        float3 Ll = toLight * rsqrt(d2);
+        float3 E = lightPower[li].rgb / d2; // irradiance / pi, like the sun term
+        radiance += albedo * saturate(dot(n, Ll)) * E;
+        float3 H = normalize(Ll + V);
+        float gloss = glossy ? 900.0 : 24.0;
+        float strength = glossy ? 0.25 : 0.04;
+        radiance += strength * (gloss + 8.0) * 0.0398 * pow(saturate(dot(n, H)), gloss) * saturate(dot(n, Ll)) * E;
+    }
+    if (emissive) radiance = albedo * sunColor.w; // the lamp itself: its radiance, tens of units (a screen: times its picture)
+    // --boil: what is left of path-tracing noise after the denoiser - the dim parts of the frame change a
+    // little every frame (a hash of pixel and frame; relative, so the lamps stay clean).
+    if (lab.z > 0.0) {
+        float h = frac(sin(dot(floor(i.pos.xy), float2(12.9898, 78.233)) + misc.y * 61.7) * 43758.5453);
+        radiance *= 1.0 + lab.z * (h - 0.5) * 2.0 * saturate(1.0 - dot(radiance, float3(0.2126, 0.7152, 0.0722)));
+    }
+    // The --hdri none path keeps its historical 0..~1.15 look; the HDRI path is tone mapped unless the
+    // frame is asked for as a game hands it to the upscaler: linear radiance (--hdr).
+    o.color = float4((hdriLit && lab.y < 0.5) ? PBRNeutralToneMapping(radiance) : radiance, 1);
     if (misc.z > 0.5 && misc.z < 1.5) o.color = float4(i.instanceId / 64.0, i.instanceId / 64.0, i.instanceId / 64.0, 1); // debug: instance id as grey
     if (misc.z > 1.5 && misc.z < 2.5) o.color = float4(i.normal * 0.5 + 0.5, 1); // debug: normal
     if (misc.z > 2.5) o.color = float4(i.material / 8.0, i.material / 8.0, i.material / 8.0, 1); // debug: material index
@@ -596,9 +636,10 @@ BlitIn VSBlit(uint id : SV_VertexID) { BlitIn o; float2 p = float2((id << 1) & 2
 PSOut PSSky(BlitIn i) {
     PSOut o;
     float2 ndc = float2(i.uv.x * 2 - 1, 1 - i.uv.y * 2);
-    float4 h = mul(invVp, float4(ndc, 1, 1)); // reverse-Z: z = 1 is the near plane
+    float4 h = mul(invVp, float4(ndc, lab.w > 0.5 ? 0.0 : 1.0, 1)); // the near plane: z = 1 in reverse-Z, 0 in standard depth
     float3 dir = normalize(h.xyz / h.w - eyePos.xyz);
-    o.color = float4(PBRNeutralToneMapping(hdri.SampleLevel(hdriSmp, EquirectUV(dir), 0).rgb * sunColor.w), 1);
+    float3 sky = hdri.SampleLevel(hdriSmp, EquirectUV(dir), 0).rgb * sunColor.w;
+    o.color = float4(lab.y < 0.5 ? PBRNeutralToneMapping(sky) : sky, 1);
     float3 world = eyePos.xyz + dir * 1e4;
     float4 cur = mul(vpNoJitter, float4(world, 1));
     float4 prev = mul(vpPrev, float4(world, 1));
@@ -631,6 +672,9 @@ struct FrameConstants {
     float sunColor[4];
     float hdriParams[4];
     float env[4];
+    float lab[4];
+    float lightPos[24][4];
+    float lightPower[24][4];
 };
 struct InstanceConstants {
     float pos[64][4];
@@ -697,6 +741,13 @@ int main(int argc, char **argv)
     bool fullscreenWindow = false; // --fullscreen: borderless popup covering the primary monitor (independent flip for an external presenter)
     const char *gltfPath = nullptr; // --gltf <file.glb>: replaces the procedural scene (camera from the file unless --camera is given)
     bool cameraGiven = false;
+    float albedoScale = 1.0f;  // --albedo F: multiplier on the base colour of every glTF surface (not the lamps)
+    float ambientScale = 1.0f; // --ambient F: multiplier on the environment's diffuse term only (the lamps keep their power)
+    bool hdrOutput = false;  // --hdr: the scene colour is linear radiance (no tone mapper), as a game hands it to the upscaler
+    float boil = 0.0f;       // --boil F: frame-to-frame noise in the dim parts of the frame (0.1 = +-10 %)
+    float sway = 0.0f;       // --sway M: a third-person camera's idle sway, metres of amplitude at the eye
+    float camDolly = 0.0f; // --cam-dolly: the chosen camera moved this far towards its target
+    float camLift = 0.0f;  // --cam-lift: eye and target raised together (a dollied-in shot cuts the head off)
     float faceYaw = 180.0f, faceRadius = 0.0f, faceSweep = 25.0f; // --camera face (180: in front of a character that faces glTF -Z); radius 0 = auto (see kFaceFill)
     float faceAngle = -15.0f;       // --face-angle: the camera's horizontal offset from the face axis, so the head reads slightly turned
                                     // (negative: the head reads turned right-to-left, the mirror of the old +15)
@@ -735,6 +786,14 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--camera") == 0 && i + 1 < argc) { cameraMode = argv[++i]; cameraGiven = true; }
         else if (strcmp(argv[i], "--face-yaw") == 0 && i + 1 < argc) faceYaw = (float) atof(argv[++i]);
         else if (strcmp(argv[i], "--face-radius") == 0 && i + 1 < argc) faceRadius = (float) atof(argv[++i]);
+        else if (strcmp(argv[i], "--cam-dolly") == 0 && i + 1 < argc) camDolly = (float) atof(argv[++i]);
+        else if (strcmp(argv[i], "--hdr") == 0) hdrOutput = true;
+        else if (strcmp(argv[i], "--ambient") == 0 && i + 1 < argc) ambientScale = (float) atof(argv[++i]);
+        else if (strcmp(argv[i], "--albedo") == 0 && i + 1 < argc) albedoScale = (float) atof(argv[++i]);
+        else if (strcmp(argv[i], "--boil") == 0 && i + 1 < argc) boil = (float) atof(argv[++i]);
+        else if (strcmp(argv[i], "--sway") == 0 && i + 1 < argc) sway = (float) atof(argv[++i]);
+        else if (strcmp(argv[i], "--depth") == 0 && i + 1 < argc) g_standardDepth = strcmp(argv[++i], "standard") == 0;
+        else if (strcmp(argv[i], "--cam-lift") == 0 && i + 1 < argc) camLift = (float) atof(argv[++i]);
         else if (strcmp(argv[i], "--face-sweep") == 0 && i + 1 < argc) faceSweep = (float) atof(argv[++i]);
         else if (strcmp(argv[i], "--face-angle") == 0 && i + 1 < argc) faceAngle = (float) atof(argv[++i]);
         else if (strcmp(argv[i], "--face-node") == 0 && i + 1 < argc) faceNode = argv[++i];
@@ -976,7 +1035,7 @@ int main(int argc, char **argv)
     bd.ByteWidth = sizeof(InstanceConstants);
     ComPtr<ID3D11Buffer> cbInst; dev->CreateBuffer(&bd, nullptr, &cbInst);
     D3D11_DEPTH_STENCIL_DESC dsd{}; dsd.DepthEnable = GetEnvironmentVariableA("PW_BENCH_NO_DEPTH", nullptr, 0) ? FALSE : TRUE; dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL; // PW_BENCH_NO_DEPTH: debug
-    dsd.DepthFunc = flat ? D3D11_COMPARISON_ALWAYS : D3D11_COMPARISON_GREATER_EQUAL; // reverse-Z
+    dsd.DepthFunc = flat ? D3D11_COMPARISON_ALWAYS : (g_standardDepth ? D3D11_COMPARISON_LESS_EQUAL : D3D11_COMPARISON_GREATER_EQUAL); // reverse-Z unless --depth standard
     ComPtr<ID3D11DepthStencilState> dss; dev->CreateDepthStencilState(&dsd, &dss);
     D3D11_RASTERIZER_DESC rd{}; rd.FillMode = D3D11_FILL_SOLID; rd.CullMode = D3D11_CULL_NONE; rd.DepthClipEnable = TRUE;
     ComPtr<ID3D11RasterizerState> rs; dev->CreateRasterizerState(&rd, &rs);
@@ -1149,7 +1208,7 @@ int main(int argc, char **argv)
 
     // ---- the glTF scene: one dynamic vertex buffer rebuilt per frame (world positions now / previous) ----
     struct MeshVertex { float pos[3], prev[3], normal[3], colour[3], misc[3], uv[2]; };
-    std::vector<pwgltf::Vertex> gVerts; std::vector<Vec3> gPrev; std::vector<MeshVertex> gGpu; std::vector<pwgltf::DrawRange> gRanges;
+    std::vector<pwgltf::Vertex> gVerts; std::vector<Vec3> gPrev; std::vector<MeshVertex> gGpu; std::vector<pwgltf::DrawRange> gRanges; std::vector<pwgltf::Light> gLights;
     Vec3 gLo{0, 0, 0}, gHi{0, 0, 0}; // world bounding box of the glTF scene: the shadow map is fitted to it
     ComPtr<ID3D11Buffer> meshVb;
     // Base-colour textures of the .glb, decoded with WIC into sRGB textures with a full mip chain.
@@ -1191,8 +1250,14 @@ int main(int argc, char **argv)
             }
         } else std::printf("[warn] WIC unavailable: glTF textures are not used\n");
         std::printf("[info] glTF textures: %zu image(s), %zu decoded\n", gscene.images.size(), (size_t) std::count_if(meshTextures.begin(), meshTextures.end(), [](const ComPtr<ID3D11ShaderResourceView> &s) { return s != nullptr; }));
-        pwgltf::BuildVertices(gscene, 0.0f, 1.0f / 60.0f, gVerts, gPrev, &gRanges);
+        pwgltf::BuildVertices(gscene, 0.0f, 1.0f / 60.0f, gVerts, gPrev, &gRanges, &gLights);
         if (gVerts.empty()) { std::printf("[fail] glTF: no triangles\n"); return 1; }
+        if (gLights.size() > 24) {
+            // The brightest 24: the shader's array is that long.
+            std::sort(gLights.begin(), gLights.end(), [](const pwgltf::Light &a, const pwgltf::Light &b) { return a.power[0] + a.power[1] + a.power[2] > b.power[0] + b.power[1] + b.power[2]; });
+            gLights.resize(24);
+        }
+        std::printf("[info] glTF lights: %zu emissive surface(s) used as point lights\n", gLights.size());
         gLo = gHi = gVerts[0].pos;
         for (const pwgltf::Vertex &v : gVerts) {
             gLo.x = std::min(gLo.x, v.pos.x); gLo.y = std::min(gLo.y, v.pos.y); gLo.z = std::min(gLo.z, v.pos.z);
@@ -1281,7 +1346,7 @@ int main(int argc, char **argv)
         params->Set(NVSDK_NGX_Parameter_OutWidth, kOutW);
         params->Set(NVSDK_NGX_Parameter_OutHeight, kOutH);
         params->Set(NVSDK_NGX_Parameter_PerfQualityValue, (int) (gDlaa ? NVSDK_NGX_PerfQuality_Value_DLAA : NVSDK_NGX_PerfQuality_Value_Balanced));
-        params->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, (int) (NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | NVSDK_NGX_DLSS_Feature_Flags_DepthInverted | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure));
+        params->Set(NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags, (int) (NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes | (g_standardDepth ? 0 : NVSDK_NGX_DLSS_Feature_Flags_DepthInverted) | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure));
         params->Set(NVSDK_NGX_Parameter_CreationNodeMask, 1u);
         params->Set(NVSDK_NGX_Parameter_VisibilityNodeMask, 1u);
         r = ngxCreate(ctx.Get(), NVSDK_NGX_Feature_SuperSampling, params, &feature);
@@ -1382,6 +1447,40 @@ int main(int argc, char **argv)
             if (!placed) cam = CameraAt(frame, "script");
         } else {
             cam = CameraAt(frame, cameraMode);
+            // The scripted path is "around a figure at the origin": in a glTF scene the figure is where
+            // its author put it, so the path moves there (the floor position of the first node named
+            // like a character).
+            static int s_figure = -2;
+            static Vec3 s_figureAt{0, 0, 0};
+            if (s_figure == -2) {
+                s_figure = -1;
+                for (size_t i = 0; i < gscene.nodes.size() && s_figure < 0; ++i) { const std::string &n = gscene.nodes[i].name; if (gscene.nodes[i].mesh >= 0 && (n.find("girl") != std::string::npos || n.find("haracter") != std::string::npos)) s_figure = (int) i; }
+                Vec3 lo{0, 0, 0}, hi{0, 0, 0};
+                if (s_figure >= 0 && pwgltf::MeshBounds(gscene, 0.0f, s_figure, lo, hi) && lo.x < hi.x) {
+                    s_figureAt = Vec3{(lo.x + hi.x) * 0.5f, 0.0f, (lo.z + hi.z) * 0.5f};
+                    std::printf("[info] scripted camera follows %s at (%.2f, %.2f)\n", gscene.nodes[s_figure].name.c_str(), s_figureAt.x, s_figureAt.z);
+                }
+            }
+            cam.eye = cam.eye + s_figureAt;
+            cam.target = cam.target + s_figureAt;
+        }
+        // --cam-dolly M: whichever camera was chosen, moved M scene units towards its target (never
+        // past 0.3 of the way left), so a scripted third-person shot can be brought in on the character.
+        if (camDolly != 0.0f) {
+            const Vec3 to = cam.target - cam.eye;
+            const float distance = std::sqrt(to.x * to.x + to.y * to.y + to.z * to.z);
+            if (distance > 1e-4f) cam.eye = cam.eye + to * (std::min(camDolly, distance * 0.7f) / distance);
+        }
+        if (camLift != 0.0f) {
+            cam.eye.y += camLift;
+            cam.target.y += camLift;
+        }
+        // --sway: the slow drift of a third-person camera behind a standing character (two incommensurate
+        // sines per axis). The player "stands still" and the whole picture moves a few pixels a frame.
+        if (sway != 0.0f) {
+            const float ts = frame / 60.0f;
+            cam.eye.x += sway * (std::sin(ts * 0.83f) + 0.5f * std::sin(ts * 1.91f));
+            cam.eye.y += sway * 0.6f * (std::sin(ts * 0.57f + 1.3f) + 0.5f * std::sin(ts * 1.37f));
         }
         const float aspect = (float) w / (float) h;
         const Mat4 view = LookAt(cam.eye, cam.target);
@@ -1455,8 +1554,15 @@ int main(int argc, char **argv)
         fc.invVp = Invert(fc.vp);
         fc.lightDir[0] = sunDir.x; fc.lightDir[1] = sunDir.y; fc.lightDir[2] = sunDir.z; fc.lightDir[3] = hdriActive ? (g_hdriMirror ? 2.0f : 1.0f) : 0.0f;
         fc.sunColor[0] = sunCol[0]; fc.sunColor[1] = sunCol[1]; fc.sunColor[2] = sunCol[2]; fc.sunColor[3] = hdriScale * exposure;
-        fc.hdriParams[0] = 2.5f * g_hdriMeanL; fc.hdriParams[1] = fc.hdriParams[2] = fc.hdriParams[3] = 0.0f;
+        fc.hdriParams[0] = 2.5f * g_hdriMeanL; fc.hdriParams[1] = ambientScale; fc.hdriParams[2] = albedoScale; fc.hdriParams[3] = 0.0f;
         fc.env[0] = g_hdriYawCos; fc.env[1] = g_hdriYawSin; // env.z / env.w are set with the shadow frustum above
+        fc.lab[0] = (float) gLights.size(); fc.lab[1] = hdrOutput ? 1.0f : 0.0f; fc.lab[2] = boil; fc.lab[3] = g_standardDepth ? 1.0f : 0.0f;
+        for (size_t li = 0; li < gLights.size(); ++li) {
+            fc.lightPos[li][0] = gLights[li].pos.x; fc.lightPos[li][1] = gLights[li].pos.y; fc.lightPos[li][2] = gLights[li].pos.z; fc.lightPos[li][3] = 1.0f;
+            // radiance x area / pi^0: a Lambertian emitter of area A and radiance L gives L * A / d^2 (times the
+            // cosine at the emitter, dropped: the tubes are seen from below and around alike).
+            for (int k = 0; k < 3; ++k) fc.lightPower[li][k] = gLights[li].power[k] * exposure;
+        }
         fc.misc[0] = weight; fc.misc[1] = frame / 60.0f; fc.misc[3] = exposure;
         fc.eyePos[0] = cam.eye.x; fc.eyePos[1] = cam.eye.y; fc.eyePos[2] = cam.eye.z;
         static const bool idColours = GetEnvironmentVariableA("PW_BENCH_ID_COLOURS", nullptr, 0) != 0; // debug
@@ -1598,7 +1704,7 @@ int main(int argc, char **argv)
         }
         float jx = 0.0f, jy = 0.0f;
         jitter(frame, &jx, &jy);
-        const float clearDepth = flat ? 1.0f : 0.0f;
+        const float clearDepth = (flat || g_standardDepth) ? 1.0f : 0.0f;
         ctx->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, clearDepth, 0);
         if (flat) {
             const float time = frame / 60.0f;

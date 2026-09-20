@@ -41,7 +41,18 @@ if(MSVC)
 endif()
 add_test(NAME peripheral_warp_addon_ini COMMAND peripheral_warp_addon_ini_tests)
 
+add_executable(peripheral_warp_temporal_phase_tests test_temporal_phase.cpp)
+target_compile_features(peripheral_warp_temporal_phase_tests PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_options(peripheral_warp_temporal_phase_tests PRIVATE /W4 /WX /EHsc /permissive-)
+endif()
+add_test(NAME peripheral_warp_temporal_phase COMMAND peripheral_warp_temporal_phase_tests)
+
 if(WIN32 AND PW_BUILD_D3D_ADAPTERS AND PW_COMPILE_SHADERS)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME peripheral_warp_temporal_contract
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/temporal_contract.py"
+            "${PROJECT_SOURCE_DIR}/shaders/temporal_passes.def" "${PW_SHADER_OUTPUT_DIR}" "${PW_FXC_EXECUTABLE}")
     add_executable(peripheral_warp_d3d11_smoke test_d3d11.cpp)
     target_link_libraries(peripheral_warp_d3d11_smoke PRIVATE PeripheralWarp::D3D11)
     target_compile_features(peripheral_warp_d3d11_smoke PRIVATE cxx_std_20)

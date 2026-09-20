@@ -102,10 +102,112 @@ the hook with — `Configure`, `SetEnabled`, `SetSafeMode`, `SetDiagnostics`, `S
 `SetMotionAdjust`, `SetOutputColorAdjust`, `SetTemporal`, `SetFirstWarpedCallback`, `GetStatus`,
 `RegisterQueue` / `UnregisterQueue` and `OnCommandListExecuted`.
 
-## `ngx_common.h/.cpp`, `ngx_temporal.h/.cpp`
+## `ngx_common.h/.cpp`
 
-Unchanged, moved into the folder. `ngx_common` is the machinery shared with the DLSS SR
-interposer: parameter-block access, the call forwarder, the D3D12 queue registry with its GPU
-waits and graveyard, shader loading, format helpers, barriers and the exception record.
-`ngx_temporal` is the GPU side of the temporal modes: the residual, the depth snapshot, the
-accumulated motion and the reprojection passes.
+Moved into the folder unchanged. The machinery shared with the DLSS SR interposer:
+parameter-block access, the call forwarder, the D3D12 queue registry with its GPU waits and
+graveyard, shader loading, format helpers, barriers and the exception record.
+
+## `ngx_temporal.h/.cpp`, `temporal_resources.h/.cpp`
+
+The GPU side of the temporal modes. `temporal_resources` owns what the machine holds — the root
+signature, one pipeline per pass, the descriptor-table ring, the RTV heap, every texture, and the
+two helpers that turn a frame's inputs into root constants and into a descriptor table.
+`ngx_temporal` records the passes on the host's list and owns the order they run in: the expectation
+and the motion accumulation every frame; on a full pass the residual, the phase-in source, the
+box-filtered residual, the snapshots and the model's own motion vectors; on a carried frame the
+reprojection, the cells and the compose.
+
+The pass functions themselves are in `shaders/temporal.hlsl`, a file shared verbatim with the
+experimental OptiScaler build (which runs them as compute). The add-on compiles them through
+`shaders/temporal_ps.hlsl`, which sets the feature macros this machine binds registers for
+(`PW_T_EXPECT`, `PW_T_RAMP`, `PW_T_CELLS`; `PW_T_HISTORY` is not supported — the table stops at t11)
+and adds `PSApply`. Keeping `temporal.hlsl` byte-identical with the fork is deliberate: the two
+implementations are compared against each other on the bench.
+
+Recording is split by responsibility: `temporal_accumulation.cpp` owns the expectation, depth copies,
+motion chains and synchronous model vectors; `temporal_residual.cpp` owns residual adoption, snapshots
+and Apply; `temporal_background.cpp` records the host-side work for asynchronous chains and kicks.
+`ngx_temporal.cpp` retains lifecycle, promotion and reprojection. Resource allocation and pipeline
+creation live in `temporal_resources_create.cpp`; bindings and constants remain in `temporal_resources.cpp`.
+`temporal_phase.h` holds the CPU ramp clock, covered by `tests/test_temporal_phase.cpp`.
+
+### Background origins and order (26.28)
+
+K is the kick frame, T its later adoption frame. All temporal draws stay on the host list, with a
+fresh descriptor table per draw. The background list only consumes private model inputs.
+
+* Each host frame advances the main expectation/motion for the displayed residual and, unless it
+  mirrors the main chain, the pending expectation/motion for K. Both PSExpect draws read the same
+  `depthPrev`; only afterwards is the current host depth copied there. On K+1 this contains exactly
+  the depth copied into `depthBg` at K, and the pending expectation uses `params.y = 0`. Reading the
+  shared host snapshot avoids transitioning `depthBg` while the background model is reading it.
+* Before a kick overwrites the previous kick's guides, PSModelMotion validates the pending chain
+  (or its promoted main mirror) against `colorBg/depthBg` and that chain's expectation. Its result
+  is copied to `modelAccBg` (RG16F); `accBg` retains the unfiltered K-to-old-pass chain for blending.
+  `expectKick` freezes K's main expectation for that same residual lookup. Then the kick's colour
+  and depth are copied, and a successful kick resets pending motion and expectation validity.
+* At adoption, PSResidual reads K's colour/base, depth and output, `accBg`, `expectKick`, and the old
+  `colorF/depthF`. PSResidualOld uses those same coordinates and guides, with the new residual at t1
+  and the old residual at t2. Neither pass uses T's displacement to index pixels of K. Snapshots
+  are replaced only after alignment; then PromotePending swaps both motion and expectation textures,
+  states, indices and RTV identities. Adoption never replaces `depthPrev` with K's older depth.
+* The adoption reprojection starts at `1/(n+1)`, then advances every shown host frame, with default
+  `n = min(N-1, 3)`. If another adoption interrupts a ramp, PSApply first freezes the outgoing mixture
+  in an RGBA16F scratch target using a zero-valued null colour SRV. PSResidualOld aligns that mixture
+  before replacing its destination. This reuses existing shader bytecode; neither HLSL file changes.
+
+Added storage: two motion-sized RGBA32F pending expectations, one RGBA32F kick expectation, a native
+RGBA16F residual-mixture scratch target and a private motion-sized RG16F model-vector copy. The one
+previous-host-depth snapshot is shared. New machine resources retire with the machine; the private
+model copy retires with AsyncJob behind its existing fences.
+
+Bench the native and warped/base paths at N=1, 2, 4 and 8, including delayed adoption, adoption and
+kick on the same frame, idle gaps after adoption, resets while a pass is in flight and adoption before
+a fade finishes. Watch forward-flight error drift, disocclusion trails, adoption flicker, GPU state
+errors and timing/memory cost. Keep unrelated settings, especially cells, fixed during this bisect:
+
+| Variant | DebugTemporalNoExpect | DebugTemporalPhaseIn | DebugTemporalNoModelMotion |
+| --- | --- | --- | --- |
+| 26.28 background baseline / all off | 1 | 0 | 1 |
+| Expectation only | 0 | 0 | 1 |
+| Phase-in only | 1 | -1 | 1 |
+| Model motion only | 1 | 0 | 0 |
+| All three | 0 | -1 | 0 |
+
+`-1` selects the cadence-derived ramp length. The all-off path retains raw vectors and disables
+expectation/ramp shader effects. With the model-motion key absent, background and synchronous modes
+both validate accumulated vectors. An explicit `0` enables validation in both paths; `1` disables it
+in both. Expected depth stays on by default in background, but background phase-in defaults to off:
+the repeat comparison favoured its mean error without the fade. An explicit `DebugTemporalPhaseIn=-1`
+still requests the automatic ramp in both paths; positive values select a length. Synchronous
+defaults are unchanged. Measurements and
+limitations are recorded in
+[`tools/bench/BACKGROUND_26_28.md`](../../tools/bench/BACKGROUND_26_28.md).
+
+### Model passes and spread cycles (26.28, local port)
+
+`model_passes.h/.cpp` owns extra feature creation and the common model evaluate. The host handle
+continues to map to `FeatureState::realHandle`; two optional real feature-18 handles have independent
+NGX histories. Creation uses the same forwarder and temporarily written work sizes/UI setting as
+`RecreateReal`. The creation frame records no model evaluates: it carries the existing temporal
+result, or presents the raw host colour during initialization. Failed creation is latched until
+settings/extent change, with the actual count and a warning exposed in `Status`. Each sequential
+extra pass reads a separate work-size staging copy. Failed extra evaluates preserve the previous
+successful output. Handles retire through `BuryReal`; staging and spread resources follow the GPU
+and background-job gates in `FeatureState`.
+
+`spread_passes.h/.cpp` owns up to two hidden temporal machines, an immutable native raw snapshot,
+a carried input texture and the stage/cadence position. Every frame advances the displayed and
+hidden motion chains. Stage k consumes stage k-1 carried onto the current raw frame; its residual
+is still measured against that raw frame. Hidden stages have no phase-in or cross-cycle residual
+blend. Only the final stage updates the displayed machine. `spread_model.cpp` binds the selected
+stage's model vectors, packs/evaluates/unpacks through the existing recorder (or evaluates natively),
+and restores the host's parameters. `Machine::RecordRaw` reuses the raw-colour shader branch while
+preserving the displayed phase clock. Neither temporal shader source changes.
+
+Spreading uses the host queue for every temporal mode, including a requested background mode; the
+tab explains this. With spreading off, the background job runs the entire sequential pass chain.
+`ModelPasses=1` bypasses these allocations and schedules. INI settings are carried by the existing
+`TemporalSettings`/`config_store` path, with schema and round-trip coverage in `test_addon_ini.cpp`.
+Bench results and limitations: [`MODEL_PASSES_26_28.md`](../../tools/bench/MODEL_PASSES_26_28.md).

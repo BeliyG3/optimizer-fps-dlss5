@@ -155,7 +155,8 @@ void LoadPersistedConfigOnce()
 // are READ-ONLY: SaveToReShadeIni() must never write one, so a saved layout cannot resurrect a
 // diagnostic switch (26.6.J: the diagnostic switches are never persisted). The read-only debug keys are
 // DebugLayer, DebugTiming, DebugTemporalReadback, DebugTemporalKeepOutput, DebugTemporalBlend,
-// DebugTemporalDepth, DebugTemporalSmooth, DebugAsyncCompute, DebugAsyncNormalPriority,
+// DebugTemporalDepth, DebugTemporalSmooth, DebugTemporalNoExpect, DebugTemporalNoCells,
+// DebugTemporalNoModelMotion, DebugTemporalPhaseIn, DebugAsyncCompute, DebugAsyncNormalPriority,
 // DebugAsyncNoRealtime, DebugAsyncLog, DebugAsyncShowPass, DebugHookDelayMs, DebugKeepBackbuffer and
 // DebugDepthState (plus the non-hook TraceExit / Passive / CrashGuard, which are handled inline).
 void LoadDiagnosticsFromReShadeIni(bool debugLayer)
@@ -176,6 +177,16 @@ void LoadDiagnosticsFromReShadeIni(bool debugLayer)
     number_key("DebugTemporalBlend", d.temporalBlend, 0.0f, 0.9f);
     number_key("DebugTemporalDepth", d.temporalDepth, 0.0f, 1.0f);
     number_key("DebugTemporalSmooth", d.temporalSmooth, 0.0f, 128.0f);
+    flag("DebugTemporalNoExpect", d.temporalNoExpect);
+    flag("DebugTemporalNoCells", d.temporalNoCells);
+    flag("DebugTemporalNoModelMotion", d.temporalNoModelMotion);
+    // An explicit value still bisects both paths, but an absent key keeps the measured background default.
+    flag("DebugTemporalNoModelMotion", d.temporalNoBackgroundModelMotion);
+    if (reshade::get_config_value(nullptr, kIniSection, "DebugTemporalPhaseIn", integer)) {
+        if (integer >= 0) d.temporalPhaseIn = std::min(integer, 8);
+        // An explicit negative value requests the automatic ramp even when background defaults to off.
+        d.temporalBackgroundPhaseIn = std::clamp(integer, -1, 8);
+    }
     flag("DebugAsyncCompute", d.asyncCompute);
     flag("DebugAsyncNormalPriority", d.asyncNormalPriority);
     flag("DebugAsyncNoRealtime", d.asyncNoRealtime);

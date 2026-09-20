@@ -171,6 +171,43 @@ function Get-PayloadShaderNames
     return $names
 }
 
+# A copy of the payload with VERSION.txt written by hand, or with no VERSION.txt at all.
+# files.sha256 covers VERSION.txt too, so the manifest line has to be rewritten or dropped
+# along with the file: otherwise the installer refuses the whole payload as corrupt and
+# never gets as far as reading a version.
+function New-PayloadWithVersion
+{
+    param([string] $Name, [byte[]] $Bytes, [switch] $Drop)
+    $dir = Join-Path $root $Name
+    Copy-Item -LiteralPath $Payload -Destination $dir -Recurse -Force
+    $versionFile = Join-Path $dir 'VERSION.txt'
+    $manifest = Join-Path $dir 'files.sha256'
+    $lines = New-Object System.Collections.ArrayList
+    foreach ($l in ([IO.File]::ReadAllText($manifest) -split "`r?`n")) {
+        if ($l.Trim() -and $l -notmatch '(?i)\s+VERSION\.txt\s*$') { $null = $lines.Add($l) }
+    }
+    if ($Drop) {
+        Remove-Item -LiteralPath $versionFile -Force
+    }
+    else {
+        [IO.File]::WriteAllBytes($versionFile, $Bytes)
+        $hash = (Get-FileHash -LiteralPath $versionFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        $null = $lines.Insert(0, ($hash + '  VERSION.txt'))
+    }
+    [IO.File]::WriteAllText($manifest, ((@($lines.ToArray()) -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+    return $dir
+}
+
+# A wrong version usually differs from the right one by a character nobody can see, so the
+# failure detail spells the string out code point by code point rather than just printing it.
+function Format-VersionDetail
+{
+    param([string] $Text)
+    $s = [string] $Text
+    if (-not $s) { return '<empty>' }
+    return ('<' + $s + '> [' + ((@($s.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ })) -join ' ') + ']')
+}
+
 # ---------------------------------------------------------------------------------------
 
 Say ''
@@ -194,7 +231,8 @@ if (-not $ReShade64 -or -not (Test-Path -LiteralPath $ReShade64)) {
         'x64 fresh install', 'Verify', 'update', 'uninstall', 'adoption of a manual install',
         '32-bit install', 'the game is running', 'corrupt payload', 'no ReShade beside the game',
         'a foreign file carrying one of our names', '-NoIni', '-Json', 'nothing to uninstall',
-        'Verify reads a real ReShade.log', 'files from a pre-26.26 release')) {
+        'Verify reads a real ReShade.log', 'files from a pre-26.26 release',
+        'payload\VERSION.txt reaches the receipt')) {
         Skip $s 'no 64-bit ReShade fixture: pass -BenchDir <folder with dxgi.dll>, or set %PW_BENCH_RUN%'
     }
     Say ''
@@ -564,6 +602,60 @@ else {
     $r = Invoke-Verifier @('-GameExe', $exe13)
     Check 'verify warns about a legacy file that is still there' ($r.Out -match 'legacy file\(s\) from an earlier release') $r.Out
 }
+
+# --- 17. The version the receipt reports -------------------------------------------------
+
+Say ''
+Say '== 17. payload\VERSION.txt reaches the receipt' 'Cyan'
+
+# The install succeeds whatever VERSION.txt holds, so a version that is missing or read
+# wrongly fails silently: the receipt and Verify then both say "unknown" about an install
+# that is perfectly good, and telling the user what is on disk is the one job a receipt has.
+
+$gv1   = New-X64Fixture -Name 'x64-version'
+$exev1 = Join-Path $gv1 'pwgame.exe'
+$pv1   = New-PayloadWithVersion -Name 'payload-version-plain' -Bytes ([Text.Encoding]::UTF8.GetBytes("26.99.1`n"))
+$r = Invoke-Installer @('-GameExe', $exev1, '-Payload', $pv1, '-Yes', '-NoPause')
+Check 'install from a payload with VERSION.txt exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
+$rv1 = (Get-Content -LiteralPath (Join-Path $gv1 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
+Check 'the receipt records the payload version' ([string]::Equals([string]$rv1.Version, '26.99.1', [StringComparison]::Ordinal)) (Format-VersionDetail ([string]$rv1.Version))
+
+$r = Invoke-Verifier @('-GameExe', $exev1, '-Json')
+$vjv1 = $null
+try { $vjv1 = $r.Out | ConvertFrom-Json } catch { }
+Check 'verify reports the version the receipt holds' ($null -ne $vjv1 -and [string]::Equals([string]$vjv1.Version, '26.99.1', [StringComparison]::Ordinal)) $r.Out
+
+$gv2   = New-X64Fixture -Name 'x64-version-missing'
+$exev2 = Join-Path $gv2 'pwgame.exe'
+$pv2   = New-PayloadWithVersion -Name 'payload-version-missing' -Drop
+$r = Invoke-Installer @('-GameExe', $exev2, '-Payload', $pv2, '-Yes', '-NoPause')
+Check 'a payload without VERSION.txt still installs (exit 10)' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
+$rv2 = (Get-Content -LiteralPath (Join-Path $gv2 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
+# "unknown" is the documented fallback, and it has to be spelled out: an empty string would
+# be printed as a version and read as one.
+Check 'a missing VERSION.txt is recorded as unknown, not as an empty version' ([string]$rv2.Version -eq 'unknown') (Format-VersionDetail ([string]$rv2.Version))
+
+# Package-Release.ps1 writes VERSION.txt as UTF-8 without a BOM and LF-terminated, but a
+# version corrected by hand comes back out of Notepad with a BOM and CRLF, and neither of
+# those bytes is part of the version.
+$gv3   = New-X64Fixture -Name 'x64-version-bom'
+$exev3 = Join-Path $gv3 'pwgame.exe'
+$pv3   = New-PayloadWithVersion -Name 'payload-version-bom' `
+             -Bytes ([byte[]] (@(0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes("26.99.3`r`n")))
+$r = Invoke-Installer @('-GameExe', $exev3, '-Payload', $pv3, '-Yes', '-NoPause')
+Check 'install from a BOM-prefixed VERSION.txt exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
+$rv3 = (Get-Content -LiteralPath (Join-Path $gv3 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
+Check 'neither the BOM nor the CRLF reaches the receipt' ([string]::Equals([string]$rv3.Version, '26.99.3', [StringComparison]::Ordinal)) (Format-VersionDetail ([string]$rv3.Version))
+
+# Verify has a reader of its own for the case where the receipt carries no version, and that
+# one has to strip the same bytes: with no receipt there is nothing left to correct it.
+Remove-Item -LiteralPath (Join-Path $gv3 '_OptimizerFPS\latest-receipt.json') -Force
+$r = Invoke-Verifier @('-GameExe', $exev3, '-Payload', $pv3, '-Json')
+$vjv3 = $null
+try { $vjv3 = $r.Out | ConvertFrom-Json } catch { }
+Check 'verify falls back to payload\VERSION.txt without carrying the BOM over' `
+    ($null -ne $vjv3 -and [string]::Equals([string]$vjv3.Version, '26.99.3', [StringComparison]::Ordinal)) `
+    ($(if ($null -eq $vjv3) { $r.Out } else { Format-VersionDetail ([string]$vjv3.Version) }))
 
 # ---------------------------------------------------------------------------------------
 
