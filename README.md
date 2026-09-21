@@ -2,6 +2,11 @@
 
 **Contents:** [What it does](#what-it-does) · [Install](docs/INSTALL.md) · [The NR consumer](#the-nr-consumer) · [Using the tab](#using-the-tab) · [Performance and quality](#performance-and-quality) · [Troubleshooting](#troubleshooting) · [How it works](#how-it-works) · [Building and the SDK](#building-and-the-sdk) · [Support](#support) · [License](#notices-and-license)
 
+
+**Development notes, and a way to support the work if the add-on is useful to you:** 🤔😄🤗
+[patreon.com/YGLabs](https://www.patreon.com/c/YGLabs).🤗
+
+
 A ReShade add-on that reduces the GPU cost of DLSS 5 Neural Rendering. It compresses the screen
 periphery before the model runs and, optionally, runs the model only every Nth frame, reprojecting
 the frames in between along the game's motion vectors.
@@ -151,9 +156,6 @@ name exported to ReShade carries none, are explained in
 Bugs: open a GitHub Issue and attach `ReShade.log` and the output of
 `Verify-OptimizerFPS.ps1 -Json`. To disable the add-on, uncheck it in ReShade's **Add-ons** tab (or
 remove the files) and **restart the game**; the hooks stay in place until the process exits.
-
-Development notes, and a way to support the work if the add-on is useful to you:
-[patreon.com/YGLabs](https://www.patreon.com/c/YGLabs).
 
 ## Notices and license
 
