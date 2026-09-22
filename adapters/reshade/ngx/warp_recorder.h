@@ -26,6 +26,11 @@ struct EvalContext {
     float mvScaleX, mvScaleY;
     std::uint32_t slot, packSlot, unpackSlot;
     std::uint32_t packSet; // external source set the pack draw reads (a ring entry for host frames, the slot for the background job)
+    // The host records the model into a compute list: Pack / Unpack go through st->warpCompute, which
+    // takes the sources and the description the pack set was written from.
+    bool compute;
+    pw::D3D12SourceResources packSources;
+    pw::InputDescriptionV2 packInput;
     pw::DepthConvention depthConvention;
     volatile int stage;
     bool paramsRewritten;

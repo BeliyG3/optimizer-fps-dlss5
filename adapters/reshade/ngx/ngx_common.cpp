@@ -449,6 +449,8 @@ bool LoadShaders(const std::wstring &addonDirectory, Shaders &s)
     s.loaded = ReadWholeFile(dir + L"fullscreen_vs.dxbc", s.vertex) && ReadWholeFile(dir + L"pack_ps.dxbc", s.pack) &&
                ReadWholeFile(dir + L"unpack_ps.dxbc", s.unpack);
     ReadWholeFile(dir + L"outline_ps.dxbc", s.outline);
+    ReadWholeFile(dir + L"warp_pack_cs.dxbc", s.warpPack);
+    ReadWholeFile(dir + L"warp_unpack_cs.dxbc", s.warpUnpack);
 #define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) \
     ReadWholeFile(dir + L"temporal_" L## #name L"_cs.dxbc", s.temporal##name);
 #include "../../../shaders/temporal_passes.def"
@@ -489,18 +491,30 @@ pw::ColorEncoding EncodingFor(DXGI_FORMAT format)
     }
 }
 
+D3D12_RESOURCE_STATES StateForList(ID3D12GraphicsCommandList *cmd, D3D12_RESOURCE_STATES state)
+{
+    if (cmd->GetType() != D3D12_COMMAND_LIST_TYPE_COMPUTE) return state;
+    if ((state & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) != 0)
+        state = (state & ~D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    if (state == D3D12_RESOURCE_STATE_RENDER_TARGET) state = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    return state;
+}
+
 void Barrier(ID3D12GraphicsCommandList *cmd, ID3D12Resource *res, D3D12_RESOURCE_STATES &tracked,
              D3D12_RESOURCE_STATES to)
 {
     if (res == nullptr || tracked == to) return;
+    // `tracked` keeps the direct-list state; a compute list gets its equivalent (StateForList).
+    const D3D12_RESOURCE_STATES before = StateForList(cmd, tracked), after = StateForList(cmd, to);
+    tracked = to;
+    if (before == after) return;
     D3D12_RESOURCE_BARRIER b{};
     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     b.Transition.pResource = res;
-    b.Transition.StateBefore = tracked;
-    b.Transition.StateAfter = to;
+    b.Transition.StateBefore = before;
+    b.Transition.StateAfter = after;
     b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     cmd->ResourceBarrier(1, &b);
-    tracked = to;
 }
 
 bool PlanarDepthFormat(DXGI_FORMAT format)
@@ -523,7 +537,10 @@ UINT DepthBarrierSubresource(ID3D12Resource *depth)
 void BarrierExternal(ID3D12GraphicsCommandList *cmd, ID3D12Resource *res, D3D12_RESOURCE_STATES from,
                      D3D12_RESOURCE_STATES to, UINT subresource)
 {
-    if (res == nullptr || from == to) return;
+    if (res == nullptr) return;
+    from = StateForList(cmd, from);
+    to = StateForList(cmd, to);
+    if (from == to) return;
     D3D12_RESOURCE_BARRIER b{};
     b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     b.Transition.pResource = res;

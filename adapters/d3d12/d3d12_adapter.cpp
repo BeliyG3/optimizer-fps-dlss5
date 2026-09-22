@@ -481,8 +481,9 @@ AdapterStatus D3D12Adapter::InitializeInternal(
                 texture.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
                 texture.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
                 // OptiScaler can resolve NR directly into packed color when the
-                // chosen typed view supports UAV stores.
-                if (i == 0 && TypedUavStoreSupported(device, packedFormats[i]))
+                // chosen typed view supports UAV stores; a compute Pack writes all
+                // four (the guide formats always support it).
+                if (TypedUavStoreSupported(device, packedFormats[i]))
                     texture.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
                 if (FAILED(device->CreateCommittedResource(
                         &defaultHeap, D3D12_HEAP_FLAG_NONE, &texture,

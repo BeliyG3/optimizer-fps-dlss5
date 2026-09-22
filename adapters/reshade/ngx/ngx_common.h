@@ -151,6 +151,8 @@ private:
 // ---- shaders (the SDK's own DXBC beside the add-on in optimizer-fps-dlss5\)
 struct Shaders {
     std::vector<char> vertex, pack, unpack, outline;
+    // Pack / colour Unpack as compute, for hosts that evaluate on a compute list (optional).
+    std::vector<char> warpPack, warpUnpack;
     // Compute shader binaries, generated from the shared SDK manifest.
 #define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) std::vector<char> temporal##name;
 #include "../../../shaders/temporal_passes.def"
@@ -166,12 +168,17 @@ struct Shaders {
 #undef PW_TEMPORAL_PASS
         return true;
     }
+    bool WarpComputeLoaded() const { return !warpPack.empty() && !warpUnpack.empty(); }
 };
 bool LoadShaders(const std::wstring &addonDirectory, Shaders &shaders);
 
 // ---- formats, barriers, textures (D3D12)
 DXGI_FORMAT TypedView(DXGI_FORMAT format, bool depth);
 pw::ColorEncoding EncodingFor(DXGI_FORMAT format);
+// The state a transition uses on this list: on a compute list (a host evaluating the model with
+// asynchronous compute) pixel-shader reads become non-pixel-shader reads and render targets become
+// UAVs, which is what the compute Pack/Unpack (warp_compute.h) bind. Direct lists are unchanged.
+D3D12_RESOURCE_STATES StateForList(ID3D12GraphicsCommandList *cmd, D3D12_RESOURCE_STATES state);
 void Barrier(ID3D12GraphicsCommandList *cmd, ID3D12Resource *res, D3D12_RESOURCE_STATES &tracked,
              D3D12_RESOURCE_STATES to);
 // 26.7.3: planar depth-stencil formats (R24G8 / R32G8X24 / D24S8 / D32S8): plane 0 = depth, plane 1 = stencil, each with

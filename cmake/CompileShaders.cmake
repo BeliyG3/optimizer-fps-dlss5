@@ -36,6 +36,9 @@ set(_pw_shader_sources
     "${PROJECT_SOURCE_DIR}/shaders/fullscreen.hlsli"
     "${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_common.hlsli"
     "${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_pack.hlsli"
+    "${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_unpack.hlsli"
+    "${PROJECT_SOURCE_DIR}/shaders/warp_pack_cs.hlsl"
+    "${PROJECT_SOURCE_DIR}/shaders/warp_unpack_cs.hlsl"
     "${PROJECT_SOURCE_DIR}/shaders/temporal.hlsl"
     "${PROJECT_SOURCE_DIR}/shaders/temporal_cs.hlsl")
 
@@ -66,6 +69,8 @@ pw_compile_dxbc(pack_ps "${PROJECT_SOURCE_DIR}/shaders/pack.hlsl" PSMain ps_5_0)
 pw_compile_dxbc(unpack_ps "${PROJECT_SOURCE_DIR}/shaders/unpack.hlsl" PSMain ps_5_0)
 pw_compile_dxbc(preview_ps "${PROJECT_SOURCE_DIR}/shaders/preview.hlsl" PSMain ps_5_0)
 pw_compile_dxbc(outline_ps "${PROJECT_SOURCE_DIR}/shaders/outline.hlsl" PSMain ps_5_0)
+pw_compile_dxbc(warp_pack_cs "${PROJECT_SOURCE_DIR}/shaders/warp_pack_cs.hlsl" CSPack cs_5_0)
+pw_compile_dxbc(warp_unpack_cs "${PROJECT_SOURCE_DIR}/shaders/warp_unpack_cs.hlsl" CSUnpackColor cs_5_0)
 foreach(_pw_pass_name _pw_pass_entry IN ZIP_LISTS PW_TEMPORAL_PASSES_NAMES PW_TEMPORAL_PASSES_ENTRIES)
     pw_compile_dxbc("${_pw_pass_name}" "${PW_TEMPORAL_SOURCE}" "${_pw_pass_entry}" cs_5_0)
 endforeach()
@@ -90,6 +95,8 @@ if(PW_DXC_EXECUTABLE)
     pw_compile_spirv(unpack_ps "${PROJECT_SOURCE_DIR}/shaders/unpack.hlsl" PSMain ps_6_0)
     pw_compile_spirv(preview_ps "${PROJECT_SOURCE_DIR}/shaders/preview.hlsl" PSMain ps_6_0)
     pw_compile_spirv(outline_ps "${PROJECT_SOURCE_DIR}/shaders/outline.hlsl" PSMain ps_6_0)
+    pw_compile_spirv(warp_pack_cs "${PROJECT_SOURCE_DIR}/shaders/warp_pack_cs.hlsl" CSPack cs_6_0)
+    pw_compile_spirv(warp_unpack_cs "${PROJECT_SOURCE_DIR}/shaders/warp_unpack_cs.hlsl" CSUnpackColor cs_6_0)
     foreach(_pw_pass_name _pw_pass_entry IN ZIP_LISTS PW_TEMPORAL_PASSES_NAMES PW_TEMPORAL_PASSES_ENTRIES)
         pw_compile_spirv("${_pw_pass_name}" "${PW_TEMPORAL_SOURCE}" "${_pw_pass_entry}" cs_6_0)
     endforeach()

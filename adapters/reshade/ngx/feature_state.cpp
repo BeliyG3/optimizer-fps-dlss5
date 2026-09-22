@@ -47,6 +47,7 @@ void BuryGpu(FeatureState &st, const pwngx::GateSet &gate)
     if (st.passStaging) g.objects.push_back(st.passStaging);
     st.passStaging = nullptr;
     g.adapter12 = std::move(st.adapter);
+    if (st.warpCompute) g.disposables.push_back(std::move(st.warpCompute));
     if (st.temporal) g.disposables.push_back(std::move(st.temporal));
     if (st.async) g.disposables.push_back(std::move(st.async));
     if (st.nrOutput) g.objects.push_back(st.nrOutput);
@@ -82,7 +83,7 @@ void RetireGpu(FeatureState &st)
         BuryGpu(st, gate);
         return;
     }
-    const bool anything = st.adapter || st.nrOutput || st.unpackTarget || st.rtvHeap || st.timingHeap || st.temporal;
+    const bool anything = st.adapter || st.warpCompute || st.nrOutput || st.unpackTarget || st.rtvHeap || st.timingHeap || st.temporal;
     if (!anything) { st.ReleaseGpu(); return; }
     {
         pwngx::GateSet queueGate = pwngx::SignalGate(st.realDevice, st.device);
@@ -139,10 +140,12 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
     }
     if (!CreateTexture(device, st.layout.workWidth, st.layout.workHeight, outputView,
                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, &st.nrOutput) ||
+        // Render target for the direct-list Unpack, UAV for the compute one (the output view already
+        // takes UAVs: nrOutput above is one).
         !CreateTexture(device, st.layout.nativeWidth, st.layout.nativeHeight, outputView,
-                       D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, &st.unpackTarget) ||
+                       D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, &st.unpackTarget) ||
         !CreateTexture(device, st.layout.nativeWidth, st.layout.nativeHeight, outputView,
-                       D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, &st.unpackBase)) {
+                       D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, &st.unpackBase)) {
         SetReason("could not allocate the work output or the unpack target (format %d)", (int) outputView);
         st.ReleaseGpu();
         return false;
@@ -172,6 +175,20 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
     Log(false, "Optimizer FPS NGX hook: GPU path ready (colour view %d, output view %d, work %ux%u, list device %p, resource device %p, queues for GPU waits: %zu of %zu on this device)",
         (int) colorView, (int) outputView, st.layout.workWidth, st.layout.workHeight, (void *) device, (void *) st.realDevice,
         queuesOnDevice, queuesTotal);
+    return true;
+}
+
+bool EnsureWarpCompute(FeatureState &st)
+{
+    if (st.warpCompute) return true;
+    auto compute = std::make_unique<WarpCompute>();
+    char error[160] = {};
+    if (!compute->Initialize(st.device, Ctx().shaders, error, sizeof(error))) {
+        SetReason("%s", error);
+        return false;
+    }
+    st.warpCompute = std::move(compute);
+    Log(false, "Optimizer FPS NGX hook: the host evaluates on a compute list; Pack / Unpack run as compute");
     return true;
 }
 

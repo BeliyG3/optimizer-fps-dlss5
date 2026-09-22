@@ -75,6 +75,15 @@ the host left it. `FallbackOutput` / `FallbackFromParams` write the host's own c
 produced the frame. `WarpedGuarded`, `InterpolateGuarded` and `RestoreGuarded` are the SEH wrappers:
 `__try` cannot live in a frame that unwinds C++ objects, so each body has its own.
 
+## `warp_compute.h/.cpp`
+
+Pack and the colour Unpack as compute dispatches, for a host that evaluates the model on a compute
+list (DLSS5-Reshade-AIO with asynchronous NGX compute), where the adapter's full-screen draws cannot be
+recorded. It runs the SDK's own texel functions (`shaders/warp_pack_cs.hlsl`, `warp_unpack_cs.hlsl`)
+through its own root signature, descriptor ring and constant ring, into the adapter's packed textures
+and the feature's unpack targets. `warp_recorder` picks it when `EvalContext::compute` is set;
+`pwngx::StateForList` gives every transition the compute equivalent of its direct-list state.
+
 ## `async_scheduler.h/.cpp`
 
 Temporal mode 3, the model on its own queue. `AsyncJob` (in the header, because `FeatureState`

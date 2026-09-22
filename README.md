@@ -63,6 +63,9 @@ these must be installed and working first, by its own instructions:
   64-bit game.
 * **[DLSS5-Feeder](https://github.com/jlrouzies-fr/DLSS5-Feeder)** — for 32-bit games. NR runs in its
   64-bit helper process, `<game>\host64\dlss5-feed-host64.exe`, and so does this add-on.
+* **[DLSS5-Reshade-AIO](https://github.com/kibblerz/DLSS5-Reshade-AIO)** — 64-bit games, and 32-bit
+  games through its 64-bit wrapper in `<game>\host64\`, where this add-on runs too. Its asynchronous
+  NGX compute is supported (Pack/Unpack run as compute there); use it with one NR pass.
 * **the DLSSNR fork of [OptiScaler](https://github.com/optiscaler/OptiScaler)** — the add-on takes
   over its warp through its layout bridge.
 

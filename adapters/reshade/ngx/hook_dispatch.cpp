@@ -535,8 +535,18 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
         return CallEvaluate(cmd, real, params, callback);
     }
 
-    if (cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
-        SetReason("host command list is type %d; Pack/Unpack need a direct list", (int) cmd->GetType());
+    // A compute list (DLSS5-Reshade-AIO's asynchronous NGX compute) records Pack / Unpack as compute
+    // dispatches; the tracked states hold for one kind of list, so a feature never mixes the two.
+    const int listType = static_cast<int>(cmd->GetType());
+    const bool computeList = listType == D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    bool refuse = true;
+    if (st.hostListType >= 0 && st.hostListType != listType)
+        SetReason("host command list changed from type %d to %d", st.hostListType, listType);
+    else if (!computeList && listType != D3D12_COMMAND_LIST_TYPE_DIRECT)
+        SetReason("host command list is type %d; Pack/Unpack need a direct or compute list", listType);
+    else
+        refuse = computeList && !EnsureWarpCompute(st); // sets its own reason
+    if (refuse) {
         st.disabled = true;
         Log(true, "Optimizer FPS NGX hook: %s; re-creating the model at native size", Ctx().status.reason);
         RetireGpu(st);
@@ -546,6 +556,7 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
         if (real == nullptr) return 0;
         return CallEvaluate(cmd, real, params, callback);
     }
+    st.hostListType = listType;
 
     // 26.21: the crash guard's marker is written here, before anything of the warped path is recorded.
     if (st.warped) NotifyFirstWarped();
@@ -574,6 +585,9 @@ int __cdecl HookEvaluate(ID3D12GraphicsCommandList *cmd, void *handle, void *par
     c.slot = slot;
     c.packSlot = packSlot;
     c.packSet = packSet;
+    c.compute = computeList;
+    c.packSources = sources;
+    c.packInput = input;
     c.unpackSlot = unpackSlot;
     c.depthConvention = input.depthConvention;
     c.temporalActive = plan.active;
