@@ -34,6 +34,8 @@ set(PW_NGX_SOURCES
     ngx/temporal_resources.h
     ngx/timing.cpp
     ngx/timing.h
+    ngx/warp_compute.cpp
+    ngx/warp_compute.h
     ngx/warp_recorder.cpp
     ngx/warp_recorder.h
     ngx_hook.h)

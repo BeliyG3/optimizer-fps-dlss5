@@ -60,8 +60,9 @@ void DrawOverlay(reshade::api::effect_runtime *)
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
                            "Optimizer FPS: host process not running (no shared block)");
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("The model runs in host64\\dlss5-feed-host64.exe. This tab connects to the "
-                            "Optimizer FPS add-on there; it appears as soon as that process presents a frame.");
+        ImGui::TextDisabled("The model runs in the 64-bit host in host64\\ (DLSS5-Feeder's dlss5-feed-host64.exe or "
+                            "DLSS5-Reshade-AIO's 32-bit wrapper). This tab connects to the Optimizer FPS add-on "
+                            "there; it appears as soon as that process presents a frame.");
         ImGui::PopTextWrapPos();
     } else if (status.active != 0) {
         ImGui::TextColored(ImVec4(0.35f, 1.0f, 0.45f, 1.0f),

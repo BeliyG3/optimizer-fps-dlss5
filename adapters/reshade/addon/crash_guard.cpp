@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <mutex>
 
 namespace pw_addon {
@@ -76,6 +77,14 @@ bool CrashMarkerMeansCrash()
     return std::strtoull(p + 15, nullptr, 10) < kCrashGuardGraceSeconds;
 }
 
+bool HostIsAioWrapper()
+{
+    wchar_t exe[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return false;
+    const wchar_t *slash = std::wcsrchr(exe, L'\\');
+    return _wcsicmp(slash != nullptr ? slash + 1 : exe, L"AIO DLSS5 32-bit Wrapper.exe") == 0;
+}
+
 } // namespace
 
 void CrashMarkerClear()
@@ -112,8 +121,16 @@ bool CrashGuardTripped()
 void CrashGuardInit(const wchar_t *directory)
 {
     int guard = 1;
-    if (reshade::get_config_value(nullptr, "PeripheralWarp", "CrashGuard", guard)) g_crashGuard = guard != 0;
+    if (reshade::get_config_value(nullptr, "PeripheralWarp", "CrashGuard", guard)) {
+        g_crashGuard = guard != 0;
+    } else if (HostIsAioWrapper()) {
+        // DLSS5-Reshade-AIO's 32-bit wrapper terminates this process on every "restart 64-bit AIO" and at
+        // game exit, so a marker never tells a crash from a restart there; CrashGuard=1 turns it back on.
+        g_crashGuard = false;
+        reshade::log::message(reshade::log::level::info, "Optimizer FPS: crash guard off in DLSS5-Reshade-AIO's wrapper (it ends this process on every restart); CrashGuard=1 turns it on");
+    }
     swprintf_s(g_crashMarkerPath, L"%s\\optimizer-fps-dlss5.session", directory);
+    if (!g_crashGuard) DeleteFileW(g_crashMarkerPath); // a marker from an earlier guarded session would never clear
     if (g_crashGuard && GetFileAttributesW(g_crashMarkerPath) != INVALID_FILE_ATTRIBUTES && !CrashMarkerMeansCrash()) {
         DeleteFileW(g_crashMarkerPath); // the previous session ran on long after its first warped frame: not our crash (killed helper/game)
         reshade::log::message(reshade::log::level::info, "Optimizer FPS: crash guard - the previous session was not unloaded cleanly but had run long after its first warped frame; not treated as a crash");

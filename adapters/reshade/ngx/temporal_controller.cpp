@@ -285,7 +285,10 @@ int NativeTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, voi
     ID3D12Resource *depth = GetResource(params, "DLSSNR.Depth");
     ID3D12Resource *motion = GetResource(params, "DLSSNR.MVec");
     ID3D12Resource *output = GetResource(params, "DLSSNR.Output");
-    if (color == nullptr || depth == nullptr || motion == nullptr || output == nullptr || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
+    // The temporal passes are compute dispatches: a compute host list takes them too (StateForList).
+    const D3D12_COMMAND_LIST_TYPE listType = cmd->GetType();
+    if (color == nullptr || depth == nullptr || motion == nullptr || output == nullptr ||
+        (listType != D3D12_COMMAND_LIST_TYPE_DIRECT && listType != D3D12_COMMAND_LIST_TYPE_COMPUTE))
         return kNotHandled;
     const D3D12_RESOURCE_DESC colorDesc = color->GetDesc();
     const D3D12_RESOURCE_DESC depthDesc = depth->GetDesc();

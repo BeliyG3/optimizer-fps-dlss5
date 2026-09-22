@@ -67,6 +67,31 @@ void CloseReShadeOverlayEvent()
     }
 }
 
+// One line every 30 s: whether evaluates are warped or forwarded, so a session can be checked from
+// ReShade.log alone (the overlay is not always reachable, e.g. in a 64-bit helper process).
+void LogStatusPeriodically()
+{
+    static ULONGLONG s_last = 0;
+    static std::uint64_t s_warped = 0, s_forwarded = 0, s_fallback = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - s_last < 30000) return;
+    s_last = now;
+    const pw_ngx::Status st = pw_ngx::GetStatus();
+    if (!st.hooked) return;
+    char line[768];
+    std::snprintf(line, sizeof(line),
+                  "Optimizer FPS status: %s; last 30 s: %llu warped, %llu forwarded, %llu fallback; model %ux%u of %ux%u, temporal mode %d%s%s",
+                  pw_ngx::SafeMode() ? "SAFE MODE (crash guard)" : st.active ? "ACTIVE" : "NOT ACTIVE",
+                  static_cast<unsigned long long>(st.evaluations - s_warped),
+                  static_cast<unsigned long long>(st.passthroughs - s_forwarded),
+                  static_cast<unsigned long long>(st.fallbackFrames - s_fallback), st.workWidth, st.workHeight,
+                  st.nativeWidth, st.nativeHeight, st.temporalMode, st.reason[0] ? "; reason: " : "", st.reason);
+    s_warped = st.evaluations;
+    s_forwarded = st.passthroughs;
+    s_fallback = st.fallbackFrames;
+    reshade::log::message(reshade::log::level::info, line);
+}
+
 void OnPresent(reshade::api::effect_runtime *)
 {
     AddonState &state = State();
@@ -79,6 +104,7 @@ void OnPresent(reshade::api::effect_runtime *)
     pw_ngx::SetEnabled(!BridgeLinked() || state.optiTakeover);
     CrashGuardOnPresent();
     pw_ngx::Poll();
+    LogStatusPeriodically();
     pw_ngx::SetOutlines(state.showCenterOutline, state.showWorkOutline);
     pw_ngx::SetMotionAdjust(state.motionScaleAdjust, state.motionInvert);
     pw_ngx::SetOutputColorAdjust(state.brightnessPercent, state.gamma);

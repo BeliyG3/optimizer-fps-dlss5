@@ -56,7 +56,9 @@ int RecordPackStage(EvalContext &c)
     Barrier(cmd, packed.resources.motion.resource, guideState, D3D12_RESOURCE_STATE_RENDER_TARGET);
     st.packedGuideState[slot] = D3D12_RESOURCE_STATE_RENDER_TARGET;
     c.stage = StagePackDraw;
-    pw::AdapterStatus status = st.adapter->RecordPackFromSet(cmd, c.packSlot, c.packSet);
+    pw::AdapterStatus status = c.compute
+        ? st.warpCompute->RecordPack(cmd, st.layout, c.packSources, c.packInput, packed, st.colorView, c.packSlot)
+        : st.adapter->RecordPackFromSet(cmd, c.packSlot, c.packSet);
     c.stage = StagePackRestore;
     BarrierExternal(cmd, c.color, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, kHostInputState);
     BarrierExternal(cmd, c.depth, c.depthState | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, c.depthState, c.depthSub);
@@ -83,7 +85,10 @@ pw::AdapterStatus RecordBaseUnpack(EvalContext &c)
     (void) st.adapter->SetOutputColorAdjust(Ctx().outputGain, Ctx().outputGamma);
     // The slot's textures with the constants of the set that packed them (the unpack shader reads the
     // input description too).
-    const pw::AdapterStatus status = st.adapter->RecordUnpackOwnedColorFromSet(c.cmd, c.packSlot, c.packSet, c.baseRtv, pw::DiagnosticOutlineNone);
+    const pw::AdapterStatus status = c.compute
+        ? st.warpCompute->RecordUnpackPacked(c.cmd, st.layout, st.adapter->PackedViews(c.packSlot), st.colorView, c.packSlot,
+                                             c.baseTarget, st.outputView, Ctx().outputGain, Ctx().outputGamma)
+        : st.adapter->RecordUnpackOwnedColorFromSet(c.cmd, c.packSlot, c.packSet, c.baseRtv, pw::DiagnosticOutlineNone);
     Barrier(c.cmd, c.baseTarget, *c.baseTargetState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     return status;
 }
@@ -261,8 +266,10 @@ int WarpedBody(EvalContext &c)
             if (Ctx().showCenterOutline) outlines = outlines | pw::DiagnosticOutlineCenter;
             if (Ctx().showWorkOutline) outlines = outlines | pw::DiagnosticOutlineRawWork;
             (void) st.adapter->SetOutputColorAdjust(Ctx().outputGain, Ctx().outputGamma);
-            status = st.adapter->RecordUnpackColor(
-                cmd, c.unpackSlot, st.rtvHeap->GetCPUDescriptorHandleForHeapStart(), outlines);
+            status = c.compute
+                ? st.warpCompute->RecordUnpack(cmd, st.layout, workSources, unpackInput, st.unpackTarget, st.outputView,
+                                               static_cast<std::uint32_t>(outlines), Ctx().outputGain, Ctx().outputGamma)
+                : st.adapter->RecordUnpackColor(cmd, c.unpackSlot, st.rtvHeap->GetCPUDescriptorHandleForHeapStart(), outlines);
         }
         if (status == pw::AdapterStatus::Ok && c.wantBase) {
             // The packed colour without the model: what the residual is measured against. Without it

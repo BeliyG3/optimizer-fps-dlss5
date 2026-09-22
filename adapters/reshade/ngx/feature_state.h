@@ -7,6 +7,7 @@
 #include "hook_common.h"
 #include "ngx_temporal.h"
 #include "spread_passes.h"
+#include "warp_compute.h"
 
 #include "peripheral_warp/types_v2.h"
 
@@ -44,6 +45,11 @@ struct FeatureState {
     ID3D12Device *device = nullptr;     // the command list's device (ReShade's proxy when present)
     ID3D12Device *realDevice = nullptr; // the device the host's resources answer with; keyed for GPU waits
     std::unique_ptr<pw::D3D12Adapter> adapter;
+    // Pack / Unpack as compute when the host evaluates on a compute list (created on its first such
+    // evaluate). The list type a feature's tracked states were recorded for: they are only valid on
+    // one kind of list, so a host that switches types falls back to native.
+    std::unique_ptr<WarpCompute> warpCompute;
+    int hostListType = -1;
     DXGI_FORMAT colorView = DXGI_FORMAT_UNKNOWN;
     DXGI_FORMAT outputView = DXGI_FORMAT_UNKNOWN;
     ID3D12Resource *nrOutput = nullptr;     // work-size, UAV, what the model writes
@@ -121,6 +127,8 @@ struct FeatureState {
         spread.reset();
         activeModelStage = -1;
         adapter.reset();
+        warpCompute.reset();
+        hostListType = -1;
         async.reset();
         temporal.reset();
         if (timingHeap) { timingHeap->Release(); timingHeap = nullptr; }
@@ -150,6 +158,8 @@ struct FeatureState {
 
 // Builds (or rebuilds) the feature's GPU objects for the host's colour/output formats.
 bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *color, ID3D12Resource *output);
+// The compute Pack / Unpack for a host that evaluates on a compute list (after EnsureGpu); false with a reason.
+bool EnsureWarpCompute(FeatureState &st);
 // The graveyard rules: nothing the GPU may still read is released before its gate has passed.
 void BuryReal(void *realHandle, const pwngx::GateSet &gate = pwngx::GateSet{});
 bool BuryAsync(FeatureState &st, pwngx::GateSet *gate);
