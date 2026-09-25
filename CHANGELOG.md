@@ -7,26 +7,25 @@ One core for everything the add-on does, and the add-on now works on top of publ
 **Changed**
 
 * **One core DLL.** Compression, frame carry and diagnostics live in `optimizer-fps-dlss5-core.dll`,
-  installed beside the add-on (for 32-bit games, in `host64\`). The add-on loads it; one core per
-  process, checked for release and ABI at load. Keep the add-on, core, forwarder and shaders from the
-  same release.
+  installed beside the add-on (for 32-bit games, in `host64\`). The add-on loads it; there is one core
+  per process, and its release and ABI are checked at load. Keep the add-on, core, forwarder and
+  shaders from the same release.
 * **Compute compression by default.** Pack/Unpack run as compute passes when the GPU supports typed UAV
-  stores for the formats involved, otherwise on the previous pixel path. `DebugWarpPath` forces one
-  for diagnostics.
+  stores for the formats involved; otherwise they use the previous pixel path. `DebugWarpPath` forces
+  either one for diagnostics.
 * **Settings section `[OptimizerFPS]`.** An existing `[PeripheralWarp]` section is copied once when no
   new section exists; the installer's Update removes the old one after a backup. The tab is drawn
   from the core's settings list, with collapsible groups.
 * **Installer and Verify** know the core DLL: they install, hash and verify it, keep a Schema 3
-  receipt, and check that add-on and core come from the same release.
+  receipt, and check that the add-on and the core come from the same release.
 
 **Added**
 
 * **Public OptiScaler builds with Neural Rendering** as an NR consumer: Dagherbou OptiScaler_DLSSNR
   (tested `v0.2.0-patch1`) and wilsjo2 OptiScaler-DLSSNR-PreSR-Multipass (tested `v0.8.3`, `v0.8.91`)
   with `[Plugins] LoadReshade=true`. The add-on takes over the model OptiScaler created and compresses
-  it, on D3D12 and on D3D11 through OptiScaler's bridge, also with NR before the upscaler and with
+  it on D3D12, and on D3D11 through OptiScaler's bridge, including NR before the upscaler and
   OptiScaler's own frame generation. See docs/INSTALL.md, "With a public OptiScaler".
-
 * **Settings beside OptiScaler's menu.** With a public OptiScaler in the process, its menu key
   (`[Menu] ShortcutKey`, Insert by default) also opens a window with the add-on's settings beside
   OptiScaler's menu, so they can be changed without opening ReShade. The tab warns when
@@ -37,9 +36,50 @@ One core for everything the add-on does, and the add-on now works on top of publ
 * The four compression groups sit under one collapsible **Compression** header; Mode stays on top.
 * Diagnostics, the core's status lines and the diagnostic counters are behind an **Advanced
   (diagnostics)** checkbox (`ShowAdvanced`, off by default).
-* Status lines no longer move the controls below them: text that changes with the state stays one
-  line (full text in the tooltip), the hook-attempt count is part of the banner, and a group with
-  nothing to show on the host has no header. The add-on's description in ReShade's list is one line.
+* Status lines no longer move the controls below them: text that changes with the state stays on one
+  line (the full text is in the tooltip), the hook-attempt count is part of the banner, and a group
+  with nothing to show on the host has no header. The add-on's description in ReShade's list is one
+  line.
+
+**Fixed**
+
+* **The status banner flickered in a temporal mode.** It switched between ACTIVE and NOT ACTIVE every
+  frame because a frame carried without a model pass counted as not warped. It now keeps the state of
+  the last model frame.
+* **32-bit games stuck with the add-on switched off.** In the 32-bit kits the model runs in a helper
+  process, `host64\dlss5-feed-host64.exe`, which the game stops and restarts whenever settings are
+  applied in its tab. A stop within 20 s of the first compressed frame looked exactly like a crash, so
+  the crash guard switched the add-on off, and it stayed off: a host never unloads cleanly, so nothing
+  removed the marker. When the game stops a host (settings applied, a restart, the game's exit), the
+  host ends with exit code 0, whether it leaves by itself (the 31.08 Feed) or the game kills it (the
+  optical-flow Feed). A crash ends with an exception code, and a removed device with 3.
+  The game's 32-bit tab now watches the hosts its game starts and removes the marker of any host that
+  ended with 0. At the game's exit, ReShade unloads the tab seconds before the Feed stops the host, so
+  the tab signals on its way out and the host's add-on removes the marker itself. The host's add-on
+  also does this when the host leaves by itself with 0. A removed device is noted in the marker, and
+  that marker stays.
+* **The 32-bit tab hid the crash guard.** With the guard tripped, it said "waiting for the host to
+  create feature 18" and had no Retry. It now shows the guard in red with a Retry button that reaches
+  the host. With an older host add-on, the tab shows a line naming the file to delete instead.
+* The 32-bit tab no longer says that feed32 does the compression: in the current kits it runs in the
+  64-bit host, and feed32 compresses as well only in a kit with `warp_*` keys in `dlss5-feed.cfg`.
+* **Motion vectors in an RGBA16F or RGBA32F texture** (Cyberpunk 2077 with Ray Reconstruction, GitHub
+  issues #2 and #3) stopped the compression with "pack descriptors: UnsupportedFormat". Vectors are now
+  read from `.xy` of these formats, as they already were from RG16F/RG32F.
+* **An output texture larger than the frame.** A host that hands the model a larger output texture
+  (alignment padding, a maximum-size render target) with the frame at its top-left was left
+  uncompressed with "host output is AxB, feature is CxD". The compressed frame is now copied into that
+  region. Hosts whose frame does not fit the model at all (a model that upscales, a colour region that
+  changes with dynamic resolution, an output region elsewhere in its texture) are recognised before
+  the layout is applied. The model then runs untouched and is no longer re-created twice on every
+  slider change. The tab and the log say which of these cases it is (GitHub issue #4).
+* The spread schedule of the model passes no longer runs when the host's output region differs from
+  the feature: it used to write past the region and record an invalid whole-texture copy.
+* **Pack read outside the colour region** (SDK, `peripheral_warp_pack.hlsli`). The periphery filter's
+  taps are now kept inside the host's colour region. When the region sits inside a larger texture, the
+  taps at the right and bottom edges used to blend in whatever the host kept past the region; with
+  the model on top, that changed the whole frame slightly (bench, Uniform: MAD 0.25). A region that
+  fills its texture gives bit-identical output to before. The add-on and `pack_ps.dxbc` go together.
 
 **Known limits**
 
@@ -48,45 +88,6 @@ One core for everything the add-on does, and the add-on now works on top of publ
 * An OptiScaler build with its own peripheral compression (wilsjo2 `SpatialCompression`) and this
   add-on must not both compress: turn one off.
 * Unloading the add-on while the game runs is not supported; change it with the game closed.
-
-**Fixed**
-
-* The status banner flipped between ACTIVE and NOT ACTIVE every frame in a temporal mode: a frame
-  carried without a model pass counted as not warped. It now keeps the state of the last model frame.
-
-* **32-bit games stuck with the add-on switched off.** In the 32-bit kits the model runs in a helper
-  process (host64\dlss5-feed-host64.exe) that the game stops and starts again whenever settings are
-  applied in its tab. A stop within 20 s of the first compressed frame looked exactly like a crash, so
-  the crash guard switched the add-on off - for good, because a host never unloads cleanly and so
-  nothing ever removed the marker. A host ends with exit code 0 when the game stops it (settings
-  applied, a restart, the game's exit) - whether it leaves by itself (the 31.08 Feed) or the game kills
-  it (the optical-flow Feed) - while a crash ends with an exception code and a removed device with 3.
-  The game's 32-bit tab now watches the hosts its game starts and removes the marker of one that ended
-  with 0. At the game's exit ReShade unloads the tab seconds before the Feed stops the host, so the tab
-  signals on its way out and the host's add-on removes the marker itself. The host's add-on also does it
-  when the host leaves by itself with 0. A removed device is noted in the marker, which then stays.
-* **The 32-bit tab hid the crash guard.** With the guard tripped it said "waiting for the host to create
-  feature 18", and it had no Retry. It now shows the guard in red with a Retry button that reaches the
-  host. An older host add-on gets a line saying which file to delete instead.
-* The 32-bit tab no longer says that the compression is done by feed32: in the current kits it runs in
-  the 64-bit host, and only a kit with warp_* keys in dlss5-feed.cfg compresses in feed32 as well.
-* **Motion vectors in an RGBA16F or RGBA32F texture** (Cyberpunk 2077 with Ray Reconstruction, GitHub
-  issues #2 and #3) stopped the compression with "pack descriptors: UnsupportedFormat". Vectors are now
-  read from .xy of these formats, as they already were from RG16F/RG32F.
-* **An output texture larger than the frame.** A host that hands the model a larger output texture
-  (alignment padding, a maximum-size render target) with the frame at its top-left was left
-  uncompressed with "host output is AxB, feature is CxD". The compressed frame is now copied into that
-  region. Hosts whose frame does not fit the model at all - a model that upscales, a colour region that
-  changes with dynamic resolution, an output region elsewhere in its texture - are recognised before
-  the layout is applied. The model then runs untouched and is no longer re-created twice on every
-  slider change. The tab and the log say which of these cases it is (GitHub issue #4).
-* The spread schedule of the model passes no longer runs when the host's output region differs from the
-  feature: it used to write past the region and record an invalid whole-texture copy.
-* **Pack read outside the colour region** (SDK, `peripheral_warp_pack.hlsli`). The periphery filter's
-  taps are now kept inside the host's colour region. When the region sits inside a larger texture, the
-  taps at the right and bottom edges used to blend in whatever the host kept past the region; with
-  the model on top, that changed the whole frame slightly (bench, Uniform: MAD 0.25). A region that
-  fills its texture gives bit-identical output to before. The add-on and `pack_ps.dxbc` go together.
 
 ## 2026.9
 _2026-09-20_ - the carry no longer depends on the depth convention, and the 32-bit tab gained the model passes.
