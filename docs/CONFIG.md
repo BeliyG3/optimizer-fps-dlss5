@@ -1,5 +1,34 @@
 # Configuration
 
+For the ReShade add-on, settings live in the `[OptimizerFPS]` section of the
+host's `ReShade.ini`. In a 32-bit game, this is the 64-bit host's ini; the game's
+remote tab controls that host. Use the overlay when possible. For a manual edit,
+close the game and host first, then restart them after saving the ini.
+
+```ini
+[OptimizerFPS]
+Mode=2
+CenterX=80
+CenterY=80
+WorkX=90
+WorkY=90
+CrashGuard=1
+DebugWarpPath=0
+```
+
+`Mode=0` is Off, `1` is Uniform, and `2` is Peripheral. `CrashGuard=0` disables the marker that
+keeps warping off after an early crash. `Passive=1` is a diagnostic setting: the
+add-on registers without hooks, events, or a tab. Remove it after the test.
+`DebugWarpPath=0` selects the available path automatically, `1` forces compute,
+and `2` forces pixel. Start with `0`; forcing an unsupported path can leave the
+frame untouched. The Diagnostics tree in the tab and `ReShade.log` explain why a
+frame was passed through. `DebugTiming` enables timing queries; other `Debug*`
+keys are for specific investigations and may need a restart.
+
+An older `[PeripheralWarp]` section is only an input for migration. `Update`
+copies known keys to `[OptimizerFPS]` when the current section is absent. If
+both exist, the current section wins. See [INSTALL.md](INSTALL.md).
+
 Percentages are per axis.
 
 | Field | Meaning |
@@ -35,7 +64,7 @@ The unchanged center area is `0.8 × 0.8 = 64%` of the screen. The work texture 
 
 The old quality guard limited local peripheral compression to 2x and produced the visible 50.5% minimum. V3 replaces that hard rejection with an aggressive-compression diagnostic. `compression < 0.5` may visibly alias near the edge even with the automatic prefilter.
 
-Use Center/Work `100/100` and Global 100% for a strict identity extent. Rejected configurations return a `pw::Status`; callers should keep the last valid layout or bypass the module.
+Use Center/Work `100/100` and Global 100% for a strict identity extent. Rejected configurations return a `ofps::sdk::Status`; callers should keep the last valid layout or bypass the module.
 
 ## Suggested presets
 
@@ -50,7 +79,7 @@ The preset names are documentation conveniences, not serialized enum values. Alw
 actual five numeric values in a benchmark report.
 
 `Show uncompressed center` (cyan) and `Show Work boundary` (orange) are diagnostics, but they are
-persisted like the rest of the layout (`ShowCenterOutline` / `ShowWorkOutline` in `[PeripheralWarp]`)
+persisted like the rest of the layout (`ShowCenterOutline` / `ShowWorkOutline` in `[OptimizerFPS]`)
 so they survive ReShade re-creating its runtime. The Work boundary represents raw Work before Global
 scale. Both are hidden outside Peripheral mode and change neither layout generation nor temporal
 reset state.

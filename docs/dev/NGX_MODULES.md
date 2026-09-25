@@ -1,136 +1,129 @@
-# The NGX feature-18 hook, module by module
+# The shared core and NGX shell, module by module
 
-Stage 27.D1 split `adapters/reshade/ngx_hook.cpp` (~2 900 lines, one translation unit of `g_*`
-globals and free functions) into `adapters/reshade/ngx/`. Nothing changed but where the code
-lives: the public include stays `adapters/reshade/ngx_hook.h`, and everything internal lives in
-one namespace, `pwhook`, so the modules can see each other without a global.
+`core/sources.cmake` feeds both the runtime `optimizer-fps-dlss5-core.dll` and
+static `ofps_core` (`OptimizerFps::Core`) used by tests. The Windows x64 core
+builds independently of the ReShade shell. `hosts/reshade/` and the narrow
+OptiScaler integration consume the same ABI 1 contract. The ReShade payload
+places the DLL and 21 DXBC in `optimizer-fps-dlss5/` beside the x64 add-on;
+the x86 remote tab stays beside the x86 ReShade DLL and connects to the x64
+host through IPC V4.
 
-## `hook_common.h`
+## Public boundary and ownership
 
-The vocabulary every module shares: the `pwngx::` parameter-block aliases (`GetUInt`, `SetFloat`,
-`Barrier`, `TypedView`, `Log`, …), the resource pointer helpers over the block, the signatures of
-the three real `nvngx_dlssnr.dll` entry points, `Subrect`, the resting states the host hands its
-inputs and output in (`kHostInputState`, `kHostOutputState`), the result codes the internal paths
-answer with (`kCrashed`, `kPackFailed`, `kNotHandled`) and the `Stage` enum with `StageName`, which
-names the point a structured exception was caught at. Header only.
+`core/api/ofps_core.h` is the single host entry (ABI 1, release 2026.9.1).
+`core_impl.h/.cpp` implements the process core, host registration, capabilities and
+feature creation/adoption. `core_feature.cpp` implements the feature wrapper and
+evaluate/rebuild/release calls; `core_settings.cpp` applies settings and emits changes;
+`core_status.cpp` provides status rows and layout previews. `settings/schema.cpp`,
+`values.h/.cpp` and `status.h/.cpp` own schema, validation/defaults and presentation
+data. The public settings schema is `api/ofps_settings_schema.h`.
 
-## `hook_context.h/.cpp`
+The shell has no private-core includes. `IOfpsHost` receives logs/events and
+`IOfpsModelHost` owns all model/codec calls. Callbacks cannot re-enter core methods.
+Feature release first retires model/GPU work; `FEATURE_RELEASED` is delivered only
+after the model host is no longer referenced by deferred work. Hosts remain alive
+until unregistered. Borrowed status strings must be copied before the next call of
+the same method. No allocator ownership crosses this boundary.
 
-`HookContext` is what used to be the file-scope globals: the real entry points, the config getter,
-the shader directory and the loaded `Shaders`, the overlay's outline and colour switches, the
-`TemporalSettings` and the `DiagnosticsConfig`, safe mode, the first-warped callback, the hook
-attempt counters, the mutex, the `Status`, the evaluate counter, the feature map, the `Graveyard`,
-the crash record. One instance, reached through `Ctx()` — a function-local static, so no module
-depends on another one's initialization order. The small helpers that only touch the context live
-here too: `CallCreate/CallEvaluate/CallRelease` (which go through the forwarder), `SetReason`,
-`LoadShaders`, `WaitForGpu`, `DrainGraveyard`, `NotifyFirstWarped`, the readers of the individual
-`Debug*` switches and the residual blend weight.
+## Core state and frame recording
 
-## `feature_state.h/.cpp`
+`core/context.h/.cpp` owns `CoreContext`, reached through `Ctx()`, and the existing
+`Status`, `TemporalSettings`, `DiagnosticsConfig` and callback types. The context retains
+the feature map, foreign handles, mutex, settings, counters, shaders and graveyard.
+`SetReason`, `NotifyFirstWarped`, `LoadShaders`, GPU waits and diagnostic readers remain here.
+`core/log.h/.cpp` owns the existing log callback and formatter.
 
-`FeatureState` is everything one host handle owns: the real model behind it, the extent it was
-created at, the layout in force, the D3D12 adapter and the warp's textures, the descriptor slots
-and the source-set ring, the timing ring, the temporal machine, the background job and the gate of
-the last buried one. The .cpp holds `EnsureGpu`, which builds those objects for the host's colour
-and output formats, and the retirement rules — `BuryReal`, `BuryAsync`, `BuryGpu`, `RetireGpu` —
-which never free anything the GPU may still be reading: it goes into the graveyard behind a fence
-gate instead.
+`core/frame/common.h` retains stage codes, private model resource states and GPU aliases.
+`core_feature.cpp` validates frame entry; `dispatch.cpp` guards evaluation and
+guarantees the model host's `EndFrame` call. `dispatch_body.cpp`
+routes explicit inputs between pass-through, warp and temporal paths.
+`lifecycle.h/.cpp` retains `DesiredLayout`, `RecreateReal`,
+`SameLayoutConfig`, `ApplyLayout` and `CreateModelGuarded`.
 
-## `ngx_params.h/.cpp`
+`feature_state.h/.cpp` owns each feature's resources and their retirement rules.
+`warp_recorder.h/.cpp` records Pack, model, Unpack, base and interpolation passes,
+restores resource states and supplies the existing SEH wrappers and fallback output.
+`host_shape`, `host_depth_state`, `motion_smooth`, `debug_readback` and `timing`
+retain their separate shape, depth-state, smoothing, readback and timestamp responsibilities.
+`model_passes`, `spread_passes` and `spread_model` retain sequential and spread model work.
 
-The keys of the parameter block that describe extents: `WriteSizes` over the three width/height
-key pairs a host may use, and `ReadSubrect` / `WriteSubrect` over the `DLSSNR.<input>Subrect*`
-group, plus `kSubrectNames`. Nothing here knows about the warp.
+## Temporal code and shaders
 
-## `host_depth_state.h/.cpp`
+`core/temporal/controller.h/.cpp` chooses temporal modes and handles the native path.
+`machine.h/.cpp`, `accumulation.cpp`, `residual.cpp` and `background.cpp` record
+the existing GPU passes. `resources.h/.cpp` supplies bindings and constants;
+`resources_create.cpp` allocates textures and pipelines. `history.h/.cpp` owns saved
+passes. `phase.h` holds the CPU phase clock, covered by `test_temporal_phase.cpp`.
 
-One rule: what state the host's depth guide rests in (`HostDepthState`). It is `NON_PIXEL_SHADER_-
-RESOURCE` unless `DebugDepthState` overrides it; a depth-stencil guide is logged once, because its
-barriers address the depth plane alone. Every barrier chain that touches the depth asks here.
+`async_entry.cpp` creates the background job and prepares `AsyncTemporalEvaluate`;
+the core's submission path handles `OnCommandListExecuted`.
+`async_frame.h` carries the shared `AsyncCtx`
+and private-data tag. `async_scheduler.cpp` owns private input copies, `AsyncBody`
+and `AsyncGuarded`, with host states restored after every copy.
 
-## `timing.h/.cpp`
+The six temporal/motion shader files now live in `core/shaders/`, byte-identical
+to their previous locations. HLSL identifiers and `pwtemporalcontract` are unchanged.
+Both fxc and dxc search `sdk/shaders` and `core/shaders`. The manifest still produces
+15 temporal DXBC files, alongside five SDK shaders and one motion-smoothing shader.
 
-`DebugTiming` only: `TimingBegin` / `TimingEnd` wrap the model's evaluate in a timestamp pair,
-resolved into the feature's readback ring. A slot is read only when it is a full ring older than
-the current evaluate, so nothing in flight is ever mapped.
+## GPU support
 
-## `temporal_controller.h/.cpp`
+`core/gpu/queues.h/.cpp` owns queue registration, GPU waits and `GateSet`.
+`graveyard.h/.cpp` owns deferred releases, including `IOfpsModelHost::ReleaseModel`.
+`submission.h/.cpp` and its supporting modules track pending command-list serials,
+queue fences and background tags. `descriptor_pool.h/.cpp` and `constant_ring.h/.cpp`
+gate descriptor/set reuse on completion, with bounded waiting and explicit exhaustion
+fallback. Retirement combines pending host submissions and background fences. Without
+a registered queue retirement waits 16 evaluates before retrying a gate; resources
+remain pending if no queue can confirm completion. The delay alone does not free them.
+The bounded submission ring uses its own mutex, not a lock-free queue.
+`shaders.h/.cpp` loads shader binaries, `barriers.h/.cpp` owns format and texture
+helpers, and `crash_guard_seh.h/.cpp` records structured exceptions.
+The core no longer includes or stores the SDK D3D11 adapter.
 
-The temporal modes. `EnsureTemporal` builds (or rebuilds) the machine for the host's textures,
-`PlanTemporal` decides whether this frame runs the model or is interpolated, `TemporalInputs`
-translates the host's description into the machine's `FrameInputs`, `TemporalFrameDone` keeps the
-counters, `BackgroundModeUsable` / `EffectiveTemporalMode` fall mode 3 back to the synchronous
-interpolation when no host queue is registered, and `TemporalReason` records why a mode is off.
-The no-warp path (Mode Off with a temporal mode on) lives here as well: `NativeTemporalEvaluate`
-and its guarded body run the model at native size and let the machine fill the frames between.
+## Explicit frame inputs and NGX shell
 
-## `warp_recorder.h/.cpp`
+`hosts/reshade/ngx_hook_api.cpp` owns `HookCreate`, `HookEvaluate`, `HookRelease`,
+Detours, foreign-handle forwarding, installation guards and polling. Before evaluate it snapshots the model host and
+calls `ReadFrameInputs` in `ngx_params.cpp`. The shell owns NGX keys, float probing,
+subrect defaults, motion diagnostics and model-key descriptions. `ModelHostNgx`
+returns the newline-separated motion/resources/model diagnostics and optional probe tail.
+`ngx_forwarder_calls` owns all native model entry points and forwarding calls.
 
-What one warped evaluate records. `EvalContext` is the POD that crosses the structured-exception
-frames; `RecordPackStage` packs the host's inputs into the slot's textures, `WarpedBody` runs
-Pack → model → Unpack and, when a temporal mode is on, the residual or the reprojection,
-`RecordBaseUnpack` produces the temporal base (the packed colour unpacked without the model),
-`InterpolateBody` is the frame the model rests on, and `RestoreParams` hands the block back the way
-the host left it. `FallbackOutput` / `FallbackFromParams` write the host's own colour when no path
-produced the frame. `WarpedGuarded`, `InterpolateGuarded` and `RestoreGuarded` are the SEH wrappers:
-`__try` cannot live in a frame that unwinds C++ objects, so each body has its own.
+`core/frame/frame_inputs` resolves unknown views and copies explicit resources
+into model inputs. `core_feature.cpp` copies the caller frame; `dispatch_body.cpp`
+routes codec and creation-frame work, and `dispatch.cpp` completes `EndFrame`.
+All external resources carry their own resting state and subresource. In-place
+color/output uses a single resting state for overlapping subresources; private
+model textures use `kModelInputState` and `kModelOutputState`. Planar depth copies
+and barriers touch the selected depth plane, leaving stencil alone.
+`HostDepthState` defaults to the supplied state; diagnostic overrides remain explicit.
 
-## `async_scheduler.h/.cpp`
+`host_shape` judges the supplied rectangles, latches an unfit host until layout
+changes, and emits `HOST_SHAPE_REJECTED` once through the core's host event path.
+Fallback copies read frame resources, and native/spread/background temporal paths
+preserve the same states and subresource indices. The parameter bridge and all
+core NGX reads are removed. `ShellHost` connects `IOfpsHost` to the crash guard, INI
+persistence and shell status; the add-on reads `OfpsStatus` and writes
+`OfpsSettingsValues` through the ABI.
 
-Temporal mode 3, the model on its own queue. `AsyncJob` (in the header, because `FeatureState`
-holds one) owns that queue, its fences and events, the private copies of the host's inputs, the
-output and base pairs, the allocator/list slots and the pass statistics. The .cpp builds the job
-(`EnsureAsync`, including the queue priority and the realtime request), records a kick's input
-copies on the host's list, runs `WarpedBody` on the background list for the warped path,
-reprojects the last residual on every host frame (`AsyncTemporalEvaluate`), and resolves the
-submit tag in `OnCommandListExecuted` so the background queue may start.
+The frame grid is the feature's native extent, separate from the model's work grid.
+Padded output is accepted when its supplied region fits; an unfit/shifted region is
+latched as pass-through rather than repeatedly rebuilding the model. Model creation
+never evaluates on the creation list; deferred models wait for `ModelReady`, force a
+history reset on first use and complete each frame with `EndFrame`. Codec preparation
+precedes Pack, and answer resolution follows Unpack; an identity host skips conversion.
+The shell restores the NGX block after model calls and keeps raw NGX return codes
+separate from `OfpsEvalResult::modelResult`.
 
-## `hook_dispatch.h/.cpp`
+`test_ngx_params` uses real WARP textures to check missing subrects, planar depth,
+scales and model diagnostics. `test_host_shape` checks padded and shifted output
+regions, rejection latching/events, typed-view preservation and depth overrides.
 
-The three hooked entry points and the state they drive. `HookCreate` creates the model at the
-extent the layout asks for (a second NR consumer in the process is left untouched); `HookRelease`
-retires the feature under the right gate; `HookEvaluate` is the frame router — apply the layout,
-choose between the background mode, the native temporal path, the warp and the plain pass-through,
-and fall back when anything declines. `RecreateReal`, `ApplyLayout`, `DesiredLayout`,
-`SameLayoutConfig` and `AdoptFeature` (a handle created before the hooks were installed) are here.
-
-## `ngx_hook_api.cpp`
-
-The public surface: `InstallHooks` (Detours, under its own exception guard), `Poll`, which waits
-for `nvngx_dlssnr.dll` at present time, and the `pw_ngx::` setters and getters the add-on drives
-the hook with — `Configure`, `SetEnabled`, `SetSafeMode`, `SetDiagnostics`, `SetOutlines`,
-`SetMotionAdjust`, `SetOutputColorAdjust`, `SetTemporal`, `SetFirstWarpedCallback`, `GetStatus`,
-`RegisterQueue` / `UnregisterQueue` and `OnCommandListExecuted`.
-
-## `ngx_common.h/.cpp`
-
-Moved into the folder unchanged. The machinery shared with the DLSS SR interposer:
-parameter-block access, the call forwarder, the D3D12 queue registry with its GPU waits and
-graveyard, shader loading, format helpers, barriers and the exception record.
-
-## `ngx_temporal.h/.cpp`, `temporal_resources.h/.cpp`
-
-The GPU side of the temporal modes. `temporal_resources` owns what the machine holds — the root
-signature, one pipeline per pass, the descriptor-table ring, the RTV heap, every texture, and the
-two helpers that turn a frame's inputs into root constants and into a descriptor table.
-`ngx_temporal` records the passes on the host's list and owns the order they run in: the expectation
-and the motion accumulation every frame; on a full pass the residual, the phase-in source, the
-box-filtered residual, the snapshots and the model's own motion vectors; on a carried frame the
-reprojection, the cells and the compose.
-
-The pass functions themselves are in `shaders/temporal.hlsl`, a file shared verbatim with the
-experimental OptiScaler build (which runs them as compute). The add-on compiles them through
-`shaders/temporal_ps.hlsl`, which sets the feature macros this machine binds registers for
-(`PW_T_EXPECT`, `PW_T_RAMP`, `PW_T_CELLS`; `PW_T_HISTORY` is not supported — the table stops at t11)
-and adds `PSApply`. Keeping `temporal.hlsl` byte-identical with the fork is deliberate: the two
-implementations are compared against each other on the bench.
-
-Recording is split by responsibility: `temporal_accumulation.cpp` owns the expectation, depth copies,
-motion chains and synchronous model vectors; `temporal_residual.cpp` owns residual adoption, snapshots
-and Apply; `temporal_background.cpp` records the host-side work for asynchronous chains and kicks.
-`ngx_temporal.cpp` retains lifecycle, promotion and reprojection. Resource allocation and pipeline
-creation live in `temporal_resources_create.cpp`; bindings and constants remain in `temporal_resources.cpp`.
-`temporal_phase.h` holds the CPU ramp clock, covered by `tests/test_temporal_phase.cpp`.
+Add-on modules use `ofps::reshade`; references to the ReShade SDK use `::reshade`.
+`tools/check-core-includes.py`, registered as `ofps_core_includes` when the core
+target exists, rejects shell, ReShade, Detours, D3D11-adapter and parent-relative
+includes under `core/`.
 
 ### Background origins and order (26.28)
 
@@ -187,23 +180,24 @@ limitations are recorded in
 
 ### Model passes and spread cycles (26.28, local port)
 
-`model_passes.h/.cpp` owns extra feature creation and the common model evaluate. The host handle
+`core/frame/model_passes.h/.cpp` owns extra feature creation and the common model evaluate. The host handle
 continues to map to `FeatureState::realHandle`; two optional real feature-18 handles have independent
-NGX histories. Creation uses the same forwarder and temporarily written work sizes/UI setting as
-`RecreateReal`. The creation frame records no model evaluates: it carries the existing temporal
+model histories. Creation goes through `IOfpsModelHost`, just like `RecreateReal`;
+the NGX shell supplies temporary work sizes/UI settings and restores the block.
+The creation frame records no model evaluates: it carries the existing temporal
 result, or presents the raw host colour during initialization. Failed creation is latched until
 settings/extent change, with the actual count and a warning exposed in `Status`. Each sequential
 extra pass reads a separate work-size staging copy. Failed extra evaluates preserve the previous
 successful output. Handles retire through `BuryReal`; staging and spread resources follow the GPU
 and background-job gates in `FeatureState`.
 
-`spread_passes.h/.cpp` owns up to two hidden temporal machines, an immutable native raw snapshot,
+`core/frame/spread_passes.h/.cpp` owns up to two hidden temporal machines, an immutable native raw snapshot,
 a carried input texture and the stage/cadence position. Every frame advances the displayed and
 hidden motion chains. Stage k consumes stage k-1 carried onto the current raw frame; its residual
 is still measured against that raw frame. Hidden stages have no phase-in or cross-cycle residual
-blend. Only the final stage updates the displayed machine. `spread_model.cpp` binds the selected
+blend. Only the final stage updates the displayed machine. `core/frame/spread_model.cpp` binds the selected
 stage's model vectors, packs/evaluates/unpacks through the existing recorder (or evaluates natively),
-and restores the host's parameters. `Machine::RecordRaw` reuses the raw-colour shader branch while
+and restores external resource states. The shell's model host restores the NGX parameter block. `Machine::RecordRaw` reuses the raw-colour shader branch while
 preserving the displayed phase clock. Neither temporal shader source changes.
 
 Spreading uses the host queue for every temporal mode, including a requested background mode; the

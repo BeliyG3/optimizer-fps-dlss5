@@ -1,6 +1,7 @@
 #pragma once
 #include "device.h"
 #include "ngx_contract.h"
+#include "core_state_sentinel.h"
 
 void CheckNgx(NVSDK_NGX_Result result, const char *operation);
 void AuditNgxParameters(bool enabled);
@@ -31,4 +32,5 @@ private:
     std::wstring dataDirectory;
     const wchar_t *searchPaths[1]{};
     NVSDK_NGX_FeatureCommonInfo common{};
+    CoreStateSentinel stateSentinel;
 };

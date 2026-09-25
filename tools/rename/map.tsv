@@ -1,0 +1,103 @@
+path	include/peripheral_warp/types.h	sdk/include/optimizer_fps/types.h
+path	include/peripheral_warp/types_v2.h	sdk/include/optimizer_fps/types_v2.h
+path	include/peripheral_warp/math.h	sdk/include/optimizer_fps/math.h
+path	include/peripheral_warp/input_v2.h	sdk/include/optimizer_fps/input_v2.h
+path	include/peripheral_warp/addon_api.h	sdk/include/optimizer_fps/addon_api.h
+path	include/peripheral_warp/addon_api_v2.h	sdk/include/optimizer_fps/addon_api_v2.h
+path	include/peripheral_warp/addon_api_v3.h	sdk/include/optimizer_fps/addon_api_v3.h
+path	include/peripheral_warp/layout_bridge_v1.h	adapters/reshade/addon/layout_bridge_v1.h
+path	src/core/input_v2.cpp	sdk/src/input_v2.cpp
+path	src/core/layout.cpp	sdk/src/layout.cpp
+path	src/core/layout_v2.cpp	sdk/src/layout_v2.cpp
+path	src/core/math.cpp	sdk/src/math.cpp
+path	src/core/sides_v2.h	sdk/src/sides_v2.h
+path	adapters/common/adapter_types.h	sdk/adapters/common/adapter_types.h
+path	adapters/d3d11/CMakeLists.txt	sdk/adapters/d3d11/CMakeLists.txt
+path	adapters/d3d11/d3d11_adapter.cpp	sdk/adapters/d3d11/d3d11_adapter.cpp
+path	adapters/d3d11/d3d11_adapter.h	sdk/adapters/d3d11/d3d11_adapter.h
+path	adapters/d3d12/CMakeLists.txt	sdk/adapters/d3d12/CMakeLists.txt
+path	adapters/d3d12/d3d12_adapter.cpp	sdk/adapters/d3d12/d3d12_adapter.cpp
+path	adapters/d3d12/d3d12_adapter.h	sdk/adapters/d3d12/d3d12_adapter.h
+path	shaders/peripheral_warp_common.hlsli	sdk/shaders/ofps_common.hlsli
+path	shaders/peripheral_warp_pack.hlsli	sdk/shaders/ofps_pack.hlsli
+path	shaders/fullscreen.hlsli	sdk/shaders/fullscreen.hlsli
+path	shaders/pack.hlsl	sdk/shaders/pack.hlsl
+path	shaders/unpack.hlsl	sdk/shaders/unpack.hlsl
+path	shaders/preview.hlsl	sdk/shaders/preview.hlsl
+path	shaders/outline.hlsl	sdk/shaders/outline.hlsl
+path	cmake/PeripheralWarpConfig.cmake.in	cmake/OptimizerFpsSdkConfig.cmake.in
+path	cmake/pw_version.h.in	cmake/ofps_version.h.in
+text	set(PW_SDK_VERSION "0.5.0")	set(OFPS_SDK_VERSION "0.6.0")
+text	#include "peripheral_warp/layout_bridge_v1.h"	#include "layout_bridge_v1.h"
+text	include/peripheral_warp/	sdk/include/optimizer_fps/
+text	peripheral_warp/	optimizer_fps/
+text	"../../d3d11/d3d11_adapter.h"	"d3d11/d3d11_adapter.h"
+text	"../../d3d12/d3d12_adapter.h"	"d3d12/d3d12_adapter.h"
+text	${PROJECT_SOURCE_DIR}/include	${PROJECT_SOURCE_DIR}/sdk/include
+text	${PROJECT_SOURCE_DIR}/shaders/pack.hlsl	${PROJECT_SOURCE_DIR}/sdk/shaders/pack.hlsl
+text	${PROJECT_SOURCE_DIR}/shaders/unpack.hlsl	${PROJECT_SOURCE_DIR}/sdk/shaders/unpack.hlsl
+text	${PROJECT_SOURCE_DIR}/shaders/preview.hlsl	${PROJECT_SOURCE_DIR}/sdk/shaders/preview.hlsl
+text	${PROJECT_SOURCE_DIR}/shaders/outline.hlsl	${PROJECT_SOURCE_DIR}/sdk/shaders/outline.hlsl
+text	${PROJECT_SOURCE_DIR}/shaders/fullscreen.hlsli	${PROJECT_SOURCE_DIR}/sdk/shaders/fullscreen.hlsli
+text	${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_common.hlsli	${PROJECT_SOURCE_DIR}/sdk/shaders/ofps_common.hlsli
+text	${PROJECT_SOURCE_DIR}/shaders/peripheral_warp_pack.hlsli	${PROJECT_SOURCE_DIR}/sdk/shaders/ofps_pack.hlsli
+regex	(?<!sdk/shaders" )/I "\$\{PROJECT_SOURCE_DIR\}/shaders"	/I "${PROJECT_SOURCE_DIR}/sdk/shaders" /I "${PROJECT_SOURCE_DIR}/shaders"
+regex	(?<!sdk/shaders" )-I "\$\{PROJECT_SOURCE_DIR\}/shaders"	-I "${PROJECT_SOURCE_DIR}/sdk/shaders" -I "${PROJECT_SOURCE_DIR}/shaders"
+text	pw_version.h	ofps_version.h
+text	PeripheralWarpConfig	OptimizerFpsSdkConfig
+text	PeripheralWarpTargets	OptimizerFpsSdkTargets
+text	check_required_components(PeripheralWarp)	check_required_components(OptimizerFpsSdk)
+text	${CMAKE_INSTALL_LIBDIR}/cmake/PeripheralWarp	${CMAKE_INSTALL_LIBDIR}/cmake/OptimizerFpsSdk
+text	${CMAKE_INSTALL_DATADIR}/peripheral-warp	${CMAKE_INSTALL_DATADIR}/optimizer-fps-sdk
+text	find_package(PeripheralWarp 0.5)	find_package(OptimizerFpsSdk 0.6)
+text	find_package(PeripheralWarp <ver>)	find_package(OptimizerFpsSdk <ver>)
+text	find_package(PeripheralWarp CONFIG REQUIRED)	find_package(OptimizerFpsSdk CONFIG REQUIRED)
+text	EXPORT_NAME Core	EXPORT_NAME SdkCore
+text	EXPORT_NAME D3D11	EXPORT_NAME SdkD3D11
+text	EXPORT_NAME D3D12	EXPORT_NAME SdkD3D12
+text	core-only-x64	sdk-only-x64
+text	out/build/core-x64	out/build/sdk-x64
+text	out/install/core-x64	out/install/sdk-x64
+text	"Core only x64"	"SDK only x64"
+text	"PeripheralWarp: fetched	"OptimizerFps: fetched
+text	"PeripheralWarp: using	"OptimizerFps: using
+text	# PeripheralWarp external build dependencies.	# Optimizer FPS external build dependencies.
+text	PeripheralWarp SDK/library	Optimizer FPS SDK/library
+text	The PeripheralWarp D3D11 adapter	The Optimizer FPS SDK D3D11 adapter
+text	The PeripheralWarp D3D12 adapter	The Optimizer FPS SDK D3D12 adapter
+text	"PeripheralWarp CPU tests passed	"Optimizer FPS SDK CPU tests passed
+text	"PeripheralWarp layout-v2 tests passed	"Optimizer FPS SDK layout-v2 tests passed
+text	"PeripheralWarp shader-reference fixtures passed	"Optimizer FPS SDK shader-reference fixtures passed
+text	"PeripheralWarp D3D11 smoke test passed	"Optimizer FPS SDK D3D11 smoke test passed
+text	"PeripheralWarp D3D12 GPU smoke test passed	"Optimizer FPS SDK D3D12 GPU smoke test passed
+word	namespace pw	namespace ofps::sdk
+word	pw::	ofps::sdk::
+regex	\bPW_(CALL|ADDON_EXPORT|SDK_VERSION_STRING|ADDON_VERSION_STRING|BUILD_TESTS|BUILD_D3D_ADAPTERS|BUILD_RESHADE_ADDON|BUILD_RESHADE_REMOTE32|COMPILE_SHADERS|STATIC_CRT|RESHADE_SDK_ROOT|IMGUI_ROOT|DETOURS_ROOT|RESHADE_INCLUDE_DIR|IMGUI_INCLUDE_DIR|SDK_VERSION|RELEASE_VERSION|FXC_EXECUTABLE|DXC_EXECUTABLE|SHADER_OUTPUT_DIR|TEMPORAL_SOURCE|TEMPORAL_PASSES_NAMES|TEMPORAL_PASSES_ENTRIES|COMPILED_SHADER_OUTPUTS|RESHADE_VERSION|RESHADE_URL_SHA256|IMGUI_VERSION|IMGUI_URL_SHA256|IMGUI_EXPECTED_VERSION_NUM|DETOURS_COMMIT|DETOURS_URL_SHA256|DETOURS_SOURCE_DIR|NGX_SOURCES|ADDON_SOURCES|WARP_CONSTANTS_REGISTER|DIAGNOSTIC_CONSTANTS_REGISTER|INPUT_CONSTANTS_REGISTER|MODE_OFF|MODE_UNIFORM|MODE_PERIPHERAL|FILTER_BILINEAR|FILTER_ADAPTIVE_FOUR_TAP|FLAG_EXTEND_MOTION_AT_EDGE|DIAGNOSTIC_OUTLINE_CENTER|DIAGNOSTIC_OUTLINE_RAW_WORK)\b	OFPS_\1
+word	PeripheralWarp::Core	OptimizerFps::SdkCore
+word	PeripheralWarp::D3D11	OptimizerFps::SdkD3D11
+word	PeripheralWarp::D3D12	OptimizerFps::SdkD3D12
+word	PeripheralWarp::Detours	OptimizerFps::Detours
+word	peripheral_warp_core	ofps_sdk_core
+word	peripheral_warp_d3d11	ofps_sdk_d3d11
+word	peripheral_warp_d3d12	ofps_sdk_d3d12
+word	peripheral_warp_shaders	ofps_shaders
+word	peripheral_warp_tests	ofps_sdk_math_tests
+word	peripheral_warp_math	ofps_sdk_math
+word	peripheral_warp_input_v2_tests	ofps_sdk_input_v2_tests
+word	peripheral_warp_input_v2	ofps_sdk_input_v2
+word	peripheral_warp_layout_v2_tests	ofps_sdk_layout_v2_tests
+word	peripheral_warp_layout_v2	ofps_sdk_layout_v2
+word	peripheral_warp_fixture_tests	ofps_sdk_fixture_tests
+word	peripheral_warp_fixtures	ofps_sdk_fixtures
+word	peripheral_warp_d3d11_smoke	ofps_sdk_d3d11_smoke
+word	peripheral_warp_d3d12_smoke	ofps_sdk_d3d12_smoke
+word	pw_detours	ofps_detours
+word	pw_compile_dxbc	ofps_compile_dxbc
+word	pw_compile_spirv	ofps_compile_spirv
+regex	\b_pw_([A-Za-z0-9_]+)	_ofps_\1
+word	PERIPHERAL_WARP_COMMON_HLSLI	OFPS_COMMON_HLSLI
+word	PERIPHERAL_WARP_PACK_HLSLI	OFPS_PACK_HLSLI
+word	PERIPHERAL_WARP_FULLSCREEN_HLSLI	OFPS_FULLSCREEN_HLSLI
+word	peripheral_warp_common	ofps_common
+word	peripheral_warp_pack	ofps_pack
+regex	\bPw(WarpConstants|NativeWorkSize|CenterWorkFractions|CompressionEdgeSlope|Options|BandCenter|SideNeg|SidePos|SideWorkNeg|SideWorkPos|SideEdgeSlope|WorkScale|DiagnosticConstants|DiagnosticOptions|RectangleSignedDistance|CenterRectangle|WorkRectangle|DiagnosticOutlineColor|SignNotZero|PackRadius|UnpackRadius|AxisSides|SidesX|SidesY|PackAxis|UnpackAxis|PackNativePixel|UnpackWorkPixel|PackMotionPixels|UnpackMotionPixels|SourceFootprint|SourceColor|SourceDepth|SourceMotion|SourceConfidence|LinearClamp|PointClamp|InputDescription|ColorRect|DepthRect|MotionRect|ConfidenceRect|ColorDepthSize|MotionConfidenceSize|InputMotionScale|InputMotionDirectionSign|InputFlags|ClampColorUv|SamplePackedColor|PackTexel|PackedOutput|NativeOutput|PackedColor|PackedDepth|PackedMotion|PackedConfidence|PreviewColor|PreviewMotion|PreviewConstants|PreviewMode|MotionDisplayScale|PreviewPadding|MotionColor)\b	Ofps\1

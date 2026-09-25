@@ -4,12 +4,17 @@
 /pw_bench12.pdb
 /dump_*.bmp
 nvngx_*.dll
+/nvngx.dll_*.dll
+/nvngx_dlssnr_*.log
 
 /external/
 /settings.json
 /settings.json.tmp
 /run_fork/
+/run_fork_core/
 /run_addon/
+/run_nrhost/
+/run_r521/
 
 # What a run leaves in the auto runtime. The shaders and the ini beside them are tracked on
 # purpose (they are what a run is made with); everything else is the run's own output.

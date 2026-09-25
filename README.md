@@ -11,14 +11,23 @@ A ReShade add-on that reduces the GPU cost of DLSS 5 Neural Rendering. It compre
 periphery before the model runs and, optionally, runs the model only every Nth frame, reprojecting
 the frames in between along the game's motion vectors.
 
-It needs a Neural Rendering setup that already works (renodx-dlss5, the DLSS5-Feeder host, or the
-OptiScaler DLSSNR fork). This release does not touch DLSS Super Resolution.
+It needs a Neural Rendering setup that already works: renodx-dlss5, the DLSS5-Feeder host, or a
+public OptiScaler build with Neural Rendering that loads ReShade. This release does not touch DLSS
+Super Resolution.
 
 **Requirements:** Windows 10/11 64-bit · NVIDIA RTX 20-series or newer · ReShade 6.8+ with full
 add-on support · `nvngx_dlssnr.dll` 310.8 (the NR runtime) · a working NR consumer.
 
 **[Download the latest release](https://github.com/BeliyG3/optimizer-fps-dlss5/releases/latest)** —
 then follow **[docs/INSTALL.md](docs/INSTALL.md)**.
+
+Unpack the zip and run `Install-OptimizerFPS.cmd "D:\Games\Example\game.exe"`.
+It installs the x64 add-on, `optimizer-fps-dlss5-core.dll`, forwarder, and shader
+folder together. For a 32-bit game, those x64 files go into the 64-bit Feeder
+host; only `optimizer-fps-dlss5-remote.addon32` goes beside the game's ReShade.
+Run `Verify-OptimizerFPS.ps1 -GameExe "D:\Games\Example\game.exe"` after install
+and after a new game session. See the install guide for Update, Uninstall, and
+`[ADDON] AddonPath`.
 
 > **Anti-cheat:** the add-on hooks DLSS functions **inside the game process**. Do **not** use it in
 > games with anti-cheat (EAC, BattlEye, Vanguard, Ricochet) or online multiplayer — you may get
@@ -52,7 +61,7 @@ unpacked afterwards. At 3840×2160 the model processes 81 % of the pixels (3456�
 |---|---|---|
 | Every frame | The model runs on every frame (spatial saving only). | as before |
 | Interpolate | A full model pass every Nth frame (N = 2…8). The frames in between reuse the last pass's residual, reprojected along the game's own motion vectors, with depth and color acceptance tests, depth-matched hole fill, and Catmull-Rom resampling. | alternating long and short |
-| Interpolate (background) | The model runs on its own GPU queue a few frames behind, on private copies of the inputs. Every displayed frame is a reprojection of the last finished pass. | more even (falls back to the synchronous mode when no host queue is available) |
+| Interpolate (background) | The model runs on its own GPU queue a few frames behind, on private copies of the inputs. Every displayed frame is a reprojection of the last finished pass. | more even (falls back to the synchronous mode when no host queue is available — for example when OptiScaler loads ReShade after the game's device exists) |
 
 ## The NR consumer
 
@@ -63,8 +72,17 @@ these must be installed and working first, by its own instructions:
   64-bit game.
 * **[DLSS5-Feeder](https://github.com/jlrouzies-fr/DLSS5-Feeder)** — for 32-bit games. NR runs in its
   64-bit helper process, `<game>\host64\dlss5-feed-host64.exe`, and so does this add-on.
-* **the DLSSNR fork of [OptiScaler](https://github.com/optiscaler/OptiScaler)** — the add-on takes
-  over its warp through its layout bridge.
+* **a public [OptiScaler](https://github.com/optiscaler/OptiScaler) build with Neural Rendering** —
+  [Dagherbou/OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR) (tested:
+  `v0.2.0-patch1`) or
+  [wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass](https://github.com/wilsjo2/OptiScaler-DLSSNR-PreSR-Multipass)
+  (tested: `v0.8.3`, `v0.8.91`). OptiScaler runs NR itself and loads ReShade: set
+  `[Plugins] LoadReshade=true` in `OptiScaler.ini` and put ReShade 6.8+ with add-on support beside
+  it as `ReShade64.dll`; the add-on then compresses OptiScaler's NR. Works for D3D12 games and for
+  D3D11 games through OptiScaler's D3D11-on-D3D12 bridge, also with NR before the upscaler
+  (wilsjo2 `RunBeforeSR`) and with OptiScaler's own frame generation. Use **one** compression: if
+  your build has its own peripheral compression (wilsjo2 `SpatialCompression`), turn it off or set
+  the add-on's **Mode** to `Off` — both together compress the frame twice.
 
 ## Using the tab
 
@@ -76,7 +94,8 @@ to `Off` it says NOT ACTIVE even while a temporal mode runs on the native model.
 Below it are the spatial controls, the two outlines, "Output colour (warped frame only)", the
 temporal cadence, and a Diagnostics tree. In a 32-bit game the same tab is drawn by
 `optimizer-fps-dlss5-remote.addon32` beside the game's own ReShade; it drives the add-on running in
-`host64` through shared memory. Settings are saved to `ReShade.ini` under `[PeripheralWarp]`; the
+`host64` through shared memory. Current settings are saved to `ReShade.ini` under `[OptimizerFPS]`;
+an existing `[PeripheralWarp]` section is copied once when no new section exists. The
 full list of controls and keys is in [docs/RESHADE_ADDON.md](docs/RESHADE_ADDON.md).
 
 ## Performance and quality
@@ -121,34 +140,54 @@ untouched until you press **Retry warping now** in the tab.
 
 ## How it works
 
-Detours hooks sit on the NR snippet's create, evaluate, and release entry points. The feature is
-created at the work extent so the model processes a smaller frame; each evaluate runs Pack → the
-model → Unpack → copy into the host's output; releases go through a fence-gated graveyard, so when
-the host's command queue is known, nothing is freed before the fence says the GPU is done, and without
-a registered queue the add-on holds the objects for 16 further evaluates instead. The temporal
-machine, the crash guard, the OptiScaler takeover, and the 32-bit remote overlay are described in
+The implementation has three parts. `sdk/` provides layout math and the public D3D11/D3D12
+pixel adapters. `core/` builds `optimizer-fps-dlss5-core.dll` for the runtime and the static
+`ofps_core` library (`OptimizerFps::Core`) for tests: `frame/`
+records Pack → model → Unpack, `temporal/` carries model results, `flow/` owns the
+process-lifetime temporal optical flow session, `gpu/` manages submissions
+and fence-gated resource pools, `settings/` validates settings, and `shaders/` holds the
+temporal and motion shaders. Its single host entry is `core/api/ofps_core.h` (ABI 1).
+
+`hosts/reshade/` is the shell: Detours intercepts feature 18, `ngx_params` translates
+the NGX block into explicit frame inputs, `ModelHostNgx` implements model calls, and
+`ShellHost` connects core events to logging, settings persistence and the crash guard.
+The shell consumes only the core's public ABI. Model and GPU resources retire behind
+submission/background fences; without a queue, a 16-evaluate delay precedes a gate
+retry, and resources remain pending until completion can be confirmed.
+One pinned core DLL is shared per process; the shell loads it through the public ABI.
+The runtime payload contains the x64 add-on, `optimizer-fps-dlss5-core.dll`,
+`nvngx.dll_optimizerfps.dll`, and the built DXBC set in `optimizer-fps-dlss5/`
+beside the core. The current build has 25 DXBC; the package manifest lists the
+exact files.
+The x86 remote overlay stays beside the 32-bit game; its core runs in `host64`.
+The installer migrates older ReShade settings; the verifier checks the core.
+The temporal machine, crash guard, direct-host ownership, and remote overlay are described in
 [docs/RESHADE_ADDON.md](docs/RESHADE_ADDON.md), with per-file module maps in
 [docs/dev/NGX_MODULES.md](docs/dev/NGX_MODULES.md) and
 [docs/dev/ADDON_MODULES.md](docs/dev/ADDON_MODULES.md).
 
 ## Building and the SDK
 
-Optimizer FPS for DLSS5 also ships its reusable core as a standalone, API-neutral SDK
-(`find_package(PeripheralWarp 0.5)` → `PeripheralWarp::Core`): the layout math, the D3D11 and D3D12
+Optimizer FPS for DLSS5 also ships its spatial building blocks as a standalone, API-neutral SDK
+(`find_package(OptimizerFpsSdk 0.6)` → `OptimizerFps::SdkCore`): the layout math, the D3D11 and D3D12
 adapters, and the HLSL sources, with no NGX and no ReShade in them. A consumer that applies the
 warp itself integrates once per DLSS/NR loader, not once per game.
 
 [docs/API.md](docs/API.md) (API and ABI) · [docs/CONFIG.md](docs/CONFIG.md) (configuration math) ·
 [docs/INTEGRATION.md](docs/INTEGRATION.md), [docs/DLSSNR_COMMON_STAGE.md](docs/DLSSNR_COMMON_STAGE.md),
 [docs/PORTING_CHECKLIST.md](docs/PORTING_CHECKLIST.md) (integration) ·
-[docs/BUILD.md](docs/BUILD.md) (build and tests) · [docs/CI.md](docs/CI.md) ·
+[BUILD.md](BUILD.md) (current build and bench commands) · [docs/BUILD.md](docs/BUILD.md) (build details) · [docs/CI.md](docs/CI.md) ·
 [docs/RELEASING.md](docs/RELEASING.md) · [docs/LIMITATIONS.md](docs/LIMITATIONS.md) (known limits) ·
 [CHANGELOG.md](CHANGELOG.md) (history).
 
-The project is **Optimizer FPS for DLSS5**. Its CMake identifiers keep the historical name
-PeripheralWarp (`find_package(PeripheralWarp 0.5)` → `PeripheralWarp::Core`) so existing consumers
-keep building; renaming the internal identifiers is planned. The two version numbers, and why the
-name exported to ReShade carries none, are explained in
+The SDK lives in `sdk/`, with public headers under `sdk/include/optimizer_fps/`,
+namespace `ofps::sdk` and CMake targets `OptimizerFps::SdkCore`, `OptimizerFps::SdkD3D11`
+and `OptimizerFps::SdkD3D12`. SDK version 0.6.0 installs headers to `include/optimizer_fps/`,
+adapter headers below `include/optimizer_fps/adapters/`, and shader sources to
+`share/optimizer-fps-sdk/shaders/`. Consumers use `find_package(OptimizerFpsSdk 0.6 CONFIG REQUIRED)`.
+`OptimizerFps::Core` is a separate Windows x64 build-tree target, not an installed SDK target.
+Compatibility exports retain their `PeripheralWarp*` names. The two version numbers,
+and why the name exported to ReShade carries none, are explained in
 [docs/RESHADE_ADDON.md](docs/RESHADE_ADDON.md).
 
 ## Support

@@ -6,7 +6,7 @@
     With no parameters the script checks the trees that cmake/Dependencies.cmake fetches into
     external\ (external\reshade-src, external\imgui-src, external\detours-src). Pass the -*Root
     parameters to check a hand-provided checkout instead (the same paths you would give to
-    PW_RESHADE_SDK_ROOT / PW_IMGUI_ROOT / PW_DETOURS_ROOT... note that PW_DETOURS_ROOT points at a
+    OFPS_RESHADE_SDK_ROOT / OFPS_IMGUI_ROOT / OFPS_DETOURS_ROOT... note that OFPS_DETOURS_ROOT points at a
     *prebuilt* tree, whose layout differs from the source tree checked here).
 
     The dependency source files are text. Their hashes are recorded over the content normalized to

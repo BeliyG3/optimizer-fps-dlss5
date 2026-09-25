@@ -191,3 +191,123 @@ Milestone 3 keeps the parameter contract unchanged. Noisy colour includes camera
 - PreExposure/ExposureScale are 1 with already exposed noisy colour; no exposure texture or auto-exposure flag. This is deliberate but image quality has not been validated.
 - Quality is selected by the nearest standard render ratio; a nonstandard ratio can be unsupported by the DLL. Frame delta is fixed simulation time in scripted runs and clamped wall time in interactive runs, independent of animation playback speed/pause.
 - No optional guide buffers, preset hints, or undocumented NGX parameters are invented. The helper itself writes all optional null/zero fields shown above. Normal and roughness GBuffer keys are first cleared, then assigned by the dedicated inputs.
+
+# DLSS Neural Rendering (feature 18), runtime nvngx_dlssnr.dll 310.8.0
+
+Everything below was measured on 2026-09-21 (RTX 4080 SUPER, driver core r616, `nvngx_dlssnr.dll` 310.8.0
+CL 38718415) with `--nr` and a separate probe, from the runtime's own log. Items marked *inferred* are
+conclusions from those results, not documented behaviour.
+
+## Hosting
+
+- The NGX core cannot create feature 18 with this runtime. Its Authenticode hash does not verify
+  (`Get-AuthenticodeSignature`: HashMismatch; every copy in this repository is the same file); the core logs
+  `nvLoadSignedLibraryW() failed on snippet '...nvngx_dlssnr.dll' ... The digital signature of the object did
+  not verify`, capability parameters report `DLSSNR.Available 0`, `DLSSNR.FeatureInitResult 0xBAD00004`, and
+  `NVSDK_NGX_D3D12_CreateFeature(list, 18, ...)` returns `0xBAD0000B`.
+- The bench therefore loads the DLL itself and calls its exports (`NVSDK_NGX_D3D12_Init_Ext`,
+  `PopulateParameters_Impl`, `CreateFeature`, `EvaluateFeature`, `ReleaseFeature`) through
+  `nvngx.dll_pwbench12.dll`: the runtime accepts a call only if the return address lies in a module whose path
+  contains `nvngx.dll`. `Init_Ext` gets application id `0x24480451`, the executable directory as data path,
+  the bench's device, SDK version `0x15` and an empty host parameter block.
+- The parameter block is the bench's own `NgxParameterMap` (numeric getters convert between types). The
+  Optimizer FPS add-on finds its float setter/getter at vtable slots 6/14 in it, as in the core's block.
+- Logging: `__NGX_LOG_LEVEL=1` (set by the bench only around the runtime's load and init) makes the runtime
+  write `nvngx_dlssnr_310_8_0.log` into the data path; level 1 already contains create details and every
+  `Skip feature evaluate` line. The runtime also prints the same lines through its own buffered stdout, so in
+  runs with many refusals they appear in the console in chunks. The runtime has no app log callback here
+  (`PollRuntimeParams - callback is NULL (core did not set it)` is expected).
+
+## What the runtime reads
+
+| When | Key | Getter type |
+| --- | --- | --- |
+| create | `ResourceAllocCallback`, `ResourceReleaseCallback` (optional) | pointer |
+| create | `CreationNodeMask`, `VisibilityNodeMask`, `DLSSNR.Width`, `DLSSNR.Height` | unsigned |
+| create | `DLSSNR.ScalingRatio` | float |
+| create | `DLSSNR.Hint.Render.Preset` | int |
+| evaluate | `DLSSNR.Color`, `.MVec`, `.Depth`, `.Output` | pointer |
+| evaluate | `DLSSNR.<Color/MVec/Depth/Output>Subrect<BaseX/BaseY/Width/Height>` | int |
+| evaluate | `DLSSNR.ControlMask`, `.UI`, `.UIAlpha`, `.Backbuffer`, `.BidirectionalDistortionField` (optional) | pointer |
+| evaluate | `DLSSNR.MVecScaleX/Y`, `.Intensity`, `.ScalingRatio`, `.LocalToneStrength`, `.LocalStructureStrength`, `.SkinStructureStrength` | float |
+| evaluate | `DLSSNR.UseAutoMask`, `.Reset`, `.DepthInverted`, `.Enabled`, `.UICorrection`, `DLSS.Indicator.Invert.X/Y.Axis` | int |
+| evaluate | `DLSSNR.Style` | unsigned |
+
+`PerfQualityValue` is read only by `DLSSNRComputeScalingRatioCallback` (published by `PopulateParameters_Impl`
+together with `DLSSNRGetStatsCallback`), never by create or evaluate:
+
+| PerfQualityValue | Callback result |
+| --- | --- |
+| 0 MaxPerf, 1 Balanced, 2 MaxQuality, 4 UltraQuality, 5 DLAA | `DLSSNR.ScalingRatio = 1.0` |
+| 3 UltraPerformance, 6, 7, 8, 9 | `0xBAD00010`, log `Error: unsupported PerfQualityValue %u for DLSSNR scaling ratio computation` |
+
+Only one network is embedded (`CC_Control_History_Blend_Quantize_With_Teacher_honest_tench_2026_07_04_22_30`);
+preset 0 logs `preset 0 is not available in this DLL build; falling back to shipping default preset 1`.
+
+## Native contract (works)
+
+Create (`--nr native`, after DLSS SR at 1920x1080):
+
+| Key | Value |
+| --- | --- |
+| `CreationNodeMask`, `VisibilityNodeMask` | 1 |
+| `DLSSNR.Width` / `DLSSNR.Height` | colour size, 1920 / 1080 (runtime: `requested resolution 1920x1080 (network 1920x1080)`) |
+| `DLSSNR.Hint.Render.Preset` | 1 |
+
+Evaluate (per frame; the first evaluate prints the full list as `[nr parameter]`):
+
+| Key | Value |
+| --- | --- |
+| `DLSSNR.Color` | 1920x1080 RGBA16F, `NON_PIXEL_SHADER_RESOURCE`; sub-rect 0,0 1920x1080 |
+| `DLSSNR.Depth` | 960x540 R32F (render size); sub-rect 0,0 960x540 |
+| `DLSSNR.MVec` | 960x540 RG16F or RGBA16F (`--mv-format`); sub-rect 0,0 960x540 |
+| `DLSSNR.Output` | separate RGBA16F UAV, `UNORDERED_ACCESS`; sub-rect 0,0 1920x1080 (or at the pad base) |
+| `DLSSNR.MVecScaleX/Y` | the DLSS scales: 1,1 for `--motion pixels`, (-w/2, h/2) for `ndc` |
+| `DLSSNR.DepthInverted` | 1 for `--depth reverse`, else 0 |
+| `DLSSNR.Reset` | 1 on the first NR frame and on camera cuts |
+| `DLSSNR.Enabled` 1, `DLSSNR.Style` 0, `UseAutoMask` 0, `UICorrection` 0 | |
+| `Intensity`, `LocalToneStrength`, `LocalStructureStrength`, `SkinStructureStrength` | 2 (renodx-dlss5 defaults) |
+
+Result `0x00000001`. The sub-rects are mandatory: without them the runtime sees 0x0 rects and returns
+`0xBAD00005` (`Invalid Color/Output rect configuration ... subrect=(0,0 0x0)`).
+
+Colour: the model expects a finished SDR frame. Linear HDR colour (values above 1, dark linear values) gives a
+red-magenta, blocky image; an sRGB-encoded proxy (white point 1.0, soft knee above 0.75 luminance) gives a
+plausible one, and the output is decoded back (`--nr-colour srgb`, default). The probe shows the output
+clamped to 1.0 (input red 0..2 came back with a maximum of 1.0).
+
+RGBA16F motion (xy motion, zw 0) is accepted by DLSS SR, RR and NR; SR+NR dumps are bit-identical to RG16F.
+
+## Upscaling (every tested combination refused)
+
+`--nr upscale` creates the feature with `DLSSNR.Width/Height` = render size 960x540, `PerfQualityValue` 0 and
+`DLSSNR.ScalingRatio` 0.5, colour and guides 960x540, output 1920x1080. Evaluate returns `0xBAD00005`:
+`DLSSNR: Skip feature evaluate: Invalid Color/Output rect configuration Color=... subrect=(0,0 960x540)
+Output=... subrect=(0,0 1920x1080)`. The bench presents the render colour instead.
+
+| Width/Height | ScalingRatio (create / evaluate) | PerfQualityValue | Colour | Output | Result |
+| --- | --- | --- | --- | --- | --- |
+| 960x540 | - / - | - | 960x540 | 1920x1080 | `0xBAD00005`, rect message |
+| 1920x1080 | - / - | - | 960x540 | 1920x1080 | same |
+| 1920x1080 | 0.5, 2 / -, 0.5 | - | 960x540 | 1920x1080 | same |
+| 960x540 | 0.5, 2 / -, 0.5, 2 | - | 960x540 | 1920x1080 | same |
+| 1920x1080 | 0.5 / 0.5 | 0 (+ preset 1) | 960x540 | 1920x1080 | same |
+| 1920x1080 | - / - | 1, 5 | 960x540 | 1920x1080 | same |
+| 1920x1080 | - / - | - | 960x540 + Backbuffer 1920x1080 | 1920x1080 | same; Backbuffer untouched |
+| 960x540 | - / - | - | 960x540 | 960x540 + Backbuffer 1920x1080 | `0x1`, 960x540 written, Backbuffer untouched |
+| 1920x1080 | - / - | - | 1920x1080 texture, sub-rect 960x540 | 1920x1080 | `0x1`, only the top-left 960x540 of the output written |
+| 1920x1080 | - / - | - | 1920x1080 | 1920x1080 texture, sub-rect 960x540 | `0xBAD00005`, rect message |
+| 960x540 | - / - | - | 960x540 | 1920x1080 texture, sub-rect 960x540 | `0x1`, native inside the output |
+
+`DLSSNR.ScalingRatio` is read at create and evaluate but has no visible effect for 0.25, 0.3333, 0.5, 0.6667,
+0.9, 1.5, 2 or 3: the network always equals the output sub-rect (created 960x540 with a 1920x1080 output logs
+`Network size grew past feature size for feature 1 (960x540 -> 1920x1080); resizing internal capacity`).
+*Inferred:* 310.8 has no working upscaling path; colour and output must share one pixel grid (the colour
+sub-rect fits in the output sub-rect, and the output sub-rect fits in the colour texture).
+
+## Padded output (`--nr-output-pad`)
+
+Output 1984x1112 with the 1920x1080 region at 32,16: accepted, only the region is written. Region at 0,0:
+accepted, but the runtime also writes the 1920x32 band below the region (region width times texture height,
+grey around 0.49; the right pad stays untouched). The region image is bit-identical to an unpadded run in
+both cases.

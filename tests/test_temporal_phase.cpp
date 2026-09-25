@@ -1,10 +1,10 @@
-#include "../adapters/reshade/ngx/temporal_phase.h"
+#include "core/temporal/phase.h"
 
 #include <cstdio>
 
 int main()
 {
-    pwtemporal::PhaseIn phase;
+    ofps::core::temporal::PhaseIn phase;
     auto check = [&](float expected) {
         if (phase.Share() == expected) return true;
         std::fprintf(stderr, "phase share: expected %.3f, got %.3f\n", expected, phase.Share());

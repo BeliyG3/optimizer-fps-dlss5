@@ -12,6 +12,7 @@
 void MaterialChecks(const std::filesystem::path &directory);
 void InteractiveChecks(const std::filesystem::path &directory);
 void AnimationChecks(const std::filesystem::path &directory);
+void NrChecks();
 
 namespace {
 void Require(bool condition, const char *message) { if(!condition) throw std::runtime_error(message); }
@@ -208,7 +209,7 @@ int main(int argc, char **argv)
         Reject({"bench","--jitter","2"}); Reject({"bench","--depth","invalid"}); Reject({"bench","--width","1920x"});
         Reject({"bench","--fov","nan"}); Reject({"bench","--cam-pos","1,2,3"}); Reject({"bench","--bounces","9"});
         Reject({"bench","40","--dump","40"}); Reject({"bench","--sun-dir","0,0,0"}); Reject({"bench","--spp"});
-        CameraChecks(); NgxChecks(); ReservoirChecks(); HdrChecks(std::filesystem::absolute(argv[0]).parent_path());
+        CameraChecks(); NgxChecks(); NrChecks(); ReservoirChecks(); HdrChecks(std::filesystem::absolute(argv[0]).parent_path());
         MaterialChecks(std::filesystem::absolute(argv[0]).parent_path());
         InteractiveChecks(std::filesystem::absolute(argv[0]).parent_path());
         AnimationChecks(std::filesystem::absolute(argv[0]).parent_path());

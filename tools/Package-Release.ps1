@@ -30,6 +30,8 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $PSScriptRoot 'installer\Common.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'installer\Pe.psm1') -Force
 
 if (-not $BuildDirX64) { $BuildDirX64 = Join-Path $repoRoot 'out\build\x64-mt' }
 if (-not $BuildDirX86) { $BuildDirX86 = Join-Path $repoRoot 'out\build\x86-remote' }
@@ -58,31 +60,55 @@ function Copy-Into
 if (-not $Version) {
     $versionCmake = Join-Path $repoRoot 'cmake\Version.cmake'
     if (-not (Test-Path -LiteralPath $versionCmake -PathType Leaf)) { Fail ('cmake\Version.cmake not found: ' + $versionCmake) }
-    $m = [regex]::Match([IO.File]::ReadAllText($versionCmake), '(?im)^\s*set\s*\(\s*PW_RELEASE_VERSION\s+"([^"]+)"')
-    if (-not $m.Success) { Fail 'PW_RELEASE_VERSION not found in cmake\Version.cmake.' }
+    $m = [regex]::Match([IO.File]::ReadAllText($versionCmake), '(?im)^\s*set\s*\(\s*OFPS_RELEASE_VERSION\s+"([^"]+)"')
+    if (-not $m.Success) { Fail 'OFPS_RELEASE_VERSION not found in cmake\Version.cmake.' }
     $Version = $m.Groups[1].Value
 }
 Note ('Version: ' + $Version)
 
 # --- the inputs ------------------------------------------------------------------------
 
-$addon64   = Join-Path $BuildDirX64 'adapters\reshade\Release\optimizer-fps-dlss5.addon64'
-$forwarder = Join-Path $BuildDirX64 'adapters\reshade\ngx_forwarder\Release\nvngx.dll_optimizerfps.dll'
+$addon64   = Join-Path $BuildDirX64 'hosts\reshade\Release\optimizer-fps-dlss5.addon64'
+$core = Join-Path $BuildDirX64 'core\Release\optimizer-fps-dlss5-core.dll'
+$forwarder = Join-Path $BuildDirX64 'hosts\reshade\ngx_forwarder\Release\nvngx.dll_optimizerfps.dll'
 $shaderSrc = Join-Path $BuildDirX64 'shaders'
-$remote32  = Join-Path $BuildDirX86 'adapters\reshade\Release\optimizer-fps-dlss5-remote.addon32'
+$remote32  = Join-Path $BuildDirX86 'hosts\remote32\Release\optimizer-fps-dlss5-remote.addon32'
 
-foreach ($p in @($addon64, $forwarder, $remote32)) {
+foreach ($p in @($addon64, $core, $forwarder, $remote32)) {
     if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { Fail ('Build output missing: ' + $p) }
 }
 if (-not (Test-Path -LiteralPath $shaderSrc -PathType Container)) { Fail ('Compiled shaders missing: ' + $shaderSrc) }
 $shaders = @(Get-ChildItem -LiteralPath $shaderSrc -File -Filter '*.dxbc' | Sort-Object Name)
-if ($shaders.Count -eq 0) { Fail ('No .dxbc in ' + $shaderSrc) }
+if ($shaders.Count -eq 0) { Fail ('No compiled .dxbc in ' + $shaderSrc) }
+$shaderNames = @($shaders | ForEach-Object { $_.Name.ToLowerInvariant() })
+if (@($shaderNames | Select-Object -Unique).Count -ne $shaders.Count) {
+    Fail ('Duplicate compiled shader names (case-insensitive) in ' + $shaderSrc)
+}
+if ((Get-Item -LiteralPath $core).VersionInfo.FileVersion -ne $Version) {
+    Fail 'Core DLL version does not match the package version.'
+}
+$coreInfo = Get-PeInfo $core
+$coreExports = Get-PeExportNames $core
+if ($null -eq $coreInfo -or $coreInfo.Arch -ne 'x64' -or $null -eq $coreExports -or
+    $coreExports -notcontains 'OfpsCoreVersion' -or $coreExports -notcontains 'OfpsCreateCore') {
+    Fail 'Core DLL is not an x64 Optimizer FPS core.'
+}
+$addonExports = Get-PeExportNames $addon64
+if ($null -eq $addonExports -or -not (($addonExports -contains 'OptimizerFpsSetSettingV1') -or
+    (($addonExports -contains 'PeripheralWarpSetLayoutV1') -and
+     ($addonExports -contains 'PeripheralWarpSetTemporalV1')))) {
+    Fail 'Add-on does not export the Optimizer FPS setting API or both legacy aliases.'
+}
 Note ('' + $shaders.Count + ' compiled shader(s).')
 
 # --- the output folder -----------------------------------------------------------------
 
 $name    = 'Optimizer-FPS-for-DLSS5-' + $Version
-$stage   = Join-Path $Out $name
+$Out = [IO.Path]::GetFullPath($Out)
+$stage = [IO.Path]::GetFullPath((Join-Path $Out $name))
+if (-not $stage.StartsWith($Out.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    Fail 'Stage escapes the output directory.'
+}
 $zipPath = Join-Path $Out ($name + '.zip')
 
 if (Test-Path -LiteralPath $stage) {
@@ -98,6 +124,13 @@ foreach ($f in @('Install-OptimizerFPS.cmd', 'Install-OptimizerFPS.ps1', 'Verify
     $src = Join-Path $PSScriptRoot $f
     if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { Fail ('Missing: ' + $src) }
     Copy-Into -Source $src -Destination (Join-Path $stage $f)
+}
+# Every installer module ships: the installer imports them by name, and a module added later
+# (IniMigration, VerifyCore, ...) must not be left out of the zip by a stale list.
+$installerModules = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'installer') -File -Filter '*.psm1' | Sort-Object Name)
+if ($installerModules.Count -eq 0) { Fail 'No installer modules in tools\installer.' }
+foreach ($module in $installerModules) {
+    Copy-Into -Source $module.FullName -Destination (Join-Path $stage ('installer\' + $module.Name))
 }
 foreach ($f in @('LICENSE', 'NOTICE')) {
     $src = Join-Path $repoRoot $f
@@ -155,9 +188,16 @@ $payload = Join-Path $stage 'payload'
 $null = New-Item -ItemType Directory -Path $payload -Force
 
 Copy-Into -Source $addon64   -Destination (Join-Path $payload 'x64\optimizer-fps-dlss5.addon64')
+Copy-Into -Source $core -Destination (Join-Path $payload 'x64\optimizer-fps-dlss5-core.dll')
 Copy-Into -Source $forwarder -Destination (Join-Path $payload 'x64\nvngx.dll_optimizerfps.dll')
 foreach ($s in $shaders) {
     Copy-Into -Source $s.FullName -Destination (Join-Path $payload ('x64\optimizer-fps-dlss5\' + $s.Name))
+}
+$stagedShaders = @(Get-ChildItem -LiteralPath (Join-Path $payload 'x64\optimizer-fps-dlss5') -File -Filter '*.dxbc')
+$allStagedShaders = @(Get-ChildItem -LiteralPath $stage -File -Recurse -Filter '*.dxbc')
+if ($allStagedShaders.Count -ne $shaders.Count -or $stagedShaders.Count -ne $shaders.Count -or
+    @(Compare-Object $shaderNames @($stagedShaders | ForEach-Object { $_.Name.ToLowerInvariant() })).Count -ne 0) {
+    Fail 'Staged DXBC names do not match the build output.'
 }
 Copy-Into -Source $remote32 -Destination (Join-Path $payload 'x86\optimizer-fps-dlss5-remote.addon32')
 

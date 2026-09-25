@@ -84,6 +84,8 @@ void NVSDK_CONV NVSDK_NGX_Parameter_SetVoidPointer(NVSDK_NGX_Parameter *p, const
 void Ngx::Initialize(Device &d, const Options &o, unsigned width, unsigned height)
 {
     owner=&d; gpu=d.gpu;
+    stateSentinel.Initialize(d, o.coreStateSentinel,
+                             o.coreStateRebind || o.host == "core");
     const auto directory=ExecutableDirectory();
     const auto driver=DriverNgx(); library=LoadLibraryExW(driver.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if(!library) throw std::runtime_error("Cannot load "+driver.string()+" (Win32 "+std::to_string(GetLastError())+")");
@@ -149,7 +151,7 @@ Ngx::~Ngx()
     }
     Close();
 }
-void Ngx::Shutdown(Device &d) { d.Wait(); CheckNgx(Close(),"NGX teardown"); }
+void Ngx::Shutdown(Device &d) { stateSentinel.Finish(d); d.Wait(); CheckNgx(Close(),"NGX teardown"); }
 NVSDK_NGX_Result Ngx::Close() noexcept
 {
     NVSDK_NGX_Result status=NVSDK_NGX_Result_Success;

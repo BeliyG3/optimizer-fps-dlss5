@@ -1,7 +1,7 @@
 # Temporal: fork и ReShade add-on
 
 Контракт проходов находится рядом с общим shader:
-[`shaders/temporal_passes.md`](../../shaders/temporal_passes.md).
+[`shaders/temporal_passes.md`](../../core/shaders/temporal_passes.md).
 Таблица описывает исходный код, а не утверждает одинаковое качество в разных цветовых пространствах.
 
 | Возможность | OptiScaler fork | ReShade add-on | Причина различий |

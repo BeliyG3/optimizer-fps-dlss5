@@ -17,8 +17,97 @@ For the D3D11 smoke harness `../bench/run_modes.sh`, the runtime additionally ne
 installed `dlss5-dx11-bridge.addon64`. Verify feature 18 creation/adoption and temporal activity in
 ReShade.log; a successful D3D11 bench exit without the bridge does not exercise temporal NR.
 The smoke script preserves `bench_stdout.log` and returns the executable's exit code.
-See [the shared pass contract](../../shaders/temporal_passes.md) and
+See [the shared pass contract](../../core/shaders/temporal_passes.md) and
 [feature parity](../../docs/dev/temporal-parity.md).
+
+## Current shared-core validation
+
+Active `run_addon/`, `run_r521/` and `run_nrhost/` ReShade.ini files use
+`[OptimizerFPS]`; the reference captures retain their original legacy section.
+`run_auto/` has archived captures but no active root ReShade.ini. `run_fork/`
+and `run_fork_core/` use `OptiScaler.ini` section `[OptimizerFps]`, which is
+separate from ReShade's section. A direct `--host core` run uses CLI settings
+and no ReShade.ini. `deploy_addon.ps1` and `deploy_nrhost.ps1` stage the x64
+add-on, core DLL and 21 DXBC; `deploy_fork.cmd` preserves fork files from
+`PW_FORK_SOURCE` while `stage_fork_core.ps1` stages the core/DXBC from this
+repository's x64 build.
+
+From the repository root, use the same candidate name in every runtime:
+
+```powershell
+powershell -NoProfile -File tools/bench12/reference_dumps.ps1 -Runtime run_addon -Out candidate_p4t7
+powershell -NoProfile -File tools/bench12/reference_dumps.ps1 -Runtime run_r521 -Out candidate_p4t7
+powershell -NoProfile -File tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Out candidate_p4t7
+powershell -NoProfile -File tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Case core_warp,core_off,core_warp_t1 -Out candidate_p4t7/core
+python tools/bench12/compare_plan2.py --candidate candidate_p4t7
+```
+
+The comparison checks every case, manifest, frame 120/239 and NR audit. It
+requires identical T0 output and limits T1 RGB MAD to 0.05. The bench9 x86
+runtime is staged by `tools/bench9/deploy.ps1`: the x86 remote add-on comes
+from `out/build/x86-remote`, while its `host64/` receives the x64 add-on,
+core and DXBC from `out/build/x64`.
+
+## Static-core regression (2026.9.1, plan 1)
+
+The archived plan-1 `reference_dumps.ps1` run used the x64 add-on (with static `ofps_core`) and exactly 21
+DXBC files, then records commands, settings, binary/source hashes, logs and frames
+120/239 in a new output folder. Keep `reference_before_2026.9.1` unchanged.
+
+The old absolute repository path in archived `manifest.json` files records where the
+reference was captured. Comparisons read the files in the current reference folder;
+the old path does not need to exist.
+
+From the repository root:
+
+```powershell
+powershell -NoProfile -File tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Out candidate_task10
+powershell -NoProfile -File tools/bench12/reference_dumps.ps1 -Runtime run_r521 -Out candidate_task10b
+python tools/bench/compare_reference.py tools/bench12/run_nrhost/reference_before_2026.9.1 tools/bench12/run_nrhost/candidate_task10 --pattern "*_dump_*.bmp"
+python tools/bench/compare_reference.py tools/bench12/run_nrhost/reference_before_2026.9.1 tools/bench12/run_nrhost/candidate_task10 --pattern "*_t1_dump_*.bmp" --mad-limit 0.05
+```
+
+Repeat the folder comparisons for `run_r521` and `run_addon`. The strict all-dump
+comparison reports byte identity; a temporal-only comparison may use RGB MAD 0.05.
+`run_addon` has 7 cases, `run_r521` has 9 (both use RR), and `run_nrhost` has 13
+(SR + native NR). An existing nonempty output is rejected; choose a new folder for
+another run. Match the saved manifest/INI and compare complete add-on log messages,
+normalizing addresses and timings only. A repeated `host resources` diagnostic block
+in the reference and the accepted `no grid` counter change are documented exceptions.
+Require `device ok`, the warped marker outside Mode Off, and temporal-ready in T1.
+
+Bench9 `run_matrix.ps1 -Only notemp,plain,game -CapturesRoot <absolute-path>` is a
+separate smoke check of `first warped evaluate completed` and `temporal machine ready`
+where applicable, not a dump-parity test. D3D11 NR remains SKIP without its bridge.
+
+Local plan-1 acceptance on 2026-09-22:
+
+| Runtime | Candidate | Cases | Byte-identical dumps |
+| --- | --- | ---: | ---: |
+| `run_addon` | `candidate_task10` (retained prior run, comparison repeated) | 7 | 14/14 |
+| `run_nrhost` | `candidate_task10` | 13 | 26/26 |
+| `run_r521` | `candidate_task10b` | 9 | 18/18 |
+
+All manifests report successful cases and `device ok`; commands/modes match the
+references. The strict comparison passes even for temporal dumps; the separate
+temporal comparison with `--mad-limit 0.05` also passes. Complete add-on messages in
+the four `*_t1_ReShade.log` files match after address normalization and the accepted
+diagnostic exceptions: a duplicate host-input block in the reference and `no grid`
+117 to 120. The restored `the other NR feature is gone; ...` message is present in
+`run_r521/candidate_task10b/native_warp_ReShade.log`.
+
+Bench9 `run/candidate_task10` completed all three smoke cases with exit 0: `game`
+logged both first-warped and temporal-ready, `notemp` logged first-warped only, and
+`plain` logged neither (Mode Off, T0). No bench9 dump comparison was performed.
+D3D11 NR was skipped because the bridge is absent.
+
+Final checks: all four Release presets built with `/WX`; x64 ctest passed 18/18 and
+x86 10/10 without skips; `check-core-includes.py` and PowerShell 5.1 lint passed.
+The release ZIP was produced in ignored `dist-release/`; installer tests reported
+70 passed, 0 failed and 2 skipped (manual adoption and pre-26.26 files require the
+missing `peripheral-warp.addon64.pre2625`). Existing size exceptions remain unchanged:
+`core/shaders/temporal.hlsl` 1145 lines, `tests/test_d3d12.cpp` 739 and
+`tests/test_d3d11.cpp` 586. No D3D11 or bench9 byte-parity claim follows from this smoke.
 
 A standalone D3D12 / DXR 1.1 path-traced benchmark for the glTF lab scene. It produces noisy linear HDR colour and guide buffers, with optional DLSS Super Resolution (SR) or Ray Reconstruction (RR). The default remains `--upscaler none`.
 
@@ -137,14 +226,14 @@ clean D3D12 debug-layer output. CPU tests do not initialize D3D12 or NGX.
 
 Only Windows SDK libraries are linked. NGX headers are supplied in `external/ngx`; no NGX import library, CUDA SDK, or CMake is needed. Interactive UI uses the locally supplied Dear ImGui sources. The shared loader is included directly from `../bench/pw_gltf.h`.
 
-For SR/RR, use an NVIDIA RTX GPU and a driver supporting the selected feature. Place `nvngx_dlss.dll` (SR) or `nvngx_dlssd.dll` (RR) from a compatible NVIDIA DLSS SDK beside `pw_bench12.exe`. Missing feature DLLs fail with their exact expected path; the bench does not download them. `none` needs neither DLL nor NGX. The driver core `_nvngx.dll` is loaded from the newest matching `C:\Windows\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_*` directory containing it. NGX entry points are resolved with `GetProcAddress`; incompatible drivers fail explicitly.
+For SR/RR, use an NVIDIA RTX GPU and a driver supporting the selected feature. Place `nvngx_dlss.dll` (SR) or `nvngx_dlssd.dll` (RR) from a compatible NVIDIA DLSS SDK beside `pw_bench12.exe`. Missing feature DLLs fail with their exact expected path; the bench does not download them. `none` needs neither DLL nor NGX. `--nr` needs `nvngx_dlssnr.dll` (310.8 was used) and the built `nvngx.dll_pwbench12.dll` beside the exe; it does not go through the driver core. The driver core `_nvngx.dll` is loaded from the newest matching `C:\Windows\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_*` directory containing it. NGX entry points are resolved with `GetProcAddress`; incompatible drivers fail explicitly.
 
 ## Build and checks
 
 From a command prompt:
 
 ```bat
-cd /d W:\AI_Proj\GPT\26_Mods\PeripheralWarp\tools\bench12
+cd /d <repository>\tools\bench12
 build.cmd
 obj\bench12_tests.exe ..\bench\assets\lab_scene.glb
 ```
@@ -152,12 +241,12 @@ obj\bench12_tests.exe ..\bench\assets\lab_scene.glb
 From another directory, use the full path:
 
 ```bat
-cmd /c W:\AI_Proj\GPT\26_Mods\PeripheralWarp\tools\bench12\build.cmd
+cmd /c tools\bench12\build.cmd
 ```
 
-The script locates Visual Studio, calls `vcvars64.bat`, compiles the compute shader as `cs_6_5`, compiles the presentation shaders, builds `pw_bench12.exe` and the CPU tests, and runs those tests. Both DXC and bench C++ warnings are errors (`/W4 /WX` for C++); only third-party ImGui implementation files use /W0. Two existing shadowing warnings are suppressed only around the shared loader include. Build outputs remain inside this directory and are ignored by Git.
+The script locates Visual Studio, calls `vcvars64.bat`, compiles the compute shader as `cs_6_5`, compiles the presentation shaders, builds `pw_bench12.exe`, the NR call forwarder `nvngx.dll_pwbench12.dll` and the CPU tests, and runs those tests. From PowerShell use `& .\build.cmd`; from Git Bash call it through PowerShell rather than `cmd /c`. Both DXC and bench C++ warnings are errors (`/W4 /WX` for C++); only third-party ImGui implementation files use /W0. Two existing shadowing warnings are suppressed only around the shared loader include. Build outputs remain inside this directory and are ignored by Git.
 
-The CPU tests cover invalid options and milestone defaults, camera phases and dolly limits, accumulation/camera-cut detection, projection depth and motion conventions, NGX quality selection, RR creation/evaluation contracts, row-vector matrix conversion, RIS normalization/integration with zero-target and occluded candidates, specular-albedo roughness/view dependence, flat/RLE HDR decoding, truncated HDR rejection, and optional loading/deformation/image decoding of the actual GLB. Reservoir math and the specular guide function are shared directly with HLSL. Tests do not create a GPU device or load NGX.
+The CPU tests cover invalid options and milestone defaults, the `--nr`/`--mv-format` options, the feature-18 parameter writes and the host parameter block's type conversions, camera phases and dolly limits, accumulation/camera-cut detection, projection depth and motion conventions, NGX quality selection, RR creation/evaluation contracts, row-vector matrix conversion, RIS normalization/integration with zero-target and occluded candidates, specular-albedo roughness/view dependence, flat/RLE HDR decoding, truncated HDR rejection, and optional loading/deformation/image decoding of the actual GLB. Reservoir math and the specular guide function are shared directly with HLSL. Tests do not create a GPU device or load NGX.
 
 ## Run
 
@@ -174,6 +263,42 @@ Append `--debug-layer` for D3D12 validation. All stored D3D12 messages are print
 To compare upscalers, append `--upscaler sr` or `--upscaler rr` to the command above. SR receives the noisy image as a baseline; it is not a path-tracing denoiser. Colour presentation and dumps use the full-resolution upscaler output. `--view albedo|normal|depth|motion|accum` continues to show the original guides/reference. Dump output remains tone-mapped BMP; the optional `--hdr-out` extension is not implemented.
 
 Each nonempty run prints `[info] gpu frame time: avg X ms (path trace Y ms)` using direct-queue timestamp queries. Frame time includes tracing, NGX, barriers, and the tone-map draw, but excludes initialization, dump copies, CPU work, and the Present/vsync wait. Submissions remain serialized. `--vsync 0` uses tearing when supported and unsynchronized Present otherwise; `--vsync 1` uses interval one.
+
+## DLSS Neural Rendering host (`--nr`)
+
+The bench can be the application that creates and evaluates DLSS Neural Rendering (NGX feature 18), so the
+Optimizer FPS add-on's feature-18 hook can be tested without a game and without renodx-dlss5.
+
+- `--nr native` runs feature 18 after the chosen upscaler, on the full-resolution colour (the SR/RR output, or
+  the render colour with `--upscaler none`): feature, colour and output at that size, depth and motion at render
+  size with their own sub-rects, output in a separate RGBA16F texture that is presented.
+- `--nr upscale` (no DLSS) creates the feature at the render size and evaluates with colour/guides at render
+  size and the output at output size. The 310.8 runtime refuses this with `0xBAD00005`; the bench reports it and
+  presents the render colour. [NGX_PARAMETERS.md](NGX_PARAMETERS.md) lists every combination that was tried.
+- The NGX core refuses the available `nvngx_dlssnr.dll` (its signature does not verify), so the bench loads it
+  directly and calls it through `nvngx.dll_pwbench12.dll` (built by `build.cmd`); both must be beside the exe.
+- The runtime is loaded on the first frame and feature 18 is created on the second, after one present: the
+  add-on installs its hooks at present time and must see the create, as in a game.
+- `[nr] frame N: mode ..., feature WxH, colour WxH, output WxH, result 0x...` is printed for the first three NR
+  frames, every 60th frame and on a change of result; the first create and evaluate print every parameter as
+  `[nr parameter]`; the runtime's own log (`nvngx_dlssnr_310_8_0.log` beside the exe) is echoed as `[nr log]`.
+
+```bat
+rem control run without ReShade, from tools\bench12 (needs nvngx_dlssnr.dll beside the build)
+pw_bench12.exe 240 --gltf ..\bench\assets\lab_scene.glb --upscaler sr --nr native --sun-dir 0.45,-0.77,0.45 --sun-strength 1500 --exposure 0.22 --haze 0.008 --fov 62 --dump 120,239
+pw_bench12.exe 240 --gltf ..\bench\assets\lab_scene.glb --nr upscale --sun-dir 0.45,-0.77,0.45 --sun-strength 1500 --exposure 0.22 --haze 0.008 --fov 62
+```
+
+`powershell -File deploy_nrhost.ps1` builds the `run_nrhost\` runtime from `run_addon\` without
+`renodx-dlss5.addon64` (ReShade 6.8 as `dxgi.dll`, the Optimizer FPS add-on with its shaders and forwarder,
+DLSS/NR 310.x DLLs) plus this build's exe, forwarder and shaders, and copies `nvngx_dlssnr.dll` into the build
+directory for control runs. `-AddonBuild ..\..\out\build\x64` takes the add-on and its shaders from an SDK
+build instead. An existing `run_nrhost\ReShade.ini` is kept. Run from `run_nrhost\` with
+`..\..\bench\assets\lab_scene.glb` and read `ReShade.log` (lines with `Optimizer FPS`). The bench leaves
+through `TerminateProcess` after NGX use, so the add-on never unloads: set `CrashGuard=0` in `[OptimizerFPS]`,
+otherwise the next run starts in the add-on's safe mode. For a control run inside `run_nrhost\`, rename
+`dxgi.dll` (for example to `dxgi.dll.off`); ReShade and the add-on are then not loaded. `run_nrhost\` is not
+tracked.
 
 ## Options
 
@@ -203,6 +328,12 @@ Each nonempty run prints `[info] gpu frame time: avg X ms (path trace Y ms)` usi
 | `--light-candidates M` | `8` | RIS lamp candidates per vertex, `1..1024`; at most one selected lamp shadow ray. |
 | `--vsync 0\|1` | `0` | Unsynchronized/tearing presentation or interval-one vsync. |
 | `--upscaler none\|sr\|rr` | `none` | No upscaler, DLSS SR, or DLSS RR. Quality is derived from render scale. |
+| `--nr off\|native\|upscale` | `off` | DLSS Neural Rendering host (NGX feature 18), see [below](#dlss-neural-rendering-host---nr). `upscale` requires `--upscaler none`. |
+| `--nr-colour srgb\|linear` | `srgb` | Colour handed to NR: sRGB-encoded proxy (white 1.0, soft knee) decoded afterwards, or linear HDR as rendered. |
+| `--nr-log 0\|1\|2` | `1` | NR runtime log level echoed as `[nr log]` (each distinct line once); 0 leaves its log off. |
+| `--nr-output-pad X,Y[,BX,BY]` | none | NR output texture X/Y texels larger than the frame, region at BX,BY (default 0,0); the pad is filled with magenta before each evaluate and checked on report frames. Only the region is presented and dumped. |
+| `--nr-colour-pad X,Y[,E]` | none | NR colour (the sRGB proxy) X/Y texels larger than the frame, region at 0,0: the shape of RenoDX DLSS by ShortFuse (a render region inside a full-size texture). The pad is black, or the edge repeated with E=1; a warped run that gives the same frame both ways reads nothing past the region. Needs `--nr-colour srgb`. |
+| `--mv-format rg16f\|rgba16f` | `rg16f` | Motion texture handed to DLSS and NR: the RG16F guide, or an RGBA16F copy (xy motion, zw 0) as some games use. |
 | `--jitter 0\|1` | `1` | Halton(2,3) projection jitter in render pixels, positive right/down. |
 | `--depth standard\|reverse` | `standard` | Unjittered projection, near `0.1`, far `300`; miss is `1` standard or `0` reverse. |
 | `--view VIEW` | `colour` | `colour`, `noisy`, `accum`, `depth`, `motion`, `normal`, `roughness`, `albedo`, `specular`. |
@@ -235,6 +366,12 @@ All guides use the render resolution. `colour` is RGBA16F; `depth` R32F; `motion
 - `pathtrace.h/.cpp`, `pathtrace_pipeline.cpp`: output resources, constants, dispatch/present, root signatures, and PSOs.
 - `ngx.h/.cpp`, `ngx_evaluate.cpp`: dynamic driver loading, NGX lifetime, helper bridges, parameter logging, and SR/RR evaluation barriers.
 - `ngx_sdk.h`, `ngx_contract.h`: D3D-only SDK includes, quality/flag selection, matrix conversion, and testable RR parameter construction.
+- `ngx_nr.h/.cpp`: the `--nr` host (feature creation after the first present, per-frame evaluate, barriers, `[nr]` report).
+- `ngx_nr_runtime.h/.cpp`, `ngx_nr_forwarder.cpp`: direct loading of `nvngx_dlssnr.dll` and the `nvngx.dll_pwbench12.dll` call forwarder its caller check requires.
+- `ngx_nr_contract.h`, `ngx_nr_params.h/.cpp`: testable feature-18 parameter writes and the host-owned NGX parameter block.
+- `ngx_nr_bridge.h/.cpp`, `ngx_nr_pad.h/.cpp`, `ngx_nr_log.h/.cpp`: sRGB colour bridge and region copy, `--nr-output-pad` fill/check, runtime log echo.
+- `motion_pack.h/.cpp`: `--mv-format rgba16f` copy of the motion guide (compute shader compiled at startup).
+- `deploy_nrhost.ps1`: builds the `run_nrhost\` runtime.
 - `shaders/pathtrace.hlsl`, `present.hlsl`, and `.hlsli` includes: ray queries, BRDF/light sampling, guides, accumulation, presentation.
 - `shaders/reservoir.hlsli`, `specular_guide.hlsli`: RIS estimator math and the per-channel F0 implementation of [NVIDIA's EnvBRDFApprox2](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_RR.md#421-specular-albedo-generation), shared with CPU tests.
 - `image_mips.h/.cpp`, `device_texture.cpp`: CPU colour/data/HDR mip chains and multi-subresource upload.
@@ -367,7 +504,7 @@ bench directory when present, or prints an explicit skip when absent. A position
 overrides that asset and also runs the existing full-scene/image decoding checks:
 
 ```bat
-cmd /c W:\AI_Proj\GPT\26_Mods\PeripheralWarp\tools\bench12\build.cmd
+cmd /c tools\bench12\build.cmd
 tools\bench12\obj\bench12_tests.exe tools\bench\assets\lab_scene.glb
 ```
 
@@ -441,3 +578,273 @@ to exercise the First Light scale convention. This is synthetic input, not a cap
 `linear-positive` emits its positive counterpart. Both declare linear depth to RR.
 The projection and motion vectors retain the existing camera convention.
 Use these modes with the fork depth-convention audit in addition to `standard` and `reverse`.
+
+
+## One-core reference captures (2026.9.1)
+
+Run the offline GPU benches sequentially from the repository root. Build with
+`cmake --preset windows-x64`, the existing `windows-x64-release` build preset,
+and `tools/bench12/build.cmd`. The plan's `windows-x64` build preset does not exist.
+The source shader directory must contain exactly 21 DXBC files; remove only stale
+`temporal_*_ps.dxbc` files before rebuilding.
+
+```powershell
+powershell -File tools/bench12/reference_dumps.ps1 -Runtime run_addon
+powershell -File tools/bench12/reference_dumps.ps1 -Runtime run_r521
+powershell -File tools/bench12/reference_dumps.ps1 -Runtime run_nrhost
+python tools/bench/compare_reference.py --pair tools/bench12/run_addon/reference_before_2026.9.1/warp_dump_120.bmp tools/bench12/run_addon/reference_before_2026.9.1/warp_repeat_dump_120.bmp
+powershell -ExecutionPolicy Bypass -File tools/bench9/run_matrix.ps1 -Only notemp,plain,game -CapturesRoot tools\bench9\run\reference_before_2026.9.1
+powershell -ExecutionPolicy Bypass -File tools/bench9/run_matrix.ps1 -Only notemp -CapturesRoot tools\bench9\run\reference_before_2026.9.1_repeat
+python tools/bench/compare_reference.py tools/bench9/run/reference_before_2026.9.1/notemp tools/bench9/run/reference_before_2026.9.1_repeat/notemp
+```
+
+Before bench9, copy the built add-on into `tools/bench9/run/host64/`, replace only
+its `optimizer-fps-dlss5/*.dxbc` files with the 21 built shaders, and verify the count.
+The bench12 runner performs the equivalent deployment itself.
+
+`reference_dumps.ps1` accepts `-Runtime NAME`, `-Case warp,warp_repeat`, `-Out DIR`,
+`-Build DIR`, and `-Frames 240`. It records frames 120 and 239 (use at least 240 frames).
+Each runtime has its own `reference_before_2026.9.1` directory. The manifest records
+HEAD, dirty status, SHA256 of source files and deployed binaries/shaders, exact commands,
+exit codes, required log markers, per-case ini filenames and both dump-presence flags.
+Each case also retains stdout, stderr and ReShade.log. Missing dumps invalidate a case.
+The fixed layout is CenterX/Y=80, WorkX/Y=90, GlobalScale=100, ColorFilter=1;
+ModelPasses=1, SpreadPasses=0 and TemporalEvery=4. Runtime-specific remaining settings
+are preserved in the captured ini. No diagnostic environment variables are used.
+
+Never overwrite references: a nonempty `-Out` is rejected. Later comparisons must use
+another output directory, for example `-Case warp -Out task2`. All reference directories
+are ignored by Git. No snapshot commit, `before-2026.9.1` tag or fork snapshot branch
+was created during this capture task; references describe the dirty working tree.
+
+Compare every `*_repeat` pair at both captured frames. T0/P1 requires byte equality;
+zero MAD with different file bytes still fails. Temporal checks use an explicit
+`--mad-limit 0.05` (RGB units 0..255); record measured MAD as well as exit status.
+The comparator returns 0 for equality/allowed MAD, 1 for a difference and 2 for missing,
+unreadable or differently sized images. Its six self-tests are registered as
+`ofps_compare_reference`; missing NumPy/Pillow yields CTest skip code 77.
+
+D3D11 capture is explicitly skipped on this workstation: the runtime has no
+`tools/bench/run/dlss5-dx11-bridge.addon64`. Its reference directory exists but contains
+no valid reference images. Do not treat an absent capture as a passing comparison.
+
+Capture provenance limitation: `cmake --build --preset windows-x64` returned 1 because
+that build preset is absent. Unless a fresh build is subsequently confirmed, the captured
+add-on is the pre-existing build artifact (its SHA256 is in each manifest), not a verified
+rebuild of the manifest's source tree. The bench12 executable itself was rebuilt successfully.
+
+### Capture results, 2026-09-22
+
+- Initial CTest: 9/9 passed. Final CTest: 10/10 passed, no skips, using existing C++
+  test binaries. Both literal build-preset attempts failed (exit 1); a clean `/WX`
+  add-on rebuild has not been established. `build.cmd` and its CPU checks passed (exit 0).
+- `run_addon`: 7 main cases; `run_r521`: 9; `run_nrhost`: 13. Every case exited 0,
+  had both dumps and the required log markers. Each runtime received 21 DXBC files.
+- All three T0/P1 repeat pairs at frames 120 and 239 are byte-identical (MAD 0).
+- Temporal repeats in `reference_before_2026.9.1_temporal_repeat`: `warp_t1` and
+  `warp_forward_t1` for run_addon, `native_warp_t1` for run_r521, `warp_t1` for run_nrhost.
+  All four runs exited 0; all eight image pairs are byte-identical (MAD 0).
+- bench9 `game`, `notemp`, `plain`, repeated `notemp` and repeated `game` all exited 0.
+  Each produced frames 600/650/700. The notemp warped marker and game temporal marker
+  each occurred once. The host shader directory contains exactly 21 DXBC files.
+- bench9 notemp repeat: comparator exit 1, MAD 1.4225 / 1.4230 / 1.4225.
+  These captures are **not valid T0/P1 references**.
+- bench9 game repeat: comparator exit 1 with `--mad-limit 0.05`,
+  MAD 10.7396 / 10.7391 / 10.7397. These captures are **not valid temporal references**.
+  No deeper bench repairs were attempted. D3D11 was skipped because its bridge is absent.
+
+The ignored reference directories retain `manifest.json`, `repeat_comparison.json`
+and `temporal_repeat_comparison.json` with full-precision results and provenance.
+Repeat temporal captures with the same `-Case` list in a new `-Out` directory, then run:
+
+```powershell
+python tools/bench/compare_reference.py tools/bench12/run_addon/reference_before_2026.9.1 tools/bench12/run_addon/reference_before_2026.9.1_temporal_repeat --pattern '*t1_dump_*.bmp' --mad-limit 0.05
+python tools/bench/compare_reference.py tools/bench9/run/reference_before_2026.9.1/game tools/bench9/run/reference_before_2026.9.1_repeat/game --mad-limit 0.05
+```
+
+## Direct shared core host
+
+Build the core with `cmake --preset windows-x64` and
+`cmake --build --preset windows-x64-release`, then run `cmd /c tools\bench12\build.cmd`.
+Use `--host core --nr native --upscaler sr --nr-colour srgb` with
+`--core-mode 0|1|2` (default 2) and `--core-temporal 0|1` (default 0).
+The default `--host ngx` retains the existing NGX path.
+
+The core host loads `optimizer-fps-dlss5-core.dll` beside the executable, with
+21 DXBC files in `optimizer-fps-dlss5/` beside that DLL. It requires a clean runtime
+without ReShade's local DXGI proxy or any loaded `.addon64` module.
+`NrColourBridge` still encodes sRGB before the core and resolves it afterwards;
+the model host's codec at the core boundary is identity. Model calls use the
+existing `nvngx.dll_pwbench12.dll` forwarder. Queue submissions are reported
+immediately after execution; shutdown drains the feature before destroying callbacks.
+
+Final NGX blocks are saved to `ngx_final_audit.log` immediately before model calls.
+The executable's optional `OfpsBenchAuditNgx` diagnostic lets the ReShade path
+print its final block too. Audit excludes the shell-only `PeripheralWarp.FloatProbe`
+float-slot diagnostic. Raw logs retain every other key, exact setter type, scalar
+value and resource description by role; resource contents require separate GPU
+verification. The owner-approved Off/pass-through exception permits only equal-value
+`DLSSNR.Width`/`DLSSNR.Height` `uint32` versus `int32`: native Create is forwarded
+unchanged, whereas the direct host uses the warped shell setter type. This also
+covers those stored dimensions in later Evaluate blocks. Values must remain equal
+and representable as nonnegative int32; changed sizes remain blockers.
+`compare_ngx_audit.py` applies the exception only to `off_t0` versus `core_off`.
+Resource pointer setters (`d3d12`/`pointer`) are compared by role and full description.
+Other scalar type, key or value mismatches block parity even with identical dumps.
+The audit does not modify the parameter block. Core effective settings are logged
+as schema IDs and exact value bits.
+
+The reference profile explicitly uses `Flags=0`, including in the direct host.
+The schema default is `Flags=1` (extend motion beyond the frame edge); inheriting
+it changes packed motion when the camera starts moving even though every final
+NGX parameter still matches. Shutdown logs `OfpsStatus.fallbackFrames` and the
+`submissionDrops` status row; the latter avoids changing the public status ABI.
+
+Reference cases in `run_nrhost/reference_before_2026.9.1` map as follows:
+
+| Core case | Reference case | Acceptance |
+| --- | --- | --- |
+| `core_warp` | `warp_t0` | byte-identical |
+| `core_off` | `off_t0` | byte-identical, documented audit exception |
+| `core_warp_t1` | `warp_t1` | RGB MAD <= 0.05 |
+
+Audit both paths before comparing frames. T0 must be bit-identical; only temporal
+uses `compare_reference.py --pair REFERENCE CANDIDATE --mad-limit 0.05`.
+
+Run the direct matrix in an isolated allowlist runtime with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Case core_warp,core_off,core_warp_t1 -Out candidate_p2t5
+```
+
+The runner copies audit logs beside the dumps. For a fresh audit of the shell path,
+run `-Case warp_t0,off_t0,warp_t1` with a different output directory. Do not replace
+`reference_before_2026.9.1`. After the final NGX audit passes, a T0 comparison is:
+
+```powershell
+python tools/bench/compare_reference.py --pair tools/bench12/run_nrhost/reference_before_2026.9.1/warp_t0_dump_239.bmp tools/bench12/run_nrhost/candidate_p2t5/core_warp_dump_239.bmp
+```
+
+Both runners accept a PowerShell `-DumpFrames` array (default `120,239`). For
+time localization, run each path into a separate new directory, for example:
+
+```powershell
+& tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Case core_warp -Out candidate_timeline -DumpFrames ((1..23 | ForEach-Object { $_ * 10 }) + 239)
+& tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Case warp_t0 -Out reference_timeline -DumpFrames ((1..23 | ForEach-Object { $_ * 10 }) + 239)
+```
+
+`build.cmd` also runs parser tests and the separate WARP session lifecycle test
+(repeated Open/Close, changed settings, failed load and event cleanup), without
+adding to the main 21/10 CTest suites.
+
+## Runtime staging and release payload
+
+`deploy_addon.ps1 -Build <build>` and `deploy_nrhost.ps1 -AddonBuild <build>`
+stage the addon, core DLL, NGX forwarder and all 21 DXBC from the same build.
+`tools/bench9/deploy.ps1 -Build <build>` stages that set in `host64/`.
+Core version must match `cmake/Version.cmake`; stale DXBC are removed only
+inside the selected runtime shader directory. Existing INI files are preserved.
+`deploy_fork.cmd` preserves its source selection and INI, but refreshes core and
+shaders together. This does not enable the legacy OptiScaler core integration.
+
+Core cases run in `<Out>/core-runtime/`, copied by an allowlist with no ReShade,
+local DXGI or addons. The manifest records actual argv, working directory and
+binary hashes. All 45 effective schema settings are checked against the reference
+INI (schema defaults apply to missing keys) before image comparison. Legacy keys
+outside ABI 1's schema are not treated as active settings.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/bench12/reference_dumps.ps1 -Runtime run_nrhost -Case core_warp,core_off,core_warp_t1 -Out candidate_p2t6
+powershell -NoProfile -File tools/Package-Release.ps1 -Out dist-release
+powershell -NoProfile -File tools/Test-ReleasePackage.ps1 -Zip dist-release/Optimizer-FPS-for-DLSS5-2026.9.1.zip
+```
+
+The ZIP and CI artifact contain x64 addon/core/forwarder, 21 shaders next to
+core, and the x86 remote addon. ZIP verification checks every payload hash against
+`files.sha256`. This is a bench validation package; compatibility of the older
+installer with the new core payload has not been established.
+
+## Plan 2 Task 7 verification (2026-09-22)
+
+Reused the existing `candidate_p2t7` captures from source
+`2c29f6dafa25485cb177ee25e6bd44741d5a23ed`; no NR runtime was relaunched and no
+reference was replaced. Core captures are in `run_nrhost/candidate_p2t7/core/`.
+Manifests retain exact argv, source/binary/shader hashes and capture status.
+The four spatial DXBC differences from the original reference were already present
+in accepted plan-1 `candidate_task10`; all 21 match that baseline. NR/SR/RR hashes
+match the original reference. These are capture results, not fresh GPU runs of the
+final rebuilt package.
+
+| Runtime | Cases | T0 pairs, byte-identical | T1 pairs, MAD <= 0.05 | Maximum MAD |
+| --- | ---: | ---: | ---: | ---: |
+| `run_addon` | 7 | 10/10 | 4/4 | 0 |
+| `run_r521` | 9 | 16/16 | 2/2 | 0 |
+| `run_nrhost` | 13 | 24/24 | 2/2 | 0 |
+| direct core | 3 | 4/4 | 2/2 | 0 |
+
+All 64 pairs (frames 120 and 239) are byte-identical, including T1. Final NGX
+audit matches 240 `core_warp`, 240 `core_off` and 61 `core_warp_t1` blocks under
+the documented policies. Off has 480 equal-value dimension setter exceptions;
+the warped paths have none. All three core logs report zero `fallbackFrames`
+and `submissionDrops`. Resource contents were not independently captured at the
+NGX boundary; final-frame equality does not establish full input-buffer identity.
+
+Reproduce comparisons by folder, using each reference manifest's temporal setting
+and the explicit core mapping, without applying a global MAD tolerance to T0:
+
+```powershell
+python tools/bench12/test_compare_ngx_audit.py
+python tools/bench12/compare_plan2.py --candidate candidate_p2t7
+```
+
+The driver first audits the three core paths, then compares every reference case.
+It writes `frame_comparison.json` in each candidate directory and
+`ngx_audit_comparison.json` in the nrhost candidate. It never launches a bench.
+Equivalent explicit core comparisons are:
+
+```powershell
+$root = 'tools/bench12/run_nrhost'
+foreach ($pair in @(@('warp_t0','core_warp'), @('off_t0','core_off'), @('warp_t1','core_warp_t1'))) {
+    foreach ($frame in @(120,239)) {
+        $compareArgs = @('tools/bench/compare_reference.py', '--pair',
+            "$root/reference_before_2026.9.1/$($pair[0])_dump_$frame.bmp",
+            "$root/candidate_p2t7/core/$($pair[1])_dump_$frame.bmp")
+        if ($pair[0] -eq 'warp_t1') { $compareArgs += @('--mad-limit','0.05') }
+        python @compareArgs
+        if ($LASTEXITCODE -ne 0) { throw 'Core reference mismatch' }
+    }
+}
+```
+
+bench9 has no `candidate_p2t7` capture. Existing `candidate_task10` retains three
+dumps each for `game`, `notemp`, and `plain`: warped markers occur once in game
+and notemp, temporal-ready once in game, and NR evaluation succeeds in all three.
+This is historical smoke evidence, not a passed plan-2 run or image-parity result;
+the original bench9 repeats were nondeterministic. New bench runs were prohibited.
+D3D11 is BLOCKED: `tools/bench/run/dlss5-dx11-bridge.addon64` is absent.
+`run_fork` is NOT PASSED: the older integration can double-warp without the event.
+
+Final local verification logs are in ignored `out/validation-p2t7/`: all five
+Release presets build with `/WX`; CTest passes 21/21 x64, 10/10 x86 and 7/7 SDK-only
+without skips. Shipping MT and remote presets intentionally have no tests.
+bench12 `/WX`, CPU/parser checks and WARP lifecycle tests pass. The six audit
+comparison tests reject changed sizes, wrong scalar types and missing keys.
+Core include boundaries pass, the ABI header diff is empty, and PE inspection
+finds exactly two C exports and no dynamic CRT dependency.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Lint-PowerShell51.ps1 -Path tools
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Package-Release.ps1 -Out dist-release -Force
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-ReleasePackage.ps1 -Zip dist-release/Optimizer-FPS-for-DLSS5-2026.9.1.zip
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/installer-tests/Run-InstallerTests.ps1 -Payload dist-release/Optimizer-FPS-for-DLSS5-2026.9.1/payload -BenchDir tools/bench12/run_addon
+```
+
+Lint passes under Windows PowerShell 5.1. ZIP verification passes with all 26
+payload hashes and 21 DXBC. Installer self-tests are reported separately from
+package validation; passing payload hashes does not establish installer migration.
+After updating the two old file-count assertions for the optional core payload and
+adding core hash/receipt/host64 checks: **73 passed, 0 failed, 2 skipped**.
+The skipped manual-adoption and pre-26.26 migration scenarios need the absent
+`peripheral-warp.addon64.pre2625` fixture. The run used
+`-ReShade32 out/vulkan-smoke-2c614b7ed0dc459f8dd85489a5fc3e05/ReShade32.dll`.
+These checks do not certify complete core-aware Verify/migration/unload support.

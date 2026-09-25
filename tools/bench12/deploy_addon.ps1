@@ -1,21 +1,25 @@
 param(
     [string]$GameSource = 'W:\Game\Steam\steamapps\common\Baldurs Gate 3\bin',
-    [string]$Build = "$PSScriptRoot\..\..\out\build\x64",
-    [string]$Runtime = "$PSScriptRoot\run_addon"
+    [string]$Build = '',
+    [string]$Runtime = ''
 )
 $ErrorActionPreference = 'Stop'
+if (-not $Build) { $Build = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\out\build\x64')) }
+if (-not $Runtime) { $Runtime = Join-Path $PSScriptRoot 'run_addon' }
+. "$PSScriptRoot\..\Runtime-Payload.ps1"
 # Read installed files only. Nothing is downloaded or written into the game directory.
 $reshade = Join-Path $GameSource 'Reshade64.dll'
 if ((Get-Item -LiteralPath $reshade).VersionInfo.FileVersion -notlike '6.8.*') {
     throw 'Expected the installed ReShade 6.8 add-on build in Reshade64.dll.'
 }
 $files = @{
+    'optimizer-fps-dlss5-core.dll' = (Join-Path $Build 'core\Release\optimizer-fps-dlss5-core.dll')
     'dxgi.dll' = $reshade
     'renodx-dlss5.addon64' = (Join-Path $GameSource 'renodx-dlss5.addon64')
-    'nvngx.dll_optimizerfps.dll' = (Join-Path $GameSource 'nvngx.dll_optimizerfps.dll')
-    'optimizer-fps-dlss5.addon64' = (Join-Path $Build 'adapters\reshade\Release\optimizer-fps-dlss5.addon64')
+    'nvngx.dll_optimizerfps.dll' = (Join-Path $Build 'hosts\reshade\ngx_forwarder\Release\nvngx.dll_optimizerfps.dll')
+    'optimizer-fps-dlss5.addon64' = (Join-Path $Build 'hosts\reshade\Release\optimizer-fps-dlss5.addon64')
 }
-foreach ($name in @('pw_bench12.exe', 'nvngx_dlss.dll', 'nvngx_dlssd.dll', 'nvngx_dlssnr.dll')) {
+foreach ($name in @('pw_bench12.exe', 'nvngx_dlss.dll', 'nvngx_dlssd.dll', 'nvngx_dlssnr.dll', 'settings.json')) {
     $files[$name] = Join-Path $PSScriptRoot "run_fork\$name"
 }
 foreach ($source in $files.Values) {
@@ -24,11 +28,7 @@ foreach ($source in $files.Values) {
 New-Item -ItemType Directory -Force -Path $Runtime | Out-Null
 foreach ($name in $files.Keys) { Copy-Item -LiteralPath $files[$name] -Destination (Join-Path $Runtime $name) }
 Copy-Item -LiteralPath "$PSScriptRoot\run_fork\shaders" -Destination $Runtime -Recurse -Force
-$shaderDirectory = Join-Path $Runtime 'optimizer-fps-dlss5'
-New-Item -ItemType Directory -Force -Path $shaderDirectory | Out-Null
-Get-ChildItem -LiteralPath (Join-Path $Build 'shaders') -Filter '*.dxbc' |
-    Where-Object { $_.Name -notlike 'temporal_*_ps.dxbc' } |
-    Copy-Item -Destination $shaderDirectory
+Copy-CorePayload $Build $Runtime
 $ini = Join-Path $Runtime 'ReShade.ini'
 if (-not (Test-Path -LiteralPath $ini)) {
     @'
@@ -36,8 +36,9 @@ if (-not (Test-Path -LiteralPath $ini)) {
 EffectSearchPaths=
 TextureSearchPaths=
 
-[PeripheralWarp]
+[OptimizerFPS]
 Mode=2
+Flags=0
 CrashGuard=0
 TemporalMode=1
 TemporalEvery=4

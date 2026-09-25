@@ -14,9 +14,10 @@
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/x64",
       "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": "ON",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x64",
-        "PW_BUILD_TESTS": "ON",
-        "PW_BUILD_RESHADE_ADDON": "ON"
+        "OFPS_BUILD_TESTS": "ON",
+        "OFPS_BUILD_RESHADE_ADDON": "ON"
       }
     },
     {
@@ -26,10 +27,11 @@
       "inherits": "windows-x64",
       "binaryDir": "${sourceDir}/out/build/x64-mt",
       "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": "ON",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x64-mt",
-        "PW_BUILD_TESTS": "OFF",
-        "PW_BUILD_RESHADE_ADDON": "ON",
-        "PW_STATIC_CRT": "ON"
+        "OFPS_BUILD_TESTS": "OFF",
+        "OFPS_BUILD_RESHADE_ADDON": "ON",
+        "OFPS_STATIC_CRT": "ON"
       }
     },
     {
@@ -39,8 +41,9 @@
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/out/build/x86",
       "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": "ON",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x86",
-        "PW_BUILD_TESTS": "ON"
+        "OFPS_BUILD_TESTS": "ON"
       }
     },
     {
@@ -51,25 +54,28 @@
       "architecture": "Win32",
       "binaryDir": "${sourceDir}/out/build/x86-remote",
       "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": "ON",
         "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/x86-remote",
-        "PW_BUILD_TESTS": "OFF",
-        "PW_BUILD_D3D_ADAPTERS": "OFF",
-        "PW_COMPILE_SHADERS": "OFF",
-        "PW_BUILD_RESHADE_ADDON": "OFF",
-        "PW_BUILD_RESHADE_REMOTE32": "ON",
-        "PW_STATIC_CRT": "ON"
+        "OFPS_BUILD_TESTS": "OFF",
+        "OFPS_BUILD_D3D_ADAPTERS": "OFF",
+        "OFPS_COMPILE_SHADERS": "OFF",
+        "OFPS_BUILD_RESHADE_ADDON": "OFF",
+        "OFPS_BUILD_RESHADE_REMOTE32": "ON",
+        "OFPS_STATIC_CRT": "ON"
       }
     },
     {
-      "name": "core-only-x64",
-      "displayName": "Core only x64",
+      "name": "sdk-only-x64",
+      "displayName": "SDK only x64",
       "inherits": "windows-x64",
-      "binaryDir": "${sourceDir}/out/build/core-x64",
+      "binaryDir": "${sourceDir}/out/build/sdk-x64",
       "cacheVariables": {
-        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/core-x64",
-        "PW_BUILD_D3D_ADAPTERS": "OFF",
-        "PW_BUILD_RESHADE_ADDON": "OFF",
-        "PW_COMPILE_SHADERS": "OFF"
+        "CMAKE_COMPILE_WARNING_AS_ERROR": "ON",
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/sdk-x64",
+        "OFPS_BUILD_CORE": "OFF",
+        "OFPS_BUILD_D3D_ADAPTERS": "OFF",
+        "OFPS_BUILD_RESHADE_ADDON": "OFF",
+        "OFPS_COMPILE_SHADERS": "OFF"
       }
     }
   ],
@@ -77,7 +83,7 @@
     { "name": "windows-x64-release", "configurePreset": "windows-x64", "configuration": "Release" },
     { "name": "windows-x64-mt-release", "configurePreset": "windows-x64-mt", "configuration": "Release" },
     { "name": "windows-x86-release", "configurePreset": "windows-x86", "configuration": "Release" },
-    { "name": "core-only-x64-release", "configurePreset": "core-only-x64", "configuration": "Release" },
+    { "name": "sdk-only-x64-release", "configurePreset": "sdk-only-x64", "configuration": "Release" },
     {
       "name": "windows-x86-remote-release",
       "configurePreset": "windows-x86-remote",
@@ -99,8 +105,8 @@
       "output": { "outputOnFailure": true }
     },
     {
-      "name": "core-only-x64-release",
-      "configurePreset": "core-only-x64",
+      "name": "sdk-only-x64-release",
+      "configurePreset": "sdk-only-x64",
       "configuration": "Release",
       "output": { "outputOnFailure": true }
     }

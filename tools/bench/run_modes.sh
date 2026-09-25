@@ -2,7 +2,7 @@
 # run_modes.sh <label> <temporal M,N> <extra ini key=value ...> : runs the bench, moves the dumps into run/<label>
 # BENCH_RUN: the bench runtime folder (pw_bench.exe, Reshade64 as dxgi.dll, renodx, our add-on, ReShade.ini). Not in git.
 O="${BENCH_RUN:-$(cd "$(dirname "$0")" && pwd -W 2>/dev/null || pwd)/run}"
-label=$1; temporal=$2; shift 2; set -- "$@" Mode=2 CrashGuard=0
+label=$1; temporal=$2; shift 2; set -- "$@" Mode=2 CrashGuard=0 Flags=0
 rm -f "$O/optimizer-fps-dlss5.session"   # the bench ends with TerminateProcess; the marker would trip the crash guard
 # renodx must have NR on, otherwise feature 18 is never created and every mode yields the same frame
 sed -i "s/^NeuralUplift=0/NeuralUplift=1/" "$O/ReShade.ini"
@@ -10,14 +10,24 @@ python - "$O/ReShade.ini" "$@" <<'PY'
 import sys, io, re
 p = sys.argv[1]; s = io.open(p, encoding="utf-8", newline="").read()
 nl = "\r\n" if "\r\n" in s else "\n"
-head, sec, rest = re.split(r"(\[PeripheralWarp\]" + nl + r")", s, maxsplit=1)[0], None, None
-m = re.search(r"\[PeripheralWarp\]" + nl + r"(.*?)(?=" + nl + r"\[|\Z)", s, re.S)
-body = m.group(1)
+section = re.search(r"(?m)^\[OptimizerFPS\]\r?$", s)
+if section is None:
+    s += nl + "[OptimizerFPS]" + nl
+    section = re.search(r"(?m)^\[OptimizerFPS\]\r?$", s)
+body_start = s.index("\n", section.start()) + 1
+next_section = re.search(r"(?m)^\[", s[body_start:])
+body_end = body_start + next_section.start() if next_section else len(s)
+lines = s[body_start:body_end].splitlines(keepends=True)
 for kv in sys.argv[2:]:
     k, v = kv.split("=", 1)
-    if re.search(r"^" + re.escape(k) + r"=.*$", body, re.M): body = re.sub(r"^" + re.escape(k) + r"=.*$", k + "=" + v, body, flags=re.M)
-    else: body = body.rstrip(nl) + nl + k + "=" + v
-s = s[:m.start(1)] + body + s[m.end(1):]
+    for index, line in enumerate(lines):
+        if re.match(r"^" + re.escape(k) + r"=", line):
+            lines[index] = k + "=" + v + (nl if line.endswith("\n") else "")
+            break
+    else:
+        if lines and not lines[-1].endswith("\n"): lines[-1] += nl
+        lines.append(k + "=" + v + nl)
+s = s[:body_start] + "".join(lines) + s[body_end:]
 io.open(p, "w", encoding="utf-8", newline="").write(s)
 PY
 cd "$O" || exit 1

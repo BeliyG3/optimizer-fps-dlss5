@@ -40,7 +40,7 @@ The fastest form of the stage fuses the passes around the model into two compute
 
 ```text
 typed native color + depth + motion
-  -> PackEncode      (SDK PwPackTexel + the loader's encode)   -> proxy, packed depth, packed motion
+  -> PackEncode      (SDK OfpsPackTexel + the loader's encode)   -> proxy, packed depth, packed motion
   -> DLSS Neural Rendering at the work extent
   -> ResolveUnpack   (the loader's resolve + SDK unpack mapping) -> the native target, in place
 ```
@@ -48,7 +48,7 @@ typed native color + depth + motion
 It requires typed UAV stores for the packed formats and, for the in-place read of the untouched
 frame, typed UAV loads for the native view format; otherwise it writes and samples a packed HDR copy,
 and without typed stores at all the loader selects the adapter paths above. The packed data is the
-SDK's own (`peripheral_warp_pack.hlsli`), so the model sees the same input on every path.
+SDK's own (`ofps_pack.hlsli`), so the model sees the same input on every path.
 
 ## Failure rule
 

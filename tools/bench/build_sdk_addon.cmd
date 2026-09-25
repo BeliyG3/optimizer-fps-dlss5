@@ -9,7 +9,7 @@ cmake --preset windows-x64 >nul || goto :fail
 cmake --build --preset windows-x64-release 2>&1 | findstr /i /c:"error" /c:"warning" /c:"optimizer-fps-dlss5.addon64" /c:"Build FAILED"
 echo BUILD_RC=%ERRORLEVEL%
 ctest --preset windows-x64-release 2>&1 | findstr /i /c:"tests passed" /c:"Failed"
-dir out\build\x64\adapters\reshade\Release\optimizer-fps-dlss5.addon64
+dir out\build\x64\hosts\reshade\Release\optimizer-fps-dlss5.addon64
 endlocal
 exit /b 0
 :fail

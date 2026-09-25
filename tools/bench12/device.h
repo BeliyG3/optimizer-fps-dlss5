@@ -38,6 +38,8 @@ public:
     ComPtr<ID3D12GraphicsCommandList4> list;
     ComPtr<ID3D12DescriptorHeap> heap;
     unsigned width, height;
+    void *submissionContext=nullptr;
+    void (*onSubmitted)(void *, ID3D12CommandQueue *, ID3D12CommandList *)=nullptr;
     void Begin();
     void Submit(bool present=false);
     void Wait();

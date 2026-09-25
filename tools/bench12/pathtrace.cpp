@@ -14,7 +14,7 @@ Pathtrace::Pathtrace(Device &d)
 }
 void Pathtrace::Render(Device &d, const Scene &s, Accel &a, Options &o, int frame, bool dump, const CameraState *pose, void (*overlay)(Device &),float frameDelta)
 {
-    Configure(d,o);
+    Configure(d,o); nr.Prepare(d,frame);
     CameraState camera=pose ? *pose : CameraAt(frame,o,s.cameraAnchor);
     if(!initialized || CameraMoved(camera,previous) || s.animationMoved) accumulated=0;
     FrameConstants c{}; c.motionNdc=o.motion=="ndc" ? 1u : 0u; c.currentVP=Mul(Perspective(o.fov,float(width)/float(height),o.reverse),LookAt(camera.eye,camera.target));
@@ -53,22 +53,36 @@ void Pathtrace::Render(Device &d, const Scene &s, Accel &a, Options &o, int fram
         Transition(d.list.Get(),pickBuffer.Get(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         pickPending=true; pickX=pickY=-1;
     }
+    const float mvScaleX=o.motion=="ndc" ? -0.5f*float(width) : 1.0f, mvScaleY=o.motion=="ndc" ? 0.5f*float(height) : 1.0f;
+    const bool historyReset=resetHistory || !initialized || CameraCut(camera,previous);
+    // --mv-format rgba16f: DLSS and NR read an RGBA16F copy of the motion guide.
+    ID3D12Resource *motion=motionPack.Target() && (ngx.Output() || nr.Active()) ? motionPack.Run(d) : outputs[2].Get();
     if(ngx.Output()) {
         NgxFrame f; for(unsigned i=0;i<7;++i) f.inputs[i]=outputs[i].Get();
         if(o.accumulationEnabled && o.feedAccumulation) f.inputs[0]=outputs[8].Get();
+        f.inputs[2]=motion;
         f.width=width; f.height=height; f.jitterX=c.jitterX; f.jitterY=c.jitterY;
-        f.mvScaleX=o.motion=="ndc" ? -0.5f*float(width) : 1.0f;
-        f.mvScaleY=o.motion=="ndc" ? 0.5f*float(height) : 1.0f;
+        f.mvScaleX=mvScaleX; f.mvScaleY=mvScaleY;
         f.deltaMilliseconds=frameDelta*1000;
-        f.reset=resetHistory || !initialized || CameraCut(camera,previous);
+        f.reset=historyReset;
         f.worldToView=NgxMatrix(LookAt(camera.eye,camera.target));
         f.viewToClip=NgxMatrix(Perspective(o.fov,c.aspect,o.reverse));
         ngx.Evaluate(d,f);
         // NGX may replace descriptor heaps and root signatures on this command list.
         d.list->SetDescriptorHeaps(1,heaps);
     }
+    if(nr.Active()) {
+        // Feature 18 follows the upscaler: its colour is the SR/RR output (a pixel SRV after NGX) or
+        // the render colour (still a UAV); depth and motion are the render-size guides.
+        NrInputs in;
+        in.colourState=ngx.Output() ? D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        in.depth=outputs[1].Get(); in.motion=motion; in.mvScaleX=mvScaleX; in.mvScaleY=mvScaleY; in.reset=historyReset;
+        nr.Evaluate(d,in,frame);
+        d.list->SetDescriptorHeaps(1,heaps);
+    }
     d.Timestamp(4);
     for(auto &r:outputs) Transition(d.list.Get(),r.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    BindDisplay(d,o);
     display.Prepare(d,DisplaySource(o),o.autoExposure);
     Transition(d.list.Get(),d.BackBuffer(),D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET);
     d.list->SetGraphicsRootSignature(presentRoot.Get()); d.list->SetPipelineState(presentPso.Get());

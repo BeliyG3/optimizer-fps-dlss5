@@ -1,0 +1,4 @@
+LIBRARY "optimizer-fps-dlss5-core"
+EXPORTS
+    OfpsCreateCore
+    OfpsCoreVersion

@@ -8,7 +8,7 @@ cd /d "%~dp0..\.."
 cmake --preset windows-x86-remote >nul || goto :fail
 cmake --build --preset windows-x86-remote-release 2>&1 | findstr /i /c:"error" /c:"warning" /c:"optimizer-fps-dlss5-remote.addon32" /c:"Build FAILED"
 echo BUILD_RC=%ERRORLEVEL%
-dir out\build\x86-remote\adapters\reshade\Release\optimizer-fps-dlss5-remote.addon32
+dir out\build\x86-remote\hosts\remote32\Release\optimizer-fps-dlss5-remote.addon32
 endlocal
 exit /b 0
 :fail

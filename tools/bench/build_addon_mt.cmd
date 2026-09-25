@@ -6,9 +6,9 @@ cd /d "%~dp0..\.."
 cmake --preset windows-x64-mt >nul || goto :fail
 cmake --build --preset windows-x64-mt-release 2>&1 | findstr /i /c:"error" /c:"optimizer-fps-dlss5.addon64" /c:"Build FAILED"
 echo BUILD_RC=%ERRORLEVEL%
-dir out\build\x64-mt\adapters\reshade\Release\optimizer-fps-dlss5.addon64
+dir out\build\x64-mt\hosts\reshade\Release\optimizer-fps-dlss5.addon64
 echo ==== dependents (expect no VCRUNTIME/MSVCP)
-dumpbin /dependents out\build\x64-mt\adapters\reshade\Release\optimizer-fps-dlss5.addon64 | findstr /i /c:".dll"
+dumpbin /dependents out\build\x64-mt\hosts\reshade\Release\optimizer-fps-dlss5.addon64 | findstr /i /c:".dll"
 endlocal
 exit /b 0
 :fail

@@ -1,121 +1,91 @@
 # The ReShade add-on shell, module by module
 
-Stage 27.D2 split `adapters/reshade/producer.cpp` (~1 630 lines, one translation unit of `g_*`
-globals and free functions) into `adapters/reshade/addon/`. Nothing changed but where the code
-lives: the same 21 persisted ini keys, the same log strings, the same order of ImGui calls in the
-tab. Everything internal lives in one namespace, `pw_addon`, so the modules can see each other
-without a global; the NGX interposer is reached only through `adapters/reshade/ngx_hook.h`
-(`pw_ngx::`), which this side treats as an opaque API.
+The shell lives in `hosts/reshade/`, in namespace `ofps::reshade`.
+It loads `optimizer-fps-dlss5-core.dll` and consumes the public ABI through
+`core/api/ofps_core.h` (ABI 1), plus its public settings schema. No shell module
+includes a private core header. The reusable spatial SDK lives separately in `sdk/`.
+Delivery filenames and compatibility export names are unchanged. Current
+ReShade settings use `[OptimizerFPS]`; old-only `[PeripheralWarp]` is a one-time
+migration source. The remote link uses V4.
 
-The build list is `addon/sources.cmake` (`PW_ADDON_SOURCES`, paths relative to `adapters/reshade`).
+`addon/sources.cmake` lists `OFPS_ADDON_SOURCES` relative to `hosts/reshade/`.
+Core sources are listed only in `core/sources.cmake`.
 
-## `addon_context.h`
+## Core connection and NGX translation
 
-`AddonState` is what used to be the loose settings globals: the add-on's module handle, the two
-diagnostic outline switches and the Work-shift switch, the motion-vector diagnostics
-(`motionScaleAdjust`, `motionInvert`), the output colour compensation (`brightnessPercent`,
-`gamma`), the `pw_ngx::TemporalSettings` and the OptiScaler takeover flag. One instance, reached
-through `State()` — a function-local static in an inline function, so no module depends on another
-one's initialization order. Everything in it is touched from ReShade's runtime thread only and
-carries no lock; the warp configuration itself is the exception and lives in `config_store`.
-Header only.
+| Module | Responsibility |
+| --- | --- |
+| `shell_host.h/.cpp` | `ShellHost : IOfpsHost`, ABI version check/attachment, logging, event delivery and shell-only status |
+| `model_host_ngx.h/.cpp` | `ModelHostNgx : IOfpsModelHost`, model lifetime/calls, readiness, identity codec and diagnostic descriptions |
+| `ngx_params.h/.cpp` and supporting files | Read the NGX block into `OfpsFrameInputs`, write/restore `OfpsModelInputs`, extent checks, float-slot probing and diagnostic tails |
+| `ngx_forwarder_calls.h/.cpp` | Forwarder entry points and native create/evaluate/release calls |
+| `ngx_hook_api.h/.cpp` | Detours installation/polling, hook create/evaluate/release, foreign handles and direct-host bypass |
 
-## `config_store.h/.cpp`
+`ShellHost::OnEvent` connects first-warped to the crash marker, settings changes to
+INI persistence, device removal to shell status, and `FEATURE_RELEASED` to model-host
+cleanup. It never re-enters the core from an event callback. Model hosts remain alive
+until deferred model/GPU work has drained and the release event arrives.
+`ShellStatus::lastNgxResult` retains the native code for the game; the core reports
+its separate `OfpsEvalResult::modelResult`. Logging preserves the existing NGX result
+format, host resource/motion/model fields and first-warped/temporal-ready markers.
 
-The settings: the one validated `pw::ConfigV2` the NGX interposer reads (behind `g_mutex`, because
-the getter `ConfigForNgxHook` is polled from the render thread), and all of the ReShade.ini
-`[PeripheralWarp]` I/O: `Save*ToReShadeIni`, `LoadConfigFromReShadeIni`, `LoadPersistedConfigOnce`
-and `LoadDiagnosticsFromReShadeIni`,
-which reads the read-only `Debug*` keys once at load and hands them to `pw_ngx::SetDiagnostics`.
-Nothing here ever writes a read-only key back. `StoreConfig` validates and stores; *applying* an
-edit is `ApplyConfig` in `layout_bridge`, because an edit may have to go through OptiScaler first.
+## Settings and layout
 
-## `ini_schema.h`
+`addon/addon_context.h` holds `AddonState`, reached through `State()`: module handle,
+overlay-only controls, motion/color adjustments, `TemporalConfig`, schema-backed
+`OfpsSettingsValues` and OptiScaler takeover state. Runtime/overlay state is separate
+from the core's synchronized settings and feature state.
 
-The ini schema without ReShade (stage 27.T): the section name `kIniSection`, `kIniKeys[]` — the
-complete, `static_assert`ed list of the 21 keys the add-on writes — `TemporalModeFromIni` with its
-`static_assert`s (an ini `TemporalMode=2` falls back to 1), the `AddonPersisted` struct with the
-defaults of everything that is persisted, and the `LoadFromStore` / `SaveToStore` pair (plus the
-per-group `Save*ToStore`) that map the keys onto it, including the clamps applied on load
-(`TemporalEvery` 1..8, `TemporalMaxQueue` 0..8, `Brightness` ±20 %, `Gamma` 0.7..1.4; the layout
-itself is not clamped, an invalid one is rejected by `pw::ValidateConfig`). They are templates over a
-*Store* — anything with `GetInt/GetFloat/SetInt/SetFloat` — so `config_store.cpp` binds them to
-`reshade::get_config_value` / `set_config_value` and `tests/test_addon_ini.cpp` binds them to an
-in-memory ini, which is how the add-on's persistence is covered by ctest
-(`peripheral_warp_addon_ini`) without ReShade. Header only.
+`addon/ini_store.h/.cpp` selects `[OptimizerFPS]` or migrates known present keys
+from old-only `[PeripheralWarp]` through ReShade's API. It saves only changed,
+explicit persisted values; read-only diagnostics are never written back.
+`addon/ini_schema.h` and the public core schema provide defaults, ranges and
+conversions. `test_settings_schema` covers selection and migration. The public
+core schema contains 45 setting IDs.
 
-## `crash_guard.h/.cpp`
+`direct_host.h/.cpp` replaces the removed `addon/layout_bridge.h/.cpp`. It probes
+`Local\OptimizerFpsDirectHost_<pid>` and latches direct-host ownership after a signal;
+missing-event lookup is throttled to 250 ms. ReShade then forwards NGX calls untouched
+and displays effective core settings as a read-only "applied by OptiScaler" mirror.
+The core exposes settings, ranges and `OfpsLayoutPreview` to the UI.
 
-The 26.16 crash guard. `CrashGuardInit` runs once from `DllMain` with the directory the add-on was
-loaded from: it reads `CrashGuard`, builds the `optimizer-fps-dlss5.session` marker path, discards a
-marker whose session ran on for more than 20 s past its first warped frame (a killed helper process,
-not our crash) and otherwise puts the session into `pw_ngx::SetSafeMode(true)`. The marker itself is
-written from two threads — `CrashMarkerOnFirstWarped` on the render thread just before the first
-warped evaluate is recorded, and `CrashGuardOnPresent` every 5 s while warping — so a crash inside
-that very first evaluate still leaves a marker. `CrashGuardRetry` is the tab's Retry button;
-`CrashMarkerClear` is the clean unload.
+## Runtime, crash guard and queues
 
-## `layout_bridge.h/.cpp`
+`addon/crash_guard.h/.cpp` owns `optimizer-fps-dlss5.session`, safe mode and retry.
+The first-warped event reaches the guard before GPU warp work is recorded. Existing
+host exit hooks, the 32-bit host watcher and the game-leaving event retain their
+clean-exit behavior; a removed device still leaves the marker. These mechanisms are
+shell responsibilities, not model or frame logic.
 
-The OptiScaler side. `ProbeLayoutBridge` looks for `PeripheralWarpLayoutBridgeV1` in the loaded
-modules for a few hundred presents; `PullLayoutFromBridge` adopts the consumer's layout when its
-generation moves, or — under the takeover, which is the default — keeps forcing OptiScaler's own
-spatial warp Off (`ForceBridgeWarpOff`), retrying every present when the write fails (26.21).
-`ApplyConfig` lives here because it is the one path that has to offer an edited layout to a linked
-consumer before it may be stored and persisted; its refusal flag is `BridgeLayoutRejected()`.
-`SetOptiScalerTakeover` is the tab's checkbox: it persists the choice and hands the layout over in
-whichever direction the new mode needs.
+`addon/queue_events.h/.cpp` collects ReShade queue notifications, registers queues
+through `IOfpsCore` and reports executed command lists. The core owns submission
+serials, descriptor reuse and deferred retirement. `Housekeeping` runs from present;
+queue callbacks do not reach internal GPU structures.
 
-## `remote_host.h/.cpp`
+`addon/addon_main.cpp` is the entry/composition layer: ReShade registration, overlay
+and queue handlers, settings initialization, present work and unload. Existing
+`Passive`, `TraceExit`, debug-layer and remote-overlay behavior stays in the shell.
 
-The 64-bit half of the remote overlay (26.11) and the optical-flow config it edits (26.16). The
-shared block `Local\PeripheralWarpRemoteV1` carries settings one way and status the other, published
-by a generation counter written last; `RemotePublish`, called from present, applies whatever the
-game's 32-bit tab changed (through the same setters and ini writers the local tab uses) and then
-republishes the hook status and the applied settings. A version-1 remote writes only the first 76
-bytes, so the optical-flow fields it never heard of stay zero and are ignored. The optical-flow half
-reads and writes `dlss5-feed-host64.cfg` next to the host exe (`pw_ofa_cfg.h`), which the host
-re-reads while it runs; the tab reaches it through `OfaLoaded()` / `OfaSettings()` / `OfaSave()`.
+## Overlay, remote tab and exports
 
-## `queue_events.h/.cpp`
+`addon/overlay.h/.cpp` and its sections render the current controls, status banner,
+layout preview and diagnostics. They read `OfpsStatus`/status rows and apply
+`OfpsSettingsValues`; labels, ImGui IDs and persisted controls retain their behavior.
 
-The three ReShade device/queue handlers. D3D12 graphics queues are only *noted* while the game
-creates its device and are handed to `pw_ngx::RegisterQueue` from the first present
-(`FlushPendingQueues`, 26.7.4 — Death Stranding DC died in the creation window);
-`execute_command_list` forwards to `pw_ngx::OnCommandListExecuted` so the background temporal pass
-knows when its input copies were submitted.
+`addon/optiscaler_link.h/.cpp` finds a public OptiScaler in the process (product name in the version
+resource), reads its `OptiScaler.ini` (menu key, `SpatialCompression`, `Passes`) and, when it is
+there, draws the settings window beside OptiScaler's menu through `reshade_overlay`.
 
-## `overlay.h/.cpp`
+`addon/remote_host.h/.cpp` publishes core and shell snapshots through
+`Local\OptimizerFpsRemoteV4` and edits the Feeder optical-flow config.
+Remote edits use the same core setters and INI writers as the local tab.
+`hosts/remote32/remote_main.cpp` and the other `hosts/remote32/` modules implement the separate 32-bit
+`peripheral_warp_reshade_remote` target: no frame core, renderer or Detours.
 
-The tab. `DrawOverlayEmbedded` draws it inside ReShade's Add-ons tab (the default since 26.13) and
-`DrawOverlay` into the separate window `FloatingWindow=1` adds; the only difference is that the
-floating one is resized to its content. `DrawOverlayBody` keeps the layout controls (mode, colour
-filter, zone size, zone pad and offsets, work shift, outlines) and the pending-edit rule that
-applies a value on release rather than on every dragged frame; the rest is one function per section
-— `DrawStatusBanner`, `DrawOutputColour`, `DrawTemporal`, `DrawOfa`, `DrawDiagnostics` — plus the
-drawing helpers `ZoneAxisRectangles`, `ControlWidthFor`, `ResetIconButton` and `DrawZonePad`. The
-split is a pure extraction: ImGui hashes widget IDs and its saved window state from the label
-strings and the ID stack, so the sequence of calls, the labels and the `PushID` scopes are exactly
-what they were.
+`addon/exports.cpp` retains `PeripheralWarpSetLayoutV1` and
+`PeripheralWarpSetTemporalV1` for bench and compatibility consumers, and adds
+`OptimizerFpsSetSettingV1` for one schema setting. `NAME` remains unversioned
+because ReShade uses it in its disabled-add-on list.
 
-## `exports.cpp`
-
-`PeripheralWarpSetLayoutV1` and `PeripheralWarpSetTemporalV1`, the two C exports the bench harness
-(and a consumer add-on) drive the add-on with. Resolved by `GetProcAddress`, so they are declared in
-no header; both must be called from the thread that presents.
-
-## `addon_main.cpp`
-
-The entry point. The `NAME` / `DESCRIPTION` exports (`NAME` carries no version, because ReShade
-keys its DisabledAddons list on it), the overlay-visibility event
-`Local\DLSS5_ReShadeOverlay_<pid>` that tells the JFO presenter when ReShade's overlay is open, the
-`reshade_present` handler that drives everything above once a frame, the 26.7.4 exit trace
-(`TraceExit=1`) and `DllMain` — which registers the add-on, the D3D12 debug layer, the diagnostics,
-the crash guard, the events and the two overlays, and honours `Passive=1` by registering nothing at
-all.
-
-## Not in this folder
-
-`adapters/reshade/producer_remote.cpp` is the 32-bit remote tab, a separate target
-(`peripheral_warp_reshade_remote`) that shares nothing with the add-on but `pw_remote_ipc.h` — no
-SDK core, no renderer, no Detours. It stays where it is.
+For frame protocol, resource states and retirement details, see
+[NGX_MODULES.md](NGX_MODULES.md). For public contracts, see [API.md](../API.md).

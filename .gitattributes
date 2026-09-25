@@ -2,6 +2,8 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
 *.dxbc binary
 *.spv binary
 *.addon32 binary
@@ -11,3 +13,4 @@
 docs/dev/CHANGELOG_HISTORY.md export-ignore
 docs/dev/CLEANUP_26_26.md export-ignore
 docs/dev/ENV_FLAGS_DISPOSITION.md export-ignore
+docs/superpowers/** export-ignore

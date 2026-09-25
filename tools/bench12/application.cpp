@@ -105,14 +105,15 @@ int RunApplication(int argc, char **argv)
     device.Wait(); device.PrintMessages(); device.ReportTimings();
     std::printf("[info] cpu animation: avg %.3f ms, blas refit %.3f ms\n",
         frame ? animationMilliseconds/frame : 0,frame ? blasMilliseconds/frame : 0);
-    const bool ngxUsed=o.upscaler!="none";
+    const bool ngxUsed=o.upscaler!="none" || o.nr!="off";
     trace.Shutdown(device);
     std::printf("[info] bench finished after %d frames, device ok\n",frame);
     if(ngxUsed) {
         // Driver 616.92: after Ray Reconstruction has run, the process dies with an access violation
         // during ordinary teardown, after NGX release/destroy/Shutdown1 have all returned success
         // (a driver worker outlives them). Everything is saved and flushed by now, so leave without
-        // running the remaining destructors.
+        // running the remaining destructors. The directly hosted NR runtime is never shut down either
+        // (its feature is released, the DLL stays loaded), so it takes the same exit.
         std::fflush(stdout); std::fflush(stderr);
         TerminateProcess(GetCurrentProcess(),0);
     }

@@ -74,7 +74,7 @@ ctest --test-dir out/build/x64 -C Release --output-on-failure
 
 ## Bench
 
-Runtime: `C:/Users/Beliy/AppData/Local/Temp/claude/W--AI-Proj-GPT-26-Mods/01878e3f-e392-4324-997e-4864aad55d25/scratchpad/bench_run`.
+Runtime: a local bench run folder (see `tools/bench/BASELINE.md`).
 Цепочка D3D11 → bridge → renodx → add-on. Procedural scene, 3840×2160, Peripheral 80/90,
 модель 3456×1944, `--fps-cap 60`. Дампы 200–219; логи сохранены внутри папок прогонов.
 

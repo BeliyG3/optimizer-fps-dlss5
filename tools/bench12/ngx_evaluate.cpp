@@ -7,6 +7,7 @@ void Ngx::Evaluate(Device &d, NgxFrame &f)
         Transition(d.list.Get(),f.inputs[i],D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     if(evaluated) Transition(d.list.Get(),output.Get(),D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     f.output=output.Get(); AuditNgxParameters(!evaluated);
+    stateSentinel.Before(d);
     NVSDK_NGX_Result result;
     if(rr) {
         auto p=RrEvaluate(f);
@@ -21,6 +22,7 @@ void Ngx::Evaluate(Device &d, NgxFrame &f)
         result=NGX_D3D12_EVALUATE_DLSS_EXT(d.list.Get(),feature,parameters,&p);
     }
     AuditNgxParameters(false); CheckNgx(result,rr ? "DLSS RR evaluate" : "DLSS SR evaluate");
+    stateSentinel.After(d);
     for(unsigned i=0;i<count;++i)
         Transition(d.list.Get(),f.inputs[i],D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Transition(d.list.Get(),output.Get(),D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);

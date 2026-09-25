@@ -24,6 +24,7 @@
 param(
     [string] $PsExe,
     [string] $Payload,
+    [string] $Zip,
     [string] $BenchDir = $env:PW_BENCH_RUN,
     [string] $ReShade64,
     [string] $ReShade32,
@@ -54,158 +55,41 @@ if (-not $ReShade32)  {
     if ($hit.Count -gt 0) { $ReShade32 = $hit[0].FullName }
 }
 
-$cmd64 = Join-Path $env:WINDIR 'System32\cmd.exe'
-$cmd32 = Join-Path $env:WINDIR 'SysWOW64\cmd.exe'
-
-$root = Join-Path ([IO.Path]::GetTempPath()) ('optimizerfps-tests-' + (Get-Date).ToString('yyyyMMdd-HHmmss'))
+$root = Join-Path ([IO.Path]::GetTempPath()) ('optimizerfps-tests-' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root -Force
+$requireIntegration = $PSBoundParameters.ContainsKey('ReShade64') -or
+    $PSBoundParameters.ContainsKey('ReShade32') -or $PSBoundParameters.ContainsKey('BenchDir')
 
-$script:Pass = 0
-$script:Fail = 0
-$script:Skip = 0
-$script:Rows = New-Object System.Collections.ArrayList
-
-function Say { param([string] $T, [string] $C = 'Gray') Write-Host $T -ForegroundColor $C }
-
-function Check
-{
-    param([string] $Name, [bool] $Ok, [string] $Detail)
-    if ($Ok) { $script:Pass++; Say ('  [PASS] ' + $Name) 'Green' }
-    else     { $script:Fail++; Say ('  [FAIL] ' + $Name) 'Red'; if ($Detail) { Say ('         ' + $Detail) 'DarkGray' } }
-    $null = $script:Rows.Add([pscustomobject]@{ Test = $Name; Result = $(if ($Ok) { 'PASS' } else { 'FAIL' }); Detail = $Detail })
+$testContext = @{
+    PsExe = $PsExe
+    Installer = $installer
+    Verifier = $verifier
+    Pass = 0
+    Fail = 0
+    Skip = 0
+    Rows = (New-Object System.Collections.ArrayList)
+    Root = $root
+    Payload = $Payload
+    OldAddon64 = $OldAddon64
+    ReShade64 = $ReShade64
 }
+. (Join-Path $PSScriptRoot 'Fixtures.ps1')
+. (Join-Path $PSScriptRoot 'Assertions.ps1') -Context $testContext
 
-function Skip
-{
-    param([string] $Name, [string] $Why)
-    $script:Skip++
-    Say ('  [SKIP] ' + $Name + ' -- ' + $Why) 'Yellow'
-    $null = $script:Rows.Add([pscustomobject]@{ Test = $Name; Result = 'SKIP'; Detail = $Why })
-}
-
-function Invoke-Installer
-{
-    param([string[]] $Arguments)
-    $all = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer) + $Arguments
-    $out = & $PsExe @all 2>&1 | Out-String
-    $code = $LASTEXITCODE
-    if ($null -eq $code) { $code = 0 }
-    return [pscustomobject]@{ Code = $code; Out = $out }
-}
-
-function Invoke-Verifier
-{
-    param([string[]] $Arguments)
-    $all = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $verifier) + $Arguments
-    $out = & $PsExe @all 2>&1 | Out-String
-    $code = $LASTEXITCODE
-    if ($null -eq $code) { $code = 0 }
-    return [pscustomobject]@{ Code = $code; Out = $out }
-}
-
-# A hash list of a folder, so "the uninstall put it back exactly" is a real assertion.
-function Get-TreeSnapshot
-{
-    param([string] $Root, [string[]] $Exclude = @())
-    $prefix = (Resolve-Path -LiteralPath $Root).ProviderPath
-    if (-not $prefix.EndsWith('\')) { $prefix += '\' }
-    $lines = New-Object System.Collections.ArrayList
-    foreach ($f in @(Get-ChildItem -LiteralPath $Root -File -Recurse -Force -ErrorAction SilentlyContinue)) {
-        $rel = $f.FullName.Substring($prefix.Length).Replace('\', '/')
-        $skip = $false
-        foreach ($x in $Exclude) { if ($rel -like $x) { $skip = $true; break } }
-        if ($skip) { continue }
-        $null = $lines.Add($rel.ToLowerInvariant() + '  ' + (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash)
-    }
-    return (@($lines.ToArray() | Sort-Object) -join "`n")
-}
-
-$MinimalIni = @'
-[ADDON]
-DisabledAddons=
-
-[GENERAL]
-EffectSearchPaths=.\
-
-'@
-
-function New-X64Fixture
-{
-    param([string] $Name, [string] $IniText)
-    $dir = Join-Path $root $Name
-    $null = New-Item -ItemType Directory -Path $dir -Force
-    Copy-Item -LiteralPath $cmd64 -Destination (Join-Path $dir 'pwgame.exe') -Force
-    Copy-Item -LiteralPath $ReShade64 -Destination (Join-Path $dir 'dxgi.dll') -Force
-    $t = $IniText
-    if (-not $t) { $t = $MinimalIni }
-    [IO.File]::WriteAllText((Join-Path $dir 'ReShade.ini'), ($t -replace "`r`n", "`n" -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding($false)))
-    return $dir
-}
-
-function New-X86Fixture
-{
-    param([string] $Name)
-    $dir = Join-Path $root $Name
-    $null = New-Item -ItemType Directory -Path $dir -Force
-    Copy-Item -LiteralPath $cmd32 -Destination (Join-Path $dir 'game.exe') -Force
-    Copy-Item -LiteralPath $ReShade32 -Destination (Join-Path $dir 'dxgi.dll') -Force
-    [IO.File]::WriteAllText((Join-Path $dir 'ReShade.ini'), ($MinimalIni -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding($false)))
-    # A Feeder install: the 32-bit side has the feeder add-on, the 64-bit host has ReShade.
-    [IO.File]::WriteAllText((Join-Path $dir 'dlss5-feed.addon32'), 'stub', (New-Object Text.UTF8Encoding($false)))
-    $h = Join-Path $dir 'host64'
-    $null = New-Item -ItemType Directory -Path $h -Force
-    Copy-Item -LiteralPath $cmd64 -Destination (Join-Path $h 'dlss5-feed-host64.exe') -Force
-    Copy-Item -LiteralPath $ReShade64 -Destination (Join-Path $h 'dxgi.dll') -Force
-    [IO.File]::WriteAllText((Join-Path $h 'ReShade.ini'), ($MinimalIni -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding($false)))
-    return $dir
-}
-
-function Get-PayloadShaderNames
-{
-    $names = @()
-    $mf = Join-Path $Payload 'files.sha256'
-    foreach ($l in ([IO.File]::ReadAllText($mf) -split "`r?`n")) {
-        $m = [regex]::Match($l.Trim(), '^[0-9a-f]{64}\s+x64/optimizer-fps-dlss5/(.+\.dxbc)$')
-        if ($m.Success) { $names += $m.Groups[1].Value }
-    }
-    return $names
-}
-
-# A copy of the payload with VERSION.txt written by hand, or with no VERSION.txt at all.
-# files.sha256 covers VERSION.txt too, so the manifest line has to be rewritten or dropped
-# along with the file: otherwise the installer refuses the whole payload as corrupt and
-# never gets as far as reading a version.
-function New-PayloadWithVersion
-{
-    param([string] $Name, [byte[]] $Bytes, [switch] $Drop)
-    $dir = Join-Path $root $Name
-    Copy-Item -LiteralPath $Payload -Destination $dir -Recurse -Force
-    $versionFile = Join-Path $dir 'VERSION.txt'
-    $manifest = Join-Path $dir 'files.sha256'
-    $lines = New-Object System.Collections.ArrayList
-    foreach ($l in ([IO.File]::ReadAllText($manifest) -split "`r?`n")) {
-        if ($l.Trim() -and $l -notmatch '(?i)\s+VERSION\.txt\s*$') { $null = $lines.Add($l) }
-    }
-    if ($Drop) {
-        Remove-Item -LiteralPath $versionFile -Force
-    }
+function Complete-Tests {
+    Say ''
+    Say ('Results: ' + $testContext.Pass + ' passed, ' + $testContext.Fail + ' failed, ' + $testContext.Skip + ' skipped.') 'White'
+    $testContext.Rows | Where-Object { $_.Result -ne 'PASS' } | Format-Table -AutoSize | Out-String | Write-Host
+    if ($Keep) { Say ('Sandbox kept: ' + $root) 'DarkGray' }
     else {
-        [IO.File]::WriteAllBytes($versionFile, $Bytes)
-        $hash = (Get-FileHash -LiteralPath $versionFile -Algorithm SHA256).Hash.ToLowerInvariant()
-        $null = $lines.Insert(0, ($hash + '  VERSION.txt'))
+        $tempPath = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $fullRoot = [IO.Path]::GetFullPath($root)
+        if (-not $fullRoot.StartsWith($tempPath + 'optimizerfps-tests-',
+                [StringComparison]::OrdinalIgnoreCase)) { throw 'Test root escapes the temporary directory.' }
+        Remove-Item -LiteralPath $fullRoot -Recurse -Force
     }
-    [IO.File]::WriteAllText($manifest, ((@($lines.ToArray()) -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
-    return $dir
-}
-
-# A wrong version usually differs from the right one by a character nobody can see, so the
-# failure detail spells the string out code point by code point rather than just printing it.
-function Format-VersionDetail
-{
-    param([string] $Text)
-    $s = [string] $Text
-    if (-not $s) { return '<empty>' }
-    return ('<' + $s + '> [' + ((@($s.ToCharArray() | ForEach-Object { '{0:x4}' -f [int]$_ })) -join ' ') + ']')
+    if ($testContext.Fail -gt 0 -or ($requireIntegration -and $testContext.Skip -gt 0)) { exit 1 }
+    exit 0
 }
 
 # ---------------------------------------------------------------------------------------
@@ -235,13 +119,23 @@ if (-not $ReShade64 -or -not (Test-Path -LiteralPath $ReShade64)) {
         'payload\VERSION.txt reaches the receipt')) {
         Skip $s 'no 64-bit ReShade fixture: pass -BenchDir <folder with dxgi.dll>, or set %PW_BENCH_RUN%'
     }
-    Say ''
-    Say ('Results: ' + $script:Pass + ' passed, ' + $script:Fail + ' failed, ' + $script:Skip + ' skipped.') 'White'
-    if (-not $Keep) { try { Remove-Item -LiteralPath $root -Recurse -Force } catch { } }
-    exit 0
+    . (Join-Path $PSScriptRoot 'Migration.Tests.ps1') -RepoRoot $repoRoot -Root $root -Payload $Payload
+    . (Join-Path $PSScriptRoot 'Lint.Tests.ps1') -RepoRoot $repoRoot -Root $root
+    if (-not $Zip) {
+        $stage = Split-Path -Parent $Payload
+        $Zip = Join-Path (Split-Path -Parent $stage) ((Split-Path -Leaf $stage) + '.zip')
+    }
+    if (Test-Path -LiteralPath $Zip -PathType Leaf) {
+        . (Join-Path $PSScriptRoot 'Package.Tests.ps1') -RepoRoot $repoRoot -Root $root -Zip $Zip
+    }
+    else { Skip 'package tests' ('release zip unavailable: ' + $Zip) }
+    Complete-Tests
 }
 
-$shaderNames = Get-PayloadShaderNames
+$shaderNames = Get-PayloadShaderNames -Payload $Payload
+$corePayload = Join-Path $Payload 'x64\optimizer-fps-dlss5-core.dll'
+$hasCorePayload = Test-Path -LiteralPath $corePayload -PathType Leaf
+$expectedX64Files = $shaderNames.Count + 2 + [int]$hasCorePayload
 Say ('Shaders:  ' + $shaderNames.Count) 'DarkGray'
 
 # --- 1. x64 fresh install ---------------------------------------------------------------
@@ -249,7 +143,7 @@ Say ('Shaders:  ' + $shaderNames.Count) 'DarkGray'
 Say ''
 Say '== 1. x64 fresh install' 'Cyan'
 
-$g1 = New-X64Fixture -Name 'x64-fresh'
+$g1 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-fresh'
 $before1 = Get-TreeSnapshot -Root $g1
 $exe1 = Join-Path $g1 'pwgame.exe'
 
@@ -262,12 +156,22 @@ Check ('all ' + $shaderNames.Count + ' shaders installed') ($got -eq $shaderName
 Check 'latest-receipt.json written' (Test-Path -LiteralPath (Join-Path $g1 '_OptimizerFPS\latest-receipt.json'))
 
 $ini1 = [IO.File]::ReadAllText((Join-Path $g1 'ReShade.ini'))
-Check '[PeripheralWarp] Mode=2 written' ($ini1 -match '(?m)^\[PeripheralWarp\]' -and $ini1 -match '(?m)^Mode=2\r?$')
+Check '[OptimizerFPS] Mode=2 written' ($ini1 -match '(?m)^\[OptimizerFPS\]' -and $ini1 -match '(?m)^Mode=2\r?$')
 Check 'CenterX/CenterY=80, WorkX/WorkY=90 written' ($ini1 -match '(?m)^CenterX=80\r?$' -and $ini1 -match '(?m)^CenterY=80\r?$' -and $ini1 -match '(?m)^WorkX=90\r?$' -and $ini1 -match '(?m)^WorkY=90\r?$')
 
 $receipt1 = (Get-Content -LiteralPath (Join-Path $g1 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
-Check 'receipt Schema 2' ([int]$receipt1.Schema -eq 2)
-Check 'receipt lists every installed file' (@($receipt1.Files).Count -eq ($shaderNames.Count + 2)) ('files: ' + @($receipt1.Files).Count)
+Check 'receipt Schema 3' ([int]$receipt1.Schema -eq 3)
+Check 'receipt core ABI and version' ([int]$receipt1.Core.Abi -eq 1 -and
+    [string]$receipt1.Core.FileVersion -eq [string]$receipt1.Version)
+Check 'receipt lists every installed file' (@($receipt1.Files).Count -eq $expectedX64Files) ('files: ' + @($receipt1.Files).Count)
+if ($hasCorePayload) {
+    $installedCore = Join-Path $g1 'optimizer-fps-dlss5-core.dll'
+    Check 'core DLL installed unchanged' ((Test-Path -LiteralPath $installedCore) -and
+        (Get-FileHash -LiteralPath $installedCore).Hash -eq (Get-FileHash -LiteralPath $corePayload).Hash)
+    Check 'receipt records the core DLL' (@($receipt1.Files | Where-Object {
+        [IO.Path]::GetFileName([string]$_.Path) -eq 'optimizer-fps-dlss5-core.dll'
+    }).Count -eq 1)
+}
 
 # --- 2. Verify --------------------------------------------------------------------------
 
@@ -295,6 +199,12 @@ Check 'update exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
 Check 'update reports the files as up to date' ($r.Out -match 'already up to date') $r.Out
 $iniHashAfter = (Get-FileHash -LiteralPath (Join-Path $g1 'ReShade.ini') -Algorithm SHA256).Hash
 Check 'update left ReShade.ini byte-identical' ($iniHashBefore -eq $iniHashAfter)
+$r = Invoke-Installer @('-GameExe', $exe1, '-Payload', $Payload, '-Mode', 'Update', '-Yes', '-NoPause', '-NoVerify', '-NoIni')
+Check '-NoIni Update exits 0' ($r.Code -eq 0) ('exit ' + $r.Code + "`n" + $r.Out)
+Check '-NoIni Update leaves ini byte-identical' `
+    ($iniHashAfter -eq (Get-FileHash -LiteralPath (Join-Path $g1 'ReShade.ini') -Algorithm SHA256).Hash)
+$noIniReceipt = (Get-Content -LiteralPath (Join-Path $g1 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
+Check '-NoIni Update keeps prior ini ownership' (@($noIniReceipt.IniKeysWritten).Count -eq 5)
 
 # --- 4. Uninstall -----------------------------------------------------------------------
 
@@ -311,12 +221,12 @@ Check 'the backup folder is kept' ((@(Get-ChildItem -LiteralPath (Join-Path $g1 
 Say ''
 Say '== 5. Adoption of an existing manual install' 'Cyan'
 
-if (-not (Test-Path -LiteralPath $OldAddon64)) {
+if (-not $OldAddon64 -or -not (Test-Path -LiteralPath $OldAddon64)) {
     Skip 'adoption of a manual install' ('older add-on build not found: ' + $OldAddon64)
 }
 else {
     $iniOld = $MinimalIni -replace 'DisabledAddons=', 'DisabledAddons=Optimizer FPS for DLSS5 26.15'
-    $g2 = New-X64Fixture -Name 'x64-manual' -IniText $iniOld
+    $g2 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-manual' -IniText $iniOld
     $exe2 = Join-Path $g2 'pwgame.exe'
 
     Copy-Item -LiteralPath $OldAddon64 -Destination (Join-Path $g2 'optimizer-fps-dlss5.addon64') -Force
@@ -374,18 +284,21 @@ elseif (-not (Test-Path -LiteralPath $cmd32)) {
     Skip '32-bit install' 'SysWOW64\cmd.exe not found'
 }
 else {
-    $g3 = New-X86Fixture -Name 'x86-host64'
+    $g3 = New-X86Fixture -Root $root -ReShade64 $ReShade64 -ReShade32 $ReShade32 -Name 'x86-host64'
     $exe3 = Join-Path $g3 'game.exe'
     $r = Invoke-Installer @('-GameExe', $exe3, '-Payload', $Payload, '-Yes', '-NoPause')
     Check 'x86 install exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
     Check 'the add-on went into host64' (Test-Path -LiteralPath (Join-Path $g3 'host64\optimizer-fps-dlss5.addon64'))
     Check 'the forwarder went into host64' (Test-Path -LiteralPath (Join-Path $g3 'host64\nvngx.dll_optimizerfps.dll'))
+    if ($hasCorePayload) {
+        Check 'the core DLL went into host64' (Test-Path -LiteralPath (Join-Path $g3 'host64\optimizer-fps-dlss5-core.dll'))
+    }
     $got3 = @(Get-ChildItem -LiteralPath (Join-Path $g3 'host64\optimizer-fps-dlss5') -File -Filter '*.dxbc' -ErrorAction SilentlyContinue).Count
     Check 'the shaders went into host64' ($got3 -eq $shaderNames.Count) ('found ' + $got3)
     Check 'the remote tab went beside the 32-bit ReShade' (Test-Path -LiteralPath (Join-Path $g3 'optimizer-fps-dlss5-remote.addon32'))
     Check 'nothing of the x64 payload landed beside the game' (-not (Test-Path -LiteralPath (Join-Path $g3 'optimizer-fps-dlss5.addon64')))
     $ini3 = [IO.File]::ReadAllText((Join-Path $g3 'host64\ReShade.ini'))
-    Check 'host64 ReShade.ini got [PeripheralWarp]' ($ini3 -match '(?m)^\[PeripheralWarp\]')
+    Check 'host64 ReShade.ini got [OptimizerFPS]' ($ini3 -match '(?m)^\[OptimizerFPS\]')
 
     # --- 7. the game is running --------------------------------------------------------
     Say ''
@@ -400,13 +313,28 @@ else {
     finally {
         if ($proc) { try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { } }
     }
+    # Same file name, another folder: another game's Feed host, a second copy of the game - not ours.
+    $other = Join-Path $root 'elsewhere'
+    New-Item -ItemType Directory -Force -Path $other | Out-Null
+    $otherExe = Join-Path $other (Split-Path -Leaf $exe3)
+    Copy-Item -LiteralPath $exe3 -Destination $otherExe -Force
+    $proc = $null
+    try {
+        $proc = Start-Process -FilePath $otherExe -ArgumentList '/c', 'ping', '127.0.0.1', '-n', '30' -WindowStyle Hidden -PassThru
+        Start-Sleep -Milliseconds 700
+        $r = Invoke-Installer @('-GameExe', $exe3, '-Payload', $Payload, '-Yes', '-NoPause')
+        Check 'a same-named process in another folder does not block (not exit 2)' ($r.Code -ne 2) ('exit ' + $r.Code + "`n" + $r.Out)
+    }
+    finally {
+        if ($proc) { try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { } }
+    }
 }
 
 # --- 8. corrupt payload -----------------------------------------------------------------
 
 Say ''
 Say '== 8. corrupt payload' 'Cyan'
-$g4 = New-X64Fixture -Name 'x64-badpayload'
+$g4 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-badpayload'
 $exe4 = Join-Path $g4 'pwgame.exe'
 $badPayload = Join-Path $root 'payload-corrupt'
 Copy-Item -LiteralPath $Payload -Destination $badPayload -Recurse -Force
@@ -429,7 +357,7 @@ Check 'no ReShade exits 3' ($r.Code -eq 3) ('exit ' + $r.Code + "`n" + $r.Out)
 
 Say ''
 Say '== 10. a foreign file carrying one of our names' 'Cyan'
-$g6 = New-X64Fixture -Name 'x64-foreign'
+$g6 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-foreign'
 $exe6 = Join-Path $g6 'pwgame.exe'
 [IO.File]::WriteAllText((Join-Path $g6 'optimizer-fps-dlss5.addon64'), 'not ours at all', (New-Object Text.UTF8Encoding($false)))
 $r = Invoke-Installer @('-GameExe', $exe6, '-Payload', $Payload, '-Yes', '-NoPause')
@@ -445,7 +373,7 @@ Check '-Force backed the foreign file up as an original' ($origs.Count -ge 1)
 
 Say ''
 Say '== 11. -NoIni' 'Cyan'
-$g7 = New-X64Fixture -Name 'x64-noini'
+$g7 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-noini'
 $exe7 = Join-Path $g7 'pwgame.exe'
 $h7 = (Get-FileHash -LiteralPath (Join-Path $g7 'ReShade.ini') -Algorithm SHA256).Hash
 $r = Invoke-Installer @('-GameExe', $exe7, '-Payload', $Payload, '-Yes', '-NoPause', '-NoIni')
@@ -456,14 +384,14 @@ Check '-NoIni left ReShade.ini untouched' ($h7 -eq (Get-FileHash -LiteralPath (J
 
 Say ''
 Say '== 12. -Json' 'Cyan'
-$g8 = New-X64Fixture -Name 'x64-json'
+$g8 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-json'
 $exe8 = Join-Path $g8 'pwgame.exe'
 $r = Invoke-Installer @('-GameExe', $exe8, '-Payload', $Payload, '-Yes', '-NoPause', '-Json')
 $ij = $null
 try { $ij = $r.Out | ConvertFrom-Json } catch { }
 Check 'install -Json is parseable JSON' ($null -ne $ij) $r.Out
 if ($ij) {
-    Check 'install JSON: exit code, arch and file list' ([int]$ij.ExitCode -eq 10 -and [string]$ij.Arch -eq 'x64' -and @($ij.Files).Count -eq ($shaderNames.Count + 2))
+    Check 'install JSON: exit code, arch and file list' ([int]$ij.ExitCode -eq 10 -and [string]$ij.Arch -eq 'x64' -and @($ij.Files).Count -eq $expectedX64Files)
     Check 'install JSON: 5 ini keys written' (@($ij.IniKeysWritten).Count -eq 5) ('keys: ' + @($ij.IniKeysWritten).Count)
 }
 
@@ -471,7 +399,7 @@ if ($ij) {
 
 Say ''
 Say '== 13. nothing to uninstall' 'Cyan'
-$g9 = New-X64Fixture -Name 'x64-empty'
+$g9 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-empty'
 $r = Invoke-Installer @('-GameExe', (Join-Path $g9 'pwgame.exe'), '-Mode', 'Uninstall', '-Yes', '-NoPause')
 Check 'nothing to uninstall exits 7' ($r.Code -eq 7) ('exit ' + $r.Code + "`n" + $r.Out)
 
@@ -481,7 +409,7 @@ Say ''
 Say '== 14. Verify reads a real ReShade.log' 'Cyan'
 # Captured ReShade.log lines, kept as fixtures: the live bench log is rewritten by every run.
 $fixtures = Join-Path $PSScriptRoot 'fixtures'
-$g10 = New-X64Fixture -Name 'x64-log'
+$g10 = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-log'
 $exe10 = Join-Path $g10 'pwgame.exe'
 $null = Invoke-Installer @('-GameExe', $exe10, '-Payload', $Payload, '-Yes', '-NoPause', '-NoVerify')
 
@@ -492,6 +420,7 @@ foreach ($case in @(
     $src = Join-Path $fixtures $case.File
     if (-not (Test-Path -LiteralPath $src)) { Skip ('runtime verdicts (' + $case.Label + ')') ('fixture missing: ' + $src); continue }
     Copy-Item -LiteralPath $src -Destination (Join-Path $g10 'ReShade.log') -Force
+    Add-Content -LiteralPath (Join-Path $g10 'ReShade.log') -Value 'Optimizer FPS: core loaded; ABI 1; release 2026.9.1'
     (Get-Item -LiteralPath (Join-Path $g10 'ReShade.log')).LastWriteTimeUtc = (Get-Date).ToUniversalTime()
 
     $r = Invoke-Verifier @('-GameExe', $exe10, '-Json')
@@ -521,150 +450,23 @@ $vj3 = $null
 try { $vj3 = $r.Out | ConvertFrom-Json } catch { }
 Check 'a log older than the install is treated as stale' ($null -ne $vj3 -and [bool]$vj3.Runtime.LogStale -and [int]$vj3.ExitCode -eq 10) ('exit ' + $r.Code)
 
-# --- 15. Uninstall never overwrites a file the user changed ------------------------------
+$testContext.VerifyGame = $g10
+$testContext.VerifyExe = $exe10
 
-Say ''
-Say '== 15. Uninstall and a file changed after the install' 'Cyan'
-
-# -Force backs the foreign file up as an original, so this covers both halves of the bug:
-# a changed file must be kept, and the backed-up original must not land on top of it.
-$g11    = New-X64Fixture -Name 'x64-changed'
-$exe11  = Join-Path $g11 'pwgame.exe'
-$addon11 = Join-Path $g11 'optimizer-fps-dlss5.addon64'
-[IO.File]::WriteAllText($addon11, 'not ours at all', (New-Object Text.UTF8Encoding($false)))
-$null = Invoke-Installer @('-GameExe', $exe11, '-Payload', $Payload, '-Yes', '-NoPause', '-NoVerify', '-Force')
-$installed11 = [IO.File]::ReadAllBytes($addon11)
-[IO.File]::WriteAllBytes($addon11, ($installed11 + [byte[]] @(42)))
-$r = Invoke-Installer @('-GameExe', $exe11, '-Mode', 'Uninstall', '-Yes', '-NoPause')
-$now11 = $null
-if (Test-Path -LiteralPath $addon11) { $now11 = [IO.File]::ReadAllBytes($addon11) }
-Check 'a file changed after the install is kept, and no original is restored over it' `
-    ($null -ne $now11 -and $now11.Length -eq ($installed11.Length + 1) -and $now11[$now11.Length - 1] -eq 42) `
-    ('exit ' + $r.Code + '; size ' + $(if ($null -eq $now11) { 'deleted' } else { $now11.Length }) + ' vs ' + ($installed11.Length + 1) + "`n" + $r.Out)
-
-$g12   = New-X64Fixture -Name 'x64-unchanged'
-$exe12 = Join-Path $g12 'pwgame.exe'
-$null = Invoke-Installer @('-GameExe', $exe12, '-Payload', $Payload, '-Yes', '-NoPause', '-NoVerify')
-$r = Invoke-Installer @('-GameExe', $exe12, '-Mode', 'Uninstall', '-Yes', '-NoPause')
-Check 'an untouched install is still uninstalled completely' `
-    ($r.Code -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $g12 'optimizer-fps-dlss5.addon64')) -and
-     -not (Test-Path -LiteralPath (Join-Path $g12 'optimizer-fps-dlss5'))) ('exit ' + $r.Code + "`n" + $r.Out)
-
-# --- 16. An install left over from a release before the rename ---------------------------
-
-Say ''
-Say '== 16. Files from a pre-26.26 release are replaced by the new names' 'Cyan'
-
-if (-not (Test-Path -LiteralPath $OldAddon64)) {
-    Skip 'files from a pre-26.26 release' ('older add-on build not found: ' + $OldAddon64)
+$testContext.ShaderNames = $shaderNames
+. (Join-Path $PSScriptRoot 'Migration.Tests.ps1') -RepoRoot $repoRoot -Root $root -Payload $Payload -ReShade64 $ReShade64 -ReShade32 $ReShade32
+. (Join-Path $PSScriptRoot 'Core.Tests.ps1') -RepoRoot $repoRoot -Root $root -Payload $Payload -ReShade64 $ReShade64
+. (Join-Path $PSScriptRoot 'MigrationX86.Tests.ps1') -RepoRoot $repoRoot -Root $root -Payload $Payload -ReShade64 $ReShade64 -ReShade32 $ReShade32
+. (Join-Path $PSScriptRoot 'Regression.Tests.ps1') -Context $testContext
+. (Join-Path $PSScriptRoot 'Lint.Tests.ps1') -RepoRoot $repoRoot -Root $root
+if (-not $Zip) {
+    $stage = Split-Path -Parent $Payload
+    $Zip = Join-Path (Split-Path -Parent $stage) ((Split-Path -Leaf $stage) + '.zip')
+}
+if (-not (Test-Path -LiteralPath $Zip -PathType Leaf)) {
+    Check 'release zip is available for package tests' $false $Zip
 }
 else {
-    $g13   = New-X64Fixture -Name 'x64-legacy'
-    $exe13 = Join-Path $g13 'pwgame.exe'
-
-    $oldAddon     = Join-Path $g13 'peripheral-warp.addon64'
-    $oldForwarder = Join-Path $g13 'nvngx.dll_peripheralwarp.dll'
-    $oldShaderDir = Join-Path $g13 'peripheral-warp'
-    $oldMarker    = Join-Path $g13 'peripheral-warp.session'
-
-    Copy-Item -LiteralPath $OldAddon64 -Destination $oldAddon -Force
-    Copy-Item -LiteralPath (Join-Path $Payload 'x64\nvngx.dll_optimizerfps.dll') -Destination $oldForwarder -Force
-    $null = New-Item -ItemType Directory -Path $oldShaderDir -Force
-    [IO.File]::WriteAllBytes((Join-Path $oldShaderDir 'pack_ps.dxbc'), [byte[]] @(1, 2, 3, 4))
-    [IO.File]::WriteAllText($oldMarker, 'stale marker', (New-Object Text.UTF8Encoding($false)))
-
-    $r = Invoke-Installer @('-GameExe', $exe13, '-Payload', $Payload, '-Mode', 'Update', '-Yes', '-NoPause')
-    Check 'update over a pre-26.26 install exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
-    Check 'the new add-on is there' (Test-Path -LiteralPath (Join-Path $g13 'optimizer-fps-dlss5.addon64'))
-    Check 'the new forwarder is there' (Test-Path -LiteralPath (Join-Path $g13 'nvngx.dll_optimizerfps.dll'))
-    $got13 = @(Get-ChildItem -LiteralPath (Join-Path $g13 'optimizer-fps-dlss5') -File -Filter '*.dxbc' -ErrorAction SilentlyContinue).Count
-    Check 'the shaders went into optimizer-fps-dlss5\' ($got13 -eq $shaderNames.Count) ('found ' + $got13)
-    Check 'the old add-on is gone' (-not (Test-Path -LiteralPath $oldAddon))
-    Check 'the old forwarder is gone' (-not (Test-Path -LiteralPath $oldForwarder))
-    Check 'the old shader folder is gone' (-not (Test-Path -LiteralPath $oldShaderDir))
-    Check 'the old crash-guard marker is gone' (-not (Test-Path -LiteralPath $oldMarker))
-
-    $receipt13 = (Get-Content -LiteralPath (Join-Path $g13 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
-    $legacyList = @()
-    if ($receipt13.PSObject.Properties['RemovedLegacyFiles']) { $legacyList = @($receipt13.RemovedLegacyFiles) }
-    Check 'the receipt lists the removed legacy files' ($legacyList.Count -eq 4) ('listed: ' + $legacyList.Count)
-    $backedUp = @(Get-ChildItem -LiteralPath (Join-Path $g13 '_OptimizerFPS') -Recurse -File -Filter 'peripheral-warp.addon64' -ErrorAction SilentlyContinue |
-                  Where-Object { $_.FullName -match '(?i)\\legacy\\' })
-    Check 'the old add-on was backed up before it was deleted' ($backedUp.Count -ge 1)
-
-    $r = Invoke-Verifier @('-GameExe', $exe13, '-Json')
-    $vj13 = $null
-    try { $vj13 = $r.Out | ConvertFrom-Json } catch { }
-    Check 'verify sees no legacy files left' ($null -ne $vj13 -and @($vj13.Static.LegacyFiles).Count -eq 0) $r.Out
-
-    # ... and it says so when one is put back by hand.
-    Copy-Item -LiteralPath $OldAddon64 -Destination $oldAddon -Force
-    $r = Invoke-Verifier @('-GameExe', $exe13)
-    Check 'verify warns about a legacy file that is still there' ($r.Out -match 'legacy file\(s\) from an earlier release') $r.Out
+    . (Join-Path $PSScriptRoot 'Package.Tests.ps1') -RepoRoot $repoRoot -Root $root -Zip $Zip -ReShade64 $ReShade64
 }
-
-# --- 17. The version the receipt reports -------------------------------------------------
-
-Say ''
-Say '== 17. payload\VERSION.txt reaches the receipt' 'Cyan'
-
-# The install succeeds whatever VERSION.txt holds, so a version that is missing or read
-# wrongly fails silently: the receipt and Verify then both say "unknown" about an install
-# that is perfectly good, and telling the user what is on disk is the one job a receipt has.
-
-$gv1   = New-X64Fixture -Name 'x64-version'
-$exev1 = Join-Path $gv1 'pwgame.exe'
-$pv1   = New-PayloadWithVersion -Name 'payload-version-plain' -Bytes ([Text.Encoding]::UTF8.GetBytes("26.99.1`n"))
-$r = Invoke-Installer @('-GameExe', $exev1, '-Payload', $pv1, '-Yes', '-NoPause')
-Check 'install from a payload with VERSION.txt exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
-$rv1 = (Get-Content -LiteralPath (Join-Path $gv1 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
-Check 'the receipt records the payload version' ([string]::Equals([string]$rv1.Version, '26.99.1', [StringComparison]::Ordinal)) (Format-VersionDetail ([string]$rv1.Version))
-
-$r = Invoke-Verifier @('-GameExe', $exev1, '-Json')
-$vjv1 = $null
-try { $vjv1 = $r.Out | ConvertFrom-Json } catch { }
-Check 'verify reports the version the receipt holds' ($null -ne $vjv1 -and [string]::Equals([string]$vjv1.Version, '26.99.1', [StringComparison]::Ordinal)) $r.Out
-
-$gv2   = New-X64Fixture -Name 'x64-version-missing'
-$exev2 = Join-Path $gv2 'pwgame.exe'
-$pv2   = New-PayloadWithVersion -Name 'payload-version-missing' -Drop
-$r = Invoke-Installer @('-GameExe', $exev2, '-Payload', $pv2, '-Yes', '-NoPause')
-Check 'a payload without VERSION.txt still installs (exit 10)' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
-$rv2 = (Get-Content -LiteralPath (Join-Path $gv2 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
-# "unknown" is the documented fallback, and it has to be spelled out: an empty string would
-# be printed as a version and read as one.
-Check 'a missing VERSION.txt is recorded as unknown, not as an empty version' ([string]$rv2.Version -eq 'unknown') (Format-VersionDetail ([string]$rv2.Version))
-
-# Package-Release.ps1 writes VERSION.txt as UTF-8 without a BOM and LF-terminated, but a
-# version corrected by hand comes back out of Notepad with a BOM and CRLF, and neither of
-# those bytes is part of the version.
-$gv3   = New-X64Fixture -Name 'x64-version-bom'
-$exev3 = Join-Path $gv3 'pwgame.exe'
-$pv3   = New-PayloadWithVersion -Name 'payload-version-bom' `
-             -Bytes ([byte[]] (@(0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes("26.99.3`r`n")))
-$r = Invoke-Installer @('-GameExe', $exev3, '-Payload', $pv3, '-Yes', '-NoPause')
-Check 'install from a BOM-prefixed VERSION.txt exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
-$rv3 = (Get-Content -LiteralPath (Join-Path $gv3 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
-Check 'neither the BOM nor the CRLF reaches the receipt' ([string]::Equals([string]$rv3.Version, '26.99.3', [StringComparison]::Ordinal)) (Format-VersionDetail ([string]$rv3.Version))
-
-# Verify has a reader of its own for the case where the receipt carries no version, and that
-# one has to strip the same bytes: with no receipt there is nothing left to correct it.
-Remove-Item -LiteralPath (Join-Path $gv3 '_OptimizerFPS\latest-receipt.json') -Force
-$r = Invoke-Verifier @('-GameExe', $exev3, '-Payload', $pv3, '-Json')
-$vjv3 = $null
-try { $vjv3 = $r.Out | ConvertFrom-Json } catch { }
-Check 'verify falls back to payload\VERSION.txt without carrying the BOM over' `
-    ($null -ne $vjv3 -and [string]::Equals([string]$vjv3.Version, '26.99.3', [StringComparison]::Ordinal)) `
-    ($(if ($null -eq $vjv3) { $r.Out } else { Format-VersionDetail ([string]$vjv3.Version) }))
-
-# ---------------------------------------------------------------------------------------
-
-Say ''
-Say ('Results: ' + $script:Pass + ' passed, ' + $script:Fail + ' failed, ' + $script:Skip + ' skipped.') 'White'
-$script:Rows | Where-Object { $_.Result -ne 'PASS' } | Format-Table -AutoSize | Out-String | Write-Host
-
-if ($Keep) { Say ('Sandbox kept: ' + $root) 'DarkGray' }
-else { try { Remove-Item -LiteralPath $root -Recurse -Force } catch { Say ('Could not clean up ' + $root) 'Yellow' } }
-
-if ($script:Fail -gt 0) { exit 1 }
-exit 0
+Complete-Tests

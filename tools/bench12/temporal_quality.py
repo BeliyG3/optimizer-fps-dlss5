@@ -29,7 +29,9 @@ def main():
     config = configparser.ConfigParser(interpolation=None, strict=False)
     config.optionxform = str
     config.read_string(original.decode("utf-8-sig"))
-    section = config["PeripheralWarp"]
+    if not config.has_section("OptimizerFPS"):
+        config.add_section("OptimizerFPS")
+    section = config["OptimizerFPS"]
     section.update({"Mode": "2", "CrashGuard": "0", "TemporalShowZone": "0",
                     "TemporalSeparateZone": "0", "TemporalDebugLog": "1",
                     "TemporalResidualBlend": "0.6", "TemporalToneSmoothing": "24"})

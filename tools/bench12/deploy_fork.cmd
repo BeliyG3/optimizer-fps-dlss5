@@ -1,8 +1,8 @@
 @echo off
 rem Refreshes run_fork\: the freshly built bench and its shaders next to the OptiScaler fork.
-rem The fork's files (dxgi.dll, nvngx.dll_dlssnr.dll, nvngx_dlssnr.dll, optimizer-fps-dlss5\, OptiScaler.ini)
-rem are taken from PW_FORK_SOURCE the first time only, so an ini tuned in run_fork\ is never overwritten;
-rem delete a file in run_fork\ to have it copied again.
+rem The fork's files (dxgi.dll, nvngx.dll_dlssnr.dll, nvngx_dlssnr.dll, OptiScaler.ini)
+rem are taken from PW_FORK_SOURCE. Existing fork binaries and ini are preserved;
+rem the core DLL and DXBC are refreshed from this repository's x64 build.
 rem Delayed expansion: the default source path contains "(x86)", which would close a bracketed block.
 setlocal EnableDelayedExpansion
 set "HERE=%~dp0"
@@ -14,7 +14,9 @@ if errorlevel 1 echo [fail] pw_bench12.exe is missing: run build.cmd& exit /b 1
 xcopy /y /e /i /q "!HERE!shaders\bin" "!RUN!\shaders\bin" >nul
 for %%F in (nvngx_dlss.dll nvngx_dlssd.dll) do if not exist "!RUN!\%%F" copy /y "!HERE!%%F" "!RUN!\" >nul
 for %%F in (dxgi.dll nvngx.dll_dlssnr.dll nvngx_dlssnr.dll OptiScaler.ini) do call :fork_file "%%F" || exit /b 1
-if not exist "!RUN!\optimizer-fps-dlss5" xcopy /y /e /i /q "!PW_FORK_SOURCE!\optimizer-fps-dlss5" "!RUN!\optimizer-fps-dlss5" >nul
+rem Refresh the shared core and shaders from this repository's current x64 build.
+powershell -NoProfile -ExecutionPolicy Bypass -File "!HERE!stage_fork_core.ps1" -Runtime "!RUN!"
+if errorlevel 1 exit /b 1
 exit /b 0
 
 :fork_file

@@ -101,6 +101,7 @@ void Device::Wait()
 void Device::Submit(bool present)
 {
     Check(list->Close(),"Close list"); ID3D12CommandList *lists[]={list.Get()}; queue->ExecuteCommandLists(1,lists);
+    if(onSubmitted) onSubmitted(submissionContext,queue.Get(),list.Get());
     // Retire even if Present fails, so transient resources cannot be released while in flight.
     HRESULT hr=present ? swap->Present(vsyncEnabled ? 1u : 0u,!vsyncEnabled && tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0u) : S_OK;
     Wait(); PrintMessages(); Check(hr,"Present");

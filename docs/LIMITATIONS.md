@@ -22,7 +22,8 @@
 - The model's own tone statistics lag by the skipped frames: a full pass after N−1 skipped frames is
   darker than an every-frame result while the scene changes. This is the model, not the vectors.
 - Background mode needs a D3D12 queue that ReShade reported. When the NR consumer creates its device
-  before ReShade is in place, no queue is registered and the synchronous interpolation runs instead.
+  before ReShade is in place — always the case when OptiScaler loads ReShade — no queue is
+  registered and the synchronous interpolation runs instead.
 - Background mode trades quality for even frame times when the GPU is saturated: the residual ages
   further the longer a pass takes.
 
@@ -35,12 +36,24 @@
   consumer must already supply valid colour, depth, motion and their metadata.
 - Only one feature is warped at a time. A second NR consumer in the same process is passed through
   until the first one's feature is gone.
+- The frame is compressed only when the consumer hands the model a colour region and an output region
+  of the feature's size, the output region at the top-left of its texture (larger textures are fine).
+  The NR runtime (310.8) does not upscale inside the model: consumers that offer a lower NR working
+  resolution (renodx-dlss5 "Scaled" / "Follow render resolution"; by its logs, the RenoDX DLSS
+  build as well) run the model on the reduced frame and upscale it themselves, and that reduced
+  frame is what gets compressed. A consumer whose colour region changes size every frame, or whose output region is
+  elsewhere in its texture, runs the model untouched, and the temporal modes are off for it.
 - Per-stage GPU timing is limited. `DebugTiming` measures the model's evaluate with timestamp
-  queries; the OptiScaler path cannot publish trustworthy per-stage timestamps at all, because it
-  does not own the submission-completion fence, and its aggregate NR timer is not a Pack/Unpack
-  profiler.
+  queries; it is not a Pack/Unpack profiler.
 - 32-bit games are supported only through DLSS5-Feeder's 64-bit host process, and the in-game tab
   there is a remote view of that process.
+- The add-on cannot tell a frame another tool has already compressed from a normal one. With an
+  OptiScaler build that has its own peripheral compression (wilsjo2 `SpatialCompression`), use one
+  of the two, not both.
+- The add-on does not generate frames. Frame generation comes from the consumer's side: OptiScaler's
+  own `[FrameGen]`, DLSS5-Feeder's presenter for 32-bit games, or the game's own DLSS-G.
+- Unloading the add-on while the game runs is not supported: the hooks stay until the process exits.
+  Change or update it with the game closed.
 
 ## The SDK
 
@@ -54,6 +67,5 @@
   resolve interpolates the proxy and the model answer before composing, so outside the undeformed
   centre its result differs slightly from resolve-then-interpolate. Compare and debug views are
   unavailable on the fused stage.
-- The layout bridge (v1) does not carry the centre offset.
 - Runtime success in one game or on one GPU is not a certification: image-quality and frame-time A/B
   gates remain integration-specific.

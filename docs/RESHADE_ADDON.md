@@ -15,11 +15,32 @@ are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Files
 
+The source tree separates `sdk/` (spatial math, D3D adapters and shaders), `core/`
+(`frame/`, `temporal/`, `gpu/`, `settings/`, `shaders/`) and `hosts/reshade/`.
+The shell dynamically loads `optimizer-fps-dlss5-core.dll` and enters it only through
+`core/api/ofps_core.h` (ABI 1). `ShellHost` delivers logging/events, `ModelHostNgx`
+implements `IOfpsModelHost`, and `ngx_params` owns NGX parameter translation.
+The overlay reads `OfpsStatus` and applies `OfpsSettingsValues` through that ABI.
+This extraction keeps deployment names, compatibility exports and diagnostic log
+formats. Current ReShade settings use `[OptimizerFPS]`; an old-only
+`[PeripheralWarp]` section is migrated once, without deleting the old section.
+Static `ofps_core` remains for tests; runtime state belongs to one process-wide DLL.
+
+`CoreLoader` serializes lookup/version checking/loading with
+`Local\OptimizerFpsCoreLoad_<pid>`. It checks an already loaded module first, otherwise
+loads by absolute host-module directory and pins it with `GET_MODULE_HANDLE_EX_FLAG_PIN`.
+Version/ABI conflicts leave the shell inactive with a banner naming the first host
+(or `unknown host` if metadata is unavailable); it does not load a second core.
+Unload unregisters the host while callbacks are alive, without waiting. Normal
+`Detach()` outside callbacks/loader lock also calls `Release`; only the last host
+shuts down the core. Hot-unload/pre-unload handshake and shell draining remain plan 8.
+
 | File | Where it goes | What it is |
 |---|---|---|
 | `optimizer-fps-dlss5.addon64` | beside the 64-bit ReShade DLL (in `host64\` for a 32-bit game) | the add-on itself |
+| `optimizer-fps-dlss5-core.dll` | beside the x64 add-on | shared frame core, ABI 1, static CRT |
 | `nvngx.dll_optimizerfps.dll` | beside the add-on | forwarder; exports `pw_ngx_call_create` / `_evaluate` / `_release` |
-| `optimizer-fps-dlss5\*.dxbc` | beside the add-on | compiled shaders |
+| `optimizer-fps-dlss5\*.dxbc` | subdirectory beside the core DLL | 21 compiled shaders |
 | `optimizer-fps-dlss5-remote.addon32` | beside the game's 32-bit ReShade DLL | the tab only, for 32-bit games |
 
 The forwarder exists because the NR snippet checks its caller: it accepts calls only from a module
@@ -36,14 +57,22 @@ pixel shaders (`temporal_*_ps.dxbc`); the installer deletes those when it update
 
 The temporal passes are compiled from `shaders/temporal_cs.hlsl`, a thin wrapper that sets the
 feature macros and the thread group; the maths itself lives in `shaders/temporal.hlsl`, which is
-shared verbatim with the experimental OptiScaler build. Compile a pass without the wrapper and it
+shared by every host of the core. Compile a pass without the wrapper and it
 reads a different register set than the add-on binds.
 
 ## Where the tab lives
 
 The settings are drawn inside ReShade's own **Add-ons** tab (`register_overlay(nullptr)`), not in a
-separate overlay window. `[PeripheralWarp] FloatingWindow=1` brings a separate window back. The
+separate overlay window. `[OptimizerFPS] FloatingWindow=1` brings a separate window back. The
 32-bit remote tab behaves the same way.
+
+**Beside OptiScaler's menu.** When a public OptiScaler build loads ReShade, OptiScaler's menu key
+(`[Menu] ShortcutKey` in `OptiScaler.ini`, Insert by default) also opens a window with the same
+settings beside OptiScaler's menu; the key closes it again, as does its close button. OptiScaler's
+menu cannot host another add-on, so the window is ReShade's, drawn through the `reshade_overlay`
+event with the ReShade overlay closed. ReShade reads the mouse from the window messages before the
+game's window procedure does, so the window takes clicks while OptiScaler's menu blocks the game's
+input. The window is not drawn while the ReShade overlay is open: the tab is there then.
 
 The exported ReShade `NAME` is **Optimizer FPS for DLSS5** (remote: **Optimizer FPS for DLSS5 (tab
 for the 64-bit host)**) and carries no version on purpose — ReShade keys `DisabledAddons` on `NAME`,
@@ -52,31 +81,42 @@ release. The release number is in `DESCRIPTION` and in the tab's first line.
 
 The shipped file names changed in 26.26: `optimizer-fps-dlss5.addon64`,
 `nvngx.dll_optimizerfps.dll` and the `optimizer-fps-dlss5\` shader folder replaced
-`peripheral-warp.addon64`, `nvngx.dll_peripheralwarp.dll` and `peripheral-warp\`. The ini section
-Internal identifiers (the `[PeripheralWarp]` ini section, exports `PeripheralWarp*V1`, C++
-namespaces, CMake targets) keep the historical name PeripheralWarp so existing installs and the
-OptiScaler bridge keep working.
+`peripheral-warp.addon64`, `nvngx.dll_peripheralwarp.dll` and `peripheral-warp\`. The old
+`[PeripheralWarp]` section remains a migration source, while new writes use `[OptimizerFPS]`.
+Compatibility exports `PeripheralWarp*V1` retain their names; the legacy POD/export is not an active ownership bridge. The SDK
+uses namespace `ofps::sdk`, package `OptimizerFpsSdk` and `OptimizerFps::Sdk*` CMake targets.
 
-Two version numbers live in `cmake/Version.cmake`. `PW_SDK_VERSION` is the library's semantic
+Two version numbers live in `cmake/Version.cmake`. `OFPS_SDK_VERSION` is the library's semantic
 version, the one `find_package` sees; it moves only when the API or the ABI does.
-`PW_RELEASE_VERSION` is the add-on release the changelog is written in: the year and the month it
+`OFPS_RELEASE_VERSION` is the add-on release the changelog is written in: the year and the month it
 came out, plus a third component for a second release inside one month (2026.9, then 2026.9.1).
 Releases up to 26.29 were numbered after the work stage they came out of — that line ended with the
 switch, and the old numbers stay in the changelog and in the code comments that cite them.
 
 ## The tab
 
-**Status banner.** Green `Optimizer FPS ACTIVE: model WxH of WxH, N frames` when the frame the
-model sees is warped right now. Otherwise orange `Optimizer FPS NOT ACTIVE: <reason>`, with the
+The tab is laid out so that nothing jumps: settings that do not apply in the current mode are
+hidden, but every status line whose text changes with the state stays one line (the full text is in
+its tooltip when it is wider than the tab), and a group with nothing to show on this host has no
+header.
+
+**Status banner.** Green `Optimizer FPS ACTIVE: model WxH of WxH` when the model sees a warped
+frame; frames carried by a temporal mode keep the state of the last model frame. Otherwise orange `Optimizer FPS NOT ACTIVE: <reason>`, with the
 reason chosen in this priority: module not loaded → not hooked → waiting for feature 18 → mode Off →
 the hook's own pass-through reason. A red crash-guard notice with a **Retry warping now** button
-takes precedence over both. When OptiScaler applies the warp itself the banner says so instead.
+takes precedence over both. When a direct host (below) owns the warp, the banner says so instead.
+With a public OptiScaler in the process, a red line under the banner warns when OptiScaler's own
+peripheral compression (`[DlssNr] SpatialCompression`) is on, and an orange one when it runs extra
+model passes (`Passes` > 1); the add-on reads `OptiScaler.ini` every 2 s, so a change made in
+OptiScaler's menu shows once OptiScaler has saved it.
 
 **Mode** — `Off`, `Uniform`, `Peripheral`. **Color filter** — `Bilinear`, or
 `Auto (soft: wide pre-filter, cubic unpack)`. Auto adapts to the local footprint: Pack applies a
 wide tent-like pre-filter (center plus four bilinear taps at ±0.375 of the footprint), Unpack blends
 in a soft cubic B-spline reconstruction (four bilinear fetches); both fade in above a footprint of
 1.0. The 1:1 zone stays exact bilinear, so only the compressed periphery is filtered.
+
+**Compression** is one collapsible header over the four groups below.
 
 **Zone size** — `Center X/Y (%)`, `Work X/Y (%)`, `Global scale (%)`. Ctrl+click a slider to type a
 value; every slider has a reset icon opposite it. The maths, the validity rules and the preset table
@@ -107,17 +147,31 @@ writes `(1 + brightness) * rgb ^ (1 / gamma)` in the buffer's linear space. See
 writes the cfg and the host re-reads it within a second, so the source can be switched while the
 game runs.
 
+**Advanced (diagnostics)** — a checkbox at the end of the tab, saved as `ShowAdvanced` in
+`[OptimizerFPS]` (off by default). With it off, the Diagnostics group, the core's status lines,
+the plain-colour frame counter and the model GPU time are not drawn.
+
 **Diagnostics** (collapsed) — the NGX hook's state and reason, the layout numbers (native, raw Work,
-global scale, NR input with its pixel percentage), the OptiScaler link and its takeover checkbox,
+global scale, NR input with its pixel percentage), direct-host ownership,
 the temporal counters, and two trees of session-only switches: the motion scale/inversion handed to
 the warped model, and the temporal machine's tolerances, smoothing radii, debug view and log. None
 of the Diagnostics switches are persisted.
 
-## `[PeripheralWarp]` in `ReShade.ini`
+## `[OptimizerFPS]` in `ReShade.ini`
+
+The new section wins if both sections exist, including when a key is absent
+from the new section. An old-only `[PeripheralWarp]` section migrates known
+present keys once through ReShade's configuration API. Unknown keys and other
+sections remain untouched. Diagnostic keys can be read but normal setting saves
+do not write them. The installer seeds `[OptimizerFPS]` for a new installation.
+Update migrates an old-only section and records installer-owned keys in a
+Schema 3 receipt.
 
 ### Saved by the tab
 
-Twenty-one keys, written on every accepted edit and restored at load, before the first evaluate.
+The tab writes an edited persisted key explicitly, including an explicit default,
+and restores present keys before the first evaluate. Absent defaults are not
+materialized by ordinary saves.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -136,10 +190,14 @@ Twenty-one keys, written on every accepted edit and restored at load, before the
 | `TemporalMode` | 0/1/3 | every frame / interpolate (sync) / interpolate (background). `2` was withdrawn and falls back to `1` |
 | `TemporalEvery` | int | frames per model pass: 2…8 sync, 1…8 background |
 | `TemporalMaxQueue` | int | 0…8, background mode: GPU frames allowed unfinished when a frame is recorded |
-| `OptiScalerTakeover` | 0/1 | warp inside OptiScaler's NR call (default on when a bridge is linked) |
+| `ShowAdvanced` | 0/1 | the tab's **Advanced (diagnostics)** checkbox; written only when it is clicked |
 
-The installer seeds `Mode=2, CenterX=80, CenterY=80, WorkX=90, WorkY=90` and only for keys that are
-not already present.
+`OptiScalerTakeover` and `ForceBridgeWarpOff` are obsolete compatibility inputs;
+they are ignored with a log message and are never written as current settings.
+
+The current installer seeds `Mode=2, CenterX=80, CenterY=80, WorkX=90, WorkY=90`
+in the legacy section, only where keys are absent. The add-on migrates those
+known values when it first loads an old-only INI.
 
 ### Read-only keys
 
@@ -154,7 +212,7 @@ read once, at add-on load, so a change takes effect on the next game start.
 | `TraceExit` | `1` logs who calls `ExitProcess` / `TerminateProcess`, with module + offset per stack frame |
 | `DebugLayer` | `1` turns the D3D12 debug layer on before the game's device is created and dumps its messages after the hook's passes (slow) |
 
-The `Debug*` diagnostics of the interposer (`adapters/reshade/diagnostics.h`), all inert by default:
+The `Debug*` diagnostics of the interposer (`hosts/reshade/addon/config_store.h`), all inert by default:
 
 | Key | Effect |
 |---|---|
@@ -295,7 +353,7 @@ The queue asks for `GLOBAL_REALTIME` priority (`SeIncreaseBasePriorityPrivilege`
 `HIGH` is the fallback) and logs the outcome as `background queue priority: …`.
 
 **It needs a registered host queue.** Where the consumer creates its D3D12 device before ReShade is
-in place — the OptiScaler fork in Jedi: Fallen Order — no queue is ever registered, the synchronous
+in place — always the case when OptiScaler loads ReShade — no queue is ever registered, the synchronous
 interpolation runs instead, and both the tab and the log say `background mode unavailable here (no
 registered host queue)`.
 
@@ -348,19 +406,32 @@ brightness moved the mean by about −1.5 %). Tune by eye.
 
 ## OptiScaler
 
-When OptiScaler's layout bridge export `PeripheralWarpLayoutBridgeV1`
-([`include/peripheral_warp/layout_bridge_v1.h`](../include/peripheral_warp/layout_bridge_v1.h)) is
-found among the game's modules, the add-on forces OptiScaler's own spatial warp `Off` through the
-bridge and keeps its own NGX hook on feature 18. The change is saved to `OptiScaler.ini`, so it
-survives a restart. The whole pipeline — pack layout, temporal modes, filters, diagnostics — is then
-ours, and the fork calls the model through `nvngx_dlssnr.dll` like any other host.
+Public OptiScaler builds with Neural Rendering (Dagherbou OptiScaler_DLSSNR, wilsjo2
+OptiScaler-DLSSNR-PreSR-Multipass) run NR themselves and, with `[Plugins] LoadReshade=true`, load
+ReShade and this add-on. OptiScaler creates the NR model before ReShade is loaded, so the hook
+**adopts** it (`feature 18 adopted (created before the hooks were installed)`), re-creates it at the
+work size and warps from then on; the rest works as with any other consumer. Checked on bench12
+(native D3D12) and on the D3D11 stand through OptiScaler's D3D11-on-D3D12 bridge, including
+wilsjo2's NR before the upscaler and OptiScaler's own frame generation — see
+[the plan 8 report](dev/plan8-public-optiscaler.md). Two consequences: background mode runs
+synchronously (no host queue is visible), and a build with its own peripheral compression must have
+it off, or the frame is compressed twice.
 
-The tab reports `OptiScaler link: linked; OptiScaler's own warp is Off …` and offers the checkbox
-**Warp inside OptiScaler's NR call**. `[PeripheralWarp] OptiScalerTakeover=0` restores the earlier
-linked mode, in which OptiScaler performs the warp and the add-on's own features are unavailable;
-there the consumer's layout is the truth (edits are forwarded with `Set`, a refusal restores its
-values, and edits made in OptiScaler's menu are pulled with `Get` when its generation changes). The
-bridge does not carry the center offset.
+**Direct-host protocol.** A program that links the core itself can take NR over from the add-on: it
+declares ownership with the manual-reset event `Local\OptimizerFpsDirectHost_<pid>` and calls
+`SetEvent` before its first NR create. The add-on activates direct-host mode only after observing
+the signaled state; auto-reset events are forbidden because the probe would consume the signal.
+Once detected, ownership stays latched for the lifetime of the add-on's probe. Every NGX hook checks
+this event before looking up the core or checking its ABI. Access/wait errors fail closed; a late
+signal forwards original handles without adoption and logs one warning. The ReShade NGX hooks then
+forward calls untouched. The direct host owns core settings; the add-on does not apply or save its
+local core settings and shows the effective settings as a read-only mirror. Shell-only ini settings
+and diagnostics continue to load normally. No shipped product uses this protocol in 2026.9.1; public
+OptiScaler builds do not signal the event, and the add-on warps their NR as described above.
+
+`OptiScalerTakeover` and `ForceBridgeWarpOff` in `[PeripheralWarp]` or `[OptimizerFPS]`
+are obsolete and ignored with a log message. The layout bridge and takeover checkbox
+have been removed. Existing obsolete INI entries are neither rewritten nor deleted.
 
 ## A second NR consumer in the process
 
@@ -393,32 +464,21 @@ Rendering runs in `host64\dlss5-feed-host64.exe`, where ReShade x64 loads RenoDX
 `optimizer-fps-dlss5-remote.addon32`, placed next to `dlss5-feed.addon32`, draws the same tab in the game
 and talks to the host through shared memory.
 
-The protocol is [`adapters/reshade/pw_remote_ipc.h`](../adapters/reshade/pw_remote_ipc.h): a fixed
-POD layout (offsets and size asserted, both sides built from the header) in the file mapping
-`Local\PeripheralWarpRemoteV3`. One writer per direction, no locks — the overlay writes `settings`
-and publishes by bumping `settingsGeneration` last; the host writes `status`, `applied` and
-`hostHeartbeatTick` and publishes them with `statusGeneration`. Both sides copy whole sub-structs, so
-a torn read is at worst one frame of a mixed value that the next generation corrects.
+The protocol is [`hosts/remote32/ipc.h`](../hosts/remote32/ipc.h): a fixed
+POD V4 block in `Local\OptimizerFpsRemoteV4`. Each writer brackets its copy
+with odd/even sequence values, then publishes its generation. The host snapshot
+carries the core's applied values, ranges, availability reasons, status rows and
+shell/Feeder state. The remote tab sends settings and Feeder OFA edits through
+the same block. The host validates magic, version and size before using it.
+Retry uses `Local\OptimizerFpsRemoteRetryV4`; both sides observe the process
+leaving event. A V4 tab detects the old `Local\PeripheralWarpRemoteV3` block
+only to display a version mismatch and never writes into it.
 
-Version 2 added the optical-flow fields, version 3 the model passes (`modelPasses`, `spreadPasses`,
-and back from the host `modelPassesRunning`, `modelPassReason` and `temporalReason`). Each addition
-moves everything after `settings`, so the header keeps the older layouts verbatim and the tab reads
-whichever one it finds: a version-3 tab still drives a host that has not been updated, hiding the
-groups that host cannot act on. The section name carries the version because the other direction
-cannot work — a host writes only its own layout — and because two games of different ages can run at
-the same time; versions 1 and 2 shared `Local\PeripheralWarpRemoteV1`, which the tab still tries
-second. The host refuses a section of its own name that is smaller than its block rather than
-writing past the end of someone else's.
+The host applies remote edits through the same core and INI writers as the local
+tab. The generation seen at startup is adopted without applying, so a block
+left over from an earlier session cannot override this process's settings.
 
-Zero means "no opinion" in every field added after version 1, so a flag is carried as 1 = off and
-2 = on: that is how the host tells an older tab's silence from a deliberate "off".
-
-The host side runs on every present without a linked layout bridge and applies incoming settings
-exactly as the local tab does, through the same setters and ini writers. The generation seen at
-startup is adopted without applying, so a block left over from an earlier session never overrides
-this process's ini.
-
-The 32-bit side ([`adapters/reshade/producer_remote.cpp`](../adapters/reshade/producer_remote.cpp)) has no SDK core,
+The 32-bit side ([`hosts/remote32/remote_main.cpp`](../hosts/remote32/remote_main.cpp)) has no SDK core,
 no D3D and no Detours — only the ReShade API and ImGui headers. Its banner is green, orange, or grey
 (`host process not running (no shared block)`) when the mapping is missing or the heartbeat is older
 than three seconds. The controls mirror the x64 tab and are seeded from `applied` when the host is
@@ -427,7 +487,7 @@ x86 feeder before the host sees the frame: if the Feeder build already compresse
 should be `Off` there, to avoid double compression. The temporal modes still run with `Mode` `Off`.
 
 Build: `cmake --preset windows-x86-remote` then `cmake --build --preset windows-x86-remote-release`;
-the output is `out/build/x86-remote/adapters/reshade/Release/optimizer-fps-dlss5-remote.addon32`. The
+the output is `out/build/x86-remote/hosts/remote32/Release/optimizer-fps-dlss5-remote.addon32`. The
 x64 add-on is unchanged for every other game: without a remote overlay the block is written and never
 read.
 
@@ -435,15 +495,16 @@ read.
 
 | | |
 |---|---|
-| `adapters/reshade/addon/` | the add-on shell: registration and `DllMain` (`addon_main.cpp`), the overlay, `[PeripheralWarp]` persistence and its ini schema, the OptiScaler layout bridge, the crash guard, the queue registration, the remote host side |
-| `adapters/reshade/ngx/` | the NGX interposer: Detours and dispatch, feature lifetime and state, Pack/model/Unpack, the graveyard, the temporal machine and the background scheduler |
-| `adapters/reshade/ngx_forwarder/` | `nvngx.dll_optimizerfps.dll` |
-| `adapters/reshade/producer_remote.cpp` | the 32-bit remote tab: what it draws |
-| `adapters/reshade/remote/remote_link.{h,cpp}` | the tab's half of the shared block: finding it, reading any known version, sending an edit |
-| `adapters/reshade/diagnostics.h` | the `Debug*` switch block |
-| `adapters/reshade/pw_remote_ipc.h`, `pw_ofa_cfg.h` | the shared-memory protocol; the host's optical-flow cfg |
-| `shaders/temporal.hlsl` | the temporal maths, shared verbatim with the OptiScaler build |
-| `shaders/temporal_ps.hlsl` | the pixel entry points: the feature macros the add-on supports, plus `PSApply` |
+| `hosts/reshade/addon/` | the add-on shell: registration and `DllMain` (`addon_main.cpp`), the overlay, `[OptimizerFPS]` persistence and legacy migration, the direct-host gate, the crash guard, the queue registration, the remote host side |
+| `hosts/reshade/ngx_hook_api.cpp`, `ngx_params.cpp` | the NGX interposer: Detours, feature interception and translation to the core ABI |
+| `core/` | Pack/model/Unpack, deferred resources, temporal processing and background scheduling shared by hosts |
+| `hosts/reshade/ngx_forwarder/` | `nvngx.dll_optimizerfps.dll` |
+| `hosts/remote32/remote_main.cpp` | the 32-bit remote tab: what it draws |
+| `hosts/remote32/remote_link.{h,cpp}` | the tab's half of the shared block: finding it, reading any known version, sending an edit |
+| `hosts/reshade/addon/config_store.h` | the `Debug*` switch block |
+| `hosts/remote32/ipc.h`, `hosts/reshade/feeder_ofa_cfg.h` | the shared-memory protocol; the host's optical-flow cfg |
+| `core/shaders/temporal.hlsl` | the temporal maths compiled into the core's shader payload |
+| `core/shaders/temporal_cs.hlsl` | compute entry points for the temporal passes |
 
 The per-file maps of those two folders are [dev/NGX_MODULES.md](dev/NGX_MODULES.md) and
 [dev/ADDON_MODULES.md](dev/ADDON_MODULES.md).
@@ -455,17 +516,17 @@ The build deployed to games is the static-CRT one, `out/build/x64-mt` — see [B
 ### Model passes
 
 The Neural Rendering tab includes **Model passes** (1?3, default 1) and **Spread passes over frames**
-(default on). Their `[PeripheralWarp]` keys are `ModelPasses` and `SpreadPasses`. Each additional pass
+(default on). Their `[OptimizerFPS]` keys are `ModelPasses` and `SpreadPasses`. Each additional pass
 runs an independent model on the previous pass's output. With temporal mode on, spreading runs one
 stage per host frame, carries the previous completed result until the new cycle finishes, and raises
 N to at least the pass count. Spreading uses the host queue even if background mode is selected;
 with spreading off, background mode retains its background queue.
 
 The tab shows the running/requested count and creation/allocation/evaluate warnings. Extra passes
-are expensive: the fork measured 13?15 ms per extra evaluate at 4K on a 4080 SUPER, roughly 1 GB for
+are expensive: an earlier OptiScaler build measured 13–15 ms per extra evaluate at 4K on a 4080 SUPER, roughly 1 GB for
 a second model and another ~0.5 GB for spread carry buffers. Gains fade after pass 2, and each pass
-can darken the image by about 1%. The fork's 007 First Light test exceeded VRAM capacity at two passes
-and reached 0.4?0.6 seconds per frame. These observations are also in the tooltips.
+can darken the image by about 1%. A 007 First Light test with that build exceeded VRAM capacity at two passes
+and reached 0.4–0.6 seconds per frame. These observations are also in the tooltips.
 
 See [local bench report](../tools/bench/MODEL_PASSES_26_28.md); this port has not been installed into or
 tested in games.

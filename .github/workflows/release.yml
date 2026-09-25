@@ -22,7 +22,7 @@ permissions:
 jobs:
   release:
     name: Build and publish the release zip
-    runs-on: windows-2022   # VS 2022 image; windows-latest and windows-2025 now ship VS 2026 (the presets use the VS 17 generator)
+    runs-on: windows-2022
     timeout-minutes: 120
 
     steps:
@@ -43,31 +43,46 @@ jobs:
         run: |
           $tag = if ($env:INPUT_TAG) { $env:INPUT_TAG } else { '${{ github.ref_name }}' }
           $text = Get-Content -LiteralPath 'cmake/Version.cmake' -Raw
-          $m = [regex]::Match($text, '(?im)^\s*set\s*\(\s*PW_RELEASE_VERSION\s+"([^"]+)"')
+          $m = [regex]::Match($text, '(?im)^\s*set\s*\(\s*OFPS_RELEASE_VERSION\s+"([^"]+)"')
           if (-not $m.Success) {
-            Write-Host '::error file=cmake/Version.cmake::PW_RELEASE_VERSION not found in cmake/Version.cmake.'
+            Write-Host '::error file=cmake/Version.cmake::OFPS_RELEASE_VERSION not found in cmake/Version.cmake.'
             exit 1
           }
           $version = $m.Groups[1].Value
           $expected = 'v' + $version
           if ($tag -ne $expected) {
-            Write-Host ("::error::Tag/version mismatch: the tag is '$tag' but cmake/Version.cmake says PW_RELEASE_VERSION=""$version"", which requires the tag '$expected'. Fix cmake/Version.cmake (and CHANGELOG.md) and re-tag, or delete this tag and push the right one.")
+            Write-Host ("::error::Tag/version mismatch: the tag is '$tag' but cmake/Version.cmake says OFPS_RELEASE_VERSION=""$version"", which requires the tag '$expected'. Fix cmake/Version.cmake (and CHANGELOG.md) and re-tag, or delete this tag and push the right one.")
             exit 1
           }
           $prerelease = if ($tag -like '*-*') { 'true' } else { 'false' }
           "tag=$tag"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "Tag $tag matches PW_RELEASE_VERSION $version (prerelease: $prerelease)."
+          Write-Host "Tag $tag matches OFPS_RELEASE_VERSION $version (prerelease: $prerelease)."
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
 
-      # Same guard build.yml runs: the installer scripts that ship inside the zip must
-      # parse under stock Windows PowerShell 5.1.
-      - name: Lint PowerShell 5.1 compatibility
+      - name: Source and PowerShell guards
         shell: powershell
         run: |
-          .\tools\Lint-PowerShell51.ps1 -Path tools
+          python tools/check-abi-freeze.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check-core-includes.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check-file-size.py --changed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check-file-size.py tools/installer tools/installer-tests tools/Install-OptimizerFPS.ps1 tools/Verify-OptimizerFPS.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rev-parse --verify 'HEAD^' 2>$null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $paths = @(git diff --name-only --diff-filter=ACMR HEAD^ HEAD)
+          if ($paths.Count -gt 0) {
+            python tools/check-file-size.py @paths
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          git diff --check HEAD^ HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Lint-PowerShell51.ps1 -Path tools
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Same cache key as build.yml, so a release run reuses whatever the branch build
@@ -80,50 +95,68 @@ jobs:
           restore-keys: |
             pw-external-v1-${{ runner.os }}-
 
-      # Gate: the full x64 build plus ctest. Nothing from this tree is shipped (the zip
-      # takes the /MT build), but a red test must stop the release.
-      - name: Configure windows-x64 (test gate)
-        shell: pwsh
-        run: cmake --preset windows-x64
+      - name: Configure and build five warning-as-error presets
+        shell: powershell
+        run: |
+          foreach ($preset in @('windows-x64', 'windows-x64-mt', 'windows-x86', 'windows-x86-remote', 'sdk-only-x64')) {
+            cmake --preset $preset
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            cmake --build --preset "$preset-release" --parallel
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
-      - name: Build windows-x64 (test gate)
-        shell: pwsh
-        run: cmake --build --preset windows-x64-release --parallel
-
-      - name: Test windows-x64 (test gate)
-        shell: pwsh
-        run: ctest --preset windows-x64-release --output-on-failure
-
-      # Shipping configuration: /MT add-on, the NGX forwarder and the compiled shaders.
-      - name: Configure windows-x64-mt
-        shell: pwsh
-        run: cmake --preset windows-x64-mt
-
-      - name: Build windows-x64-mt
-        shell: pwsh
-        run: cmake --build --preset windows-x64-mt-release --parallel
-
-      # 32-bit remote overlay add-on (the tab hosted by the 64-bit process).
-      - name: Configure windows-x86-remote
-        shell: pwsh
-        run: cmake --preset windows-x86-remote
-
-      - name: Build windows-x86-remote
-        shell: pwsh
-        run: cmake --build --preset windows-x86-remote-release --parallel
+      - name: Inventory and run three CTest presets
+        shell: powershell
+        run: |
+          foreach ($preset in @('windows-x64', 'windows-x86', 'sdk-only-x64')) {
+            ctest --preset "$preset-release" -N
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            ctest --preset "$preset-release" --output-on-failure
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Verify fetched dependencies against DEPENDENCIES.lock.json
         shell: pwsh
         run: .\tools\Verify-Dependencies.ps1
 
-      # -Version is omitted on purpose: the script reads PW_RELEASE_VERSION out of
+      # -Version is omitted on purpose: the script reads OFPS_RELEASE_VERSION out of
       # cmake/Version.cmake exactly the way a local packaging run does, so CI and the
       # maintainer's box cannot drift apart.
       - name: Package the release zip
         id: pack
         shell: powershell
         run: |
-          .\tools\Package-Release.ps1 -BuildDirX64 'out\build\x64-mt' -BuildDirX86 'out\build\x86-remote' -Out 'dist-release'
+          $out = Join-Path '${{ runner.temp }}' 'ofps-release'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Package-Release.ps1 -BuildDirX64 out/build/x64-mt -BuildDirX86 out/build/x86-remote -Out $out -Force
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify release payload and manifest
+        shell: powershell
+        run: |
+          $out = Join-Path '${{ runner.temp }}' 'ofps-release'
+          $zip = Join-Path $out ('Optimizer-FPS-for-DLSS5-' + '${{ steps.ver.outputs.version }}' + '.zip')
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Test-ReleasePackage.ps1 -Zip $zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Installer self-tests with x64 and x86 PE fixtures
+        shell: powershell
+        run: |
+          Import-Module (Join-Path (Get-Location) 'tools/installer/Common.psm1') -Force
+          Import-Module (Join-Path (Get-Location) 'tools/installer/Pe.psm1') -Force
+          $x64 = @(Get-ChildItem out/build/x64/tests -Recurse -File -Filter reshade-installer-stub.dll)
+          $x86 = @(Get-ChildItem out/build/x86/tests -Recurse -File -Filter reshade-installer-stub.dll)
+          if ($x64.Count -ne 1 -or $x86.Count -ne 1) { throw 'Expected one ReShade PE stub per architecture' }
+          if ((Get-PeInfo $x64[0].FullName).Bits -ne 64 -or (Get-PeInfo $x86[0].FullName).Bits -ne 32) { throw 'ReShade PE stub architecture mismatch' }
+          foreach ($dll in @($x64[0], $x86[0])) {
+            $exports = Get-PeExportNames $dll.FullName
+            if ($exports -notcontains 'ReShadeRegisterAddon' -or $exports -notcontains 'ReShadeUnregisterAddon') { throw 'ReShade PE stub exports missing' }
+          }
+          $out = Join-Path '${{ runner.temp }}' 'ofps-release'
+          $stage = Join-Path $out ('Optimizer-FPS-for-DLSS5-' + '${{ steps.ver.outputs.version }}')
+          $payload = Join-Path $stage 'payload'
+          $zip = Join-Path $out ('Optimizer-FPS-for-DLSS5-' + '${{ steps.ver.outputs.version }}' + '.zip')
+          $oldAddon = 'out/build/x64/hosts/reshade/Release/optimizer-fps-dlss5.addon64'
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/installer-tests/Run-InstallerTests.ps1 -Payload $payload -Zip $zip -ReShade64 $x64[0].FullName -ReShade32 $x86[0].FullName -OldAddon64 $oldAddon
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # The .sha256 sidecar is written in the same "<hash>  <name>" shape as
@@ -133,13 +166,17 @@ jobs:
         shell: pwsh
         run: |
           $version = '${{ steps.ver.outputs.version }}'
-          $zip = Join-Path 'dist-release' ('Optimizer-FPS-for-DLSS5-' + $version + '.zip')
+          $zip = Join-Path (Join-Path '${{ runner.temp }}' 'ofps-release') ('Optimizer-FPS-for-DLSS5-' + $version + '.zip')
           if (-not (Test-Path -LiteralPath $zip)) {
             Write-Host "::error::Package-Release.ps1 did not produce $zip."
             exit 1
           }
-          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           $name = Split-Path -Leaf $zip
+          New-Item -ItemType Directory -Force -Path 'dist-release' | Out-Null
+          $publishedZip = Join-Path 'dist-release' $name
+          Copy-Item -LiteralPath $zip -Destination $publishedZip -Force
+          $zip = $publishedZip
+          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $zip) ($name + '.sha256')), "$sha  $name`n", (New-Object Text.UTF8Encoding($false)))
           "zip=$zip"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "sha256=$sha"         | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -193,14 +230,14 @@ jobs:
             dist-release/*.zip
             dist-release/*.zip.sha256
 
-      - name: Publish the GitHub release
+      - name: Create the draft GitHub release (published by hand after review)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: Optimizer FPS for DLSS5 ${{ steps.ver.outputs.version }}
           body_path: release-notes.md
           prerelease: ${{ steps.ver.outputs.prerelease == 'true' }}
-          draft: false
+          draft: true
           fail_on_unmatched_files: true
           files: |
             dist-release/*.zip

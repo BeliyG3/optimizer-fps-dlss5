@@ -4,14 +4,35 @@ ID3D12Resource *Pathtrace::DisplaySource(const Options &o) const
 {
     if(o.view=="noisy") return outputs[0].Get();
     if(o.view=="accum" || (o.view=="colour" && o.accumulationEnabled && (!o.feedAccumulation || !ngx.Output()))) return outputs[7].Get();
+    if(auto *neural=nr.Presented()) return neural;
     return ngx.Output() ? ngx.Output() : outputs[0].Get();
+}
+void Pathtrace::ConfigureNeuralRendering(Device &d, Options &o)
+{
+    if(o.mvFormat=="rgba16f") motionPack.Configure(d,outputs[2].Get(),width,height); else motionPack.Disable();
+    // Native NR runs on the image it follows: the upscaler output, or the render colour without one.
+    auto *colour=ngx.Output() ? ngx.Output() : outputs[0].Get();
+    try { nr.Configure(d,o,colour,width,height); }
+    catch(const std::exception &failure) {
+        if(!o.interactive) throw;
+        error=failure.what(); o.nr="off"; nr.Configure(d,o,colour,width,height);
+        std::fprintf(stderr,"[nr fallback] %s\n",error.c_str());
+    }
+    configuredNr=o.nr; configuredMotion=o.mvFormat;
+}
+void Pathtrace::BindDisplay(Device &d, const Options &o)
+{
+    auto *source=DisplaySource(o);
+    std::string key=std::to_string(reinterpret_cast<uintptr_t>(source));
+    if(displayKey!=key) { display.Initialize(d,source,srvBase+8); displayKey=key; }
+    d.TextureSrv(source,srvBase);
 }
 void Pathtrace::Configure(Device &d, Options &o)
 {
     unsigned w=std::max(1u,unsigned(float(d.width)*o.renderScale)), h=std::max(1u,unsigned(float(d.height)*o.renderScale));
     bool resized=w!=width || h!=height || outputWidth!=d.width || outputHeight!=d.height;
-    if(resized || configuredUpscaler!=o.upscaler || configuredReverse!=o.reverse) {
-        ngx.Shutdown(d); Reset(); initialized=false;
+    if(resized || configuredUpscaler!=o.upscaler || configuredReverse!=o.reverse || configuredNr!=o.nr || configuredMotion!=o.mvFormat) {
+        nr.Shutdown(d); ngx.Shutdown(d); Reset(); initialized=false;
         width=w; height=h; outputWidth=d.width; outputHeight=d.height;
         const DXGI_FORMAT formats[]={DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R32_FLOAT,DXGI_FORMAT_R16G16_FLOAT,
             DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -28,7 +49,8 @@ void Pathtrace::Configure(Device &d, Options &o)
         }
         std::printf("[info] render %ux%u, output %ux%u\n",width,height,d.width,d.height);
         error.clear();
-        if(o.upscaler!="none") {
+        // NR upscaling replaces DLSS; the options reject the pair, the interactive menu may still set it.
+        if(o.upscaler!="none" && o.nr!="upscale") {
             try { ngx.Initialize(d,o,width,height); }
             catch(const std::exception &failure) {
                 if(!o.interactive) throw;
@@ -37,11 +59,8 @@ void Pathtrace::Configure(Device &d, Options &o)
             }
         }
         configuredUpscaler=o.upscaler; configuredReverse=o.reverse; displayKey.clear();
+        ConfigureNeuralRendering(d,o);
     }
-    auto *source=DisplaySource(o);
-    std::string key=std::to_string(reinterpret_cast<uintptr_t>(source));
-    if(displayKey!=key) { display.Initialize(d,source,srvBase+8); displayKey=key; }
-    d.TextureSrv(source,srvBase);
 }
 bool Pathtrace::ReadPick(unsigned &triangle, unsigned &group)
 {

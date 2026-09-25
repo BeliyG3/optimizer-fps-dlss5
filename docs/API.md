@@ -1,46 +1,70 @@
 # Public API
 
 This is the API of the Optimizer FPS SDK — the layout maths, the D3D11/D3D12 adapters and the
-shaders. It says nothing about the ReShade add-on, which links the SDK statically and exports none of
-it; for that see [RESHADE_ADDON.md](RESHADE_ADDON.md).
+shaders, followed by the separate static-core host contract. The ReShade add-on links these
+libraries statically and does not export the SDK; see [RESHADE_ADDON.md](RESHADE_ADDON.md).
 
-ABI versions `1` and `2` remain binary-compatible. Version `3` is a separate opt-in export for spatial scaling. Cross-process descriptors are pointer-free. `structSize`, `version`, reserved fields, flags, dimensions, formats, and layouts are validated rather than silently corrected.
+The historical SDK ABI versions `1` and `2` remain binary-compatible. Version `3` is a separate opt-in export for spatial scaling. Cross-process descriptors are pointer-free. `structSize`, `version`, reserved fields, flags, dimensions, formats, and layouts are validated rather than silently corrected.
+
+## Static core host ABI (plan 1)
+
+`core/api/ofps_core.h` is the single entry header for `ofps_core`
+(`OptimizerFps::Core`, Windows x64). `OfpsCoreVersion` reports release `2026.9.1` and
+`OFPS_ABI_VERSION = 1`; `OfpsCreateCore` attaches an `IOfpsHost` and returns `IOfpsCore`.
+This ABI number is independent of SDK 0.6.0 and the historical spatial ABIs above.
+The target is linked statically into the ReShade shell and is not an installed SDK export.
+
+Hosts provide size-tagged `OfpsFrameInputs` with typed views, explicit rectangles,
+resting states and subresources. Frame and model grids are distinct; motion scales
+refer to the grid being read. `IOfpsModelHost` owns model creation, evaluation, release
+and optional input/output codecs. An identity codec returns `OFPS_S_IDENTITY`.
+Deferred creation uses `OFPS_S_MODEL_NEXT_FRAME` and `ModelReady`; creation frames do
+not evaluate a newly created model. `EndFrame` completes the frame protocol, including
+carried frames. `OfpsEvalResult::modelResult` records the last model call (zero without
+one); the ReShade shell separately retains the raw NGX result returned to the game.
+
+The host reports command-list submissions and registers queues for fence-gated reuse.
+Keep the model host alive until `OFPS_EVENT_FEATURE_RELEASED`, after deferred resources
+have drained. Do not re-enter core/feature methods from callbacks; copy borrowed status
+strings before the next call of the same method. Settings use `OfpsSettingsValues` and
+the public `core/api/ofps_settings_schema.h`; no host includes private core headers.
+The SDK D3D12 pixel adapter remains a supported public integration path.
 
 ## Versions
 
 Two independent version sources live in `cmake/Version.cmake`:
 
-- `PW_SDK_VERSION` - the semantic version of this SDK. It is the CMake `project()` version, the
-  installed package version and what `find_package(PeripheralWarp <ver>)` matches. It moves only
+- `OFPS_SDK_VERSION` - the semantic version of this SDK. It is the CMake `project()` version, the
+  installed package version and what `find_package(OptimizerFpsSdk <ver>)` matches. It moves only
   when the library or its public API/ABI changes. The ABI version numbers above (`1`, `2`, `3`) are
   separate and are not derived from it.
-- `PW_RELEASE_VERSION` - the user-facing release number of the ReShade add-on (its year and month; the line
+- `OFPS_RELEASE_VERSION` - the user-facing release number of the ReShade add-on (its year and month; the line
   changelog is written in). It moves with every shipped add-on build and never affects the SDK.
 
-CMake generates `pw_version.h` from `cmake/pw_version.h.in` into the build tree with
-`PW_SDK_VERSION_STRING` and `PW_ADDON_VERSION_STRING`, and regenerates the checked-in `NOTICE` from
+CMake generates `ofps_version.h` from `cmake/ofps_version.h.in` into the build tree with
+`OFPS_SDK_VERSION_STRING` and `OFPS_ADDON_VERSION_STRING`, and regenerates the checked-in `NOTICE` from
 `NOTICE.in`. The add-on's exported ReShade `NAME` deliberately carries no version - ReShade keys its
 `DisabledAddons` list on `NAME` - so the release number is reported in `DESCRIPTION` and in the
-overlay banner instead. Configuring fails if `CHANGELOG.md` has no `## <PW_RELEASE_VERSION>` section.
+overlay banner instead. Configuring fails if `CHANGELOG.md` has no `## <OFPS_RELEASE_VERSION>` section.
 
 ## Core types
 
 Include:
 
 ```cpp
-#include <peripheral_warp/types.h>
-#include <peripheral_warp/math.h>
+#include <optimizer_fps/types.h>
+#include <optimizer_fps/math.h>
 ```
 
-`pw::ConfigV1` selects `Off`, `Uniform`, or `Peripheral`, independent X/Y axis values, the color filter, and flags. Use `pw::DefaultConfigV1()`, change explicit fields, then call `pw::ValidateConfig()`.
+`ofps::sdk::ConfigV1` selects `Off`, `Uniform`, or `Peripheral`, independent X/Y axis values, the color filter, and flags. Use `ofps::sdk::DefaultConfigV1()`, change explicit fields, then call `ofps::sdk::ValidateConfig()`.
 
-`pw::BuildLayout(config, nativeWidth, nativeHeight, &layout)` computes exact even work dimensions and all shader coefficients. Consumers receiving a serialized or foreign layout must call `pw::ValidateLayout()`.
+`ofps::sdk::BuildLayout(config, nativeWidth, nativeHeight, &layout)` computes exact even work dimensions and all shader coefficients. Consumers receiving a serialized or foreign layout must call `ofps::sdk::ValidateLayout()`.
 
 Coordinates are continuous pixel-center coordinates; the first texel center is `0.5`. Motion is always `current pixel -> previous pixel`, measured in pixels.
 
 ```cpp
-pw::Float2 packedMotion = pw::PackMotion(nativePosition, nativeMotion, layout);
-pw::Float2 nativeMotion = pw::UnpackMotion(packedPosition, packedMotion, layout);
+ofps::sdk::Float2 packedMotion = ofps::sdk::PackMotion(nativePosition, nativeMotion, layout);
+ofps::sdk::Float2 nativeMotion = ofps::sdk::UnpackMotion(packedPosition, packedMotion, layout);
 ```
 
 Do not replace endpoint mapping with a global resolution multiplier. The local scale varies across the periphery.
@@ -69,7 +93,7 @@ NR height = even(native height * globalScale * rawWorkY)
 > **Retired in 26.26 (stage 27.C).** `optimizer-fps-dlss5.addon64` is an NGX interposer only: it no
 > longer exports `PeripheralWarpGetApi` / `GetApiV2` / `GetApiV3`, registers no consumers and
 > publishes no packed frames, and the `PeripheralWarp.fx` producer sample is gone with it. The
-> headers `include/peripheral_warp/addon_api.h`, `addon_api_v2.h` and `addon_api_v3.h` remain in the
+> headers `sdk/include/optimizer_fps/addon_api.h`, `addon_api_v2.h` and `addon_api_v3.h` remain in the
 > SDK as the ABI of the retired ReShade producer sample, kept for source compatibility; nothing in
 > this tree implements them. The section below describes that historical contract.
 >
@@ -79,9 +103,9 @@ NR height = even(native height * globalScale * rawWorkY)
 Load the exported function and request the exact ABI:
 
 ```cpp
-using GetApi = const pw::AddonApiV1 *(PW_CALL *)(std::uint32_t);
+using GetApi = const ofps::sdk::AddonApiV1 *(OFPS_CALL *)(std::uint32_t);
 auto getApi = reinterpret_cast<GetApi>(GetProcAddress(module, "PeripheralWarpGetApi"));
-const pw::AddonApiV1 *api = getApi ? getApi(pw::kAddonApiVersion) : nullptr;
+const ofps::sdk::AddonApiV1 *api = getApi ? getApi(ofps::sdk::kAddonApiVersion) : nullptr;
 ```
 
 `registerConsumer` installs an in-process synchronous callback. The callback must be `noexcept` in practice: exceptions must not cross the C ABI. A callback receives a `PackedFrameV1`; its ReShade objects and CPU views are valid only until the callback returns. Copy commands may be recorded on the supplied command list, but handles must not be retained. Consumer-owned resources referenced by those commands must remain alive until GPU retirement. Restore command-list state and leave all packed inputs in shader-resource usage before returning so the next consumer remains valid.
@@ -155,15 +179,15 @@ created with `ALLOW_UNORDERED_ACCESS` so the fast path above can resolve into it
 
 An integrator may skip the adapter entirely and record two compute dispatches of its own:
 
-- **Pack fused with its encode.** Include `peripheral_warp_common.hlsli` and
-  `peripheral_warp_pack.hlsli` (override `PW_WARP_CONSTANTS_REGISTER`, `PW_INPUT_CONSTANTS_REGISTER`
-  and `PW_DIAGNOSTIC_CONSTANTS_REGISTER` as needed), bind the four inputs at t0-t3 and the SDK's
-  linear/point clamp samplers at s0/s1, and call `PwPackTexel(workPixel + 0.5, ...)` per work texel.
+- **Pack fused with its encode.** Include `ofps_common.hlsli` and
+  `ofps_pack.hlsli` (override `OFPS_WARP_CONSTANTS_REGISTER`, `OFPS_INPUT_CONSTANTS_REGISTER`
+  and `OFPS_DIAGNOSTIC_CONSTANTS_REGISTER` as needed), bind the four inputs at t0-t3 and the SDK's
+  linear/point clamp samplers at s0/s1, and call `OfpsPackTexel(workPixel + 0.5, ...)` per work texel.
   Feed b1 with `BuildShaderConstants(layout)` and b2 with the `ShaderInputConstantsV2` returned by
   `ValidateD3D12Sources`. The packed colour, depth and motion are then byte-identical to `pack_ps`.
-- **Unpack fused with its resolve.** Map each native pixel with `PwPackNativePixel(nativePixel + 0.5)`
+- **Unpack fused with its resolve.** Map each native pixel with `OfpsPackNativePixel(nativePixel + 0.5)`
   and sample the work-size inputs bilinearly at that position; draw the session outlines with
-  `PwDiagnosticOutlineColor`. Reading the untouched frame from the native target in place requires
+  `OfpsDiagnosticOutlineColor`. Reading the untouched frame from the native target in place requires
   typed UAV loads for the target's view format; without them keep a packed HDR copy and sample it.
 
 The fused stage must reject exactly what `WriteSourceDescriptorsV2` rejects (use

@@ -9,7 +9,7 @@ rem     Install-OptimizerFPS.cmd "D:\Games\Baldurs Gate 3\bin\bg3_dx11.exe"
 rem Pause at the end unless the caller already asked not to. When we pause, the script
 rem itself is told not to, so a double-click never waits for Enter twice.
 set "PW_PAUSE=1"
-echo %*| find /i "-NoPause" >nul 2>&1
+echo %*| findstr.exe /i /c:"-NoPause" >nul 2>&1
 if not errorlevel 1 set "PW_PAUSE=0"
 
 if "%PW_PAUSE%"=="1" (
