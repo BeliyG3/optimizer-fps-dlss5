@@ -241,7 +241,9 @@ void Machine::RecordDebugCopies(ID3D12GraphicsCommandList *cmd, const FrameInput
 {
     Resources &m = *res_;
     const FrameInputs in = m.Resolve(rawIn);
-    auto copyRow = [&](ID3D12Resource *src, DXGI_FORMAT format, std::uint32_t texelBytes, std::uint32_t sx, std::uint32_t sy, UINT64 offset, UINT subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
+    auto copyRow = [&](ID3D12Resource *src, DXGI_FORMAT format, std::uint32_t texelBytes, std::uint32_t sx,
+                       std::uint32_t sy, UINT64 offset,
+                       UINT subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
         const std::uint32_t texels = 256 / texelBytes;
         D3D12_TEXTURE_COPY_LOCATION dst{};
         dst.pResource = readback;

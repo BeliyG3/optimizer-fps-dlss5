@@ -20,7 +20,7 @@ Copy-Item -LiteralPath $core -Destination $saved -Force
 $expected = (Get-FileHash -LiteralPath $saved -Algorithm SHA256).Hash
 
 $versionEvidence = Get-OfpsCoreFileEvidence -CorePath $saved `
-    -ExpectedVersion '2026.9.1' -ExpectedHash $expected `
+    -ExpectedVersion $testContext.ReleaseVersion -ExpectedHash $expected `
     -ReadPeInfo { param($path) Get-PeInfo $path } `
     -ReadExports { param($path) Get-PeExportNames $path } `
     -ReadVersion { param($path) '2026.9.0' }
@@ -62,10 +62,10 @@ if ($testContext.VerifyGame) {
     $verifyLog = Join-Path $verifyGame 'ReShade.log'
     $prefix = 'Registered add-on "Optimizer FPS for DLSS5"' + "`r`n"
     foreach ($case in @(
-        @{Name='core success'; Line='Optimizer FPS: core loaded; ABI 1; release 2026.9.1'; Code=0; Verdict='loaded'},
+        @{Name='core success'; Line=('Optimizer FPS: core loaded; ABI 1; release ' + $testContext.ReleaseVersion); Code=0; Verdict='loaded'},
         @{Name='core missing'; Line='Optimizer FPS: core load failed: core DLL could not be loaded: 126'; Code=1; Verdict='missing'},
         @{Name='core version'; Line='Optimizer FPS: core loaded; ABI 1; release 2026.9.0'; Code=1; Verdict='version-mismatch'},
-        @{Name='core ABI'; Line='Optimizer FPS: core loaded; ABI 2; release 2026.9.1'; Code=1; Verdict='abi-mismatch'},
+        @{Name='core ABI'; Line=('Optimizer FPS: core loaded; ABI 2; release ' + $testContext.ReleaseVersion); Code=1; Verdict='abi-mismatch'},
         @{Name='no core line'; Line=''; Code=10; Verdict='unknown'}
     )) {
         [IO.File]::WriteAllText($verifyLog, ($prefix + $case.Line), (New-Object Text.UTF8Encoding($false)))

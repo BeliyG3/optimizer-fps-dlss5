@@ -13,6 +13,7 @@ set(OFPS_ADDON_SOURCES
     addon/ini_migration.h
     addon/ini_store.cpp addon/ini_store.h
     addon/shell_settings.cpp addon/shell_settings.h
+    addon/status_log.cpp addon/status_log.h
     addon/layout_bridge_v1.h
     addon/optiscaler_link.cpp addon/optiscaler_link.h
     addon/overlay.cpp addon/overlay_diagnostics.cpp

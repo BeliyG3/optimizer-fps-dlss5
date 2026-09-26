@@ -3,6 +3,7 @@
 #include "ngx_nr_contract.h"
 #include "ngx_nr_pad.h"
 #include "ngx_nr_runtime.h"
+#include "ngx_nr_switch.h"
 #include "options.h"
 #include "core_session.h"
 
@@ -51,6 +52,8 @@ private:
     NVSDK_NGX_Handle *feature=nullptr;
     ComPtr<ID3D12Resource> output;
     std::string mode="off";
+    bool computeList=false; // --nr-list compute
+    NrLayoutSwitch layoutSwitch;
     NrRect colourRect, guideRect, outputRect;
     bool depthInverted=false, deferCreate=false, pendingReset=true, presented=false;
     unsigned calls=0, succeeded=0, failed=0;

@@ -118,6 +118,37 @@ unsigned Device::Allocate(unsigned count)
 D3D12_CPU_DESCRIPTOR_HANDLE Device::Cpu(unsigned i) const { auto h=heap->GetCPUDescriptorHandleForHeapStart(); h.ptr+=SIZE_T(i)*descriptorStep; return h; }
 D3D12_GPU_DESCRIPTOR_HANDLE Device::Gpu(unsigned i) const { auto h=heap->GetGPUDescriptorHandleForHeapStart(); h.ptr+=UINT64(i)*descriptorStep; return h; }
 ID3D12Resource *Device::BackBuffer() const { return back[swap->GetCurrentBackBufferIndex()].Get(); }
+void Device::EnableCompute()
+{
+    if(computeQueue) return;
+    D3D12_COMMAND_QUEUE_DESC q{}; q.Type=D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    Check(gpu->CreateCommandQueue(&q,IID_PPV_ARGS(&computeQueue)),"Create compute queue");
+    Check(gpu->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COMPUTE,IID_PPV_ARGS(&computeAllocator)),"Create compute allocator");
+    Check(gpu->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_COMPUTE,computeAllocator.Get(),nullptr,IID_PPV_ARGS(&computeList)),"Create compute list");
+    Check(computeList->Close(),"Close initial compute list");
+    Check(gpu->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&handoff)),"Create hand-off fence");
+}
+ID3D12GraphicsCommandList4 *Device::BeginCompute()
+{
+    // The previous frame's compute list was retired with the frame (the direct queue waited for it).
+    Check(list->Close(),"Close list before compute");
+    ID3D12CommandList *lists[]={list.Get()}; queue->ExecuteCommandLists(1,lists);
+    if(onSubmitted) onSubmitted(submissionContext,queue.Get(),list.Get());
+    Check(queue->Signal(handoff.Get(),++handoffValue),"Signal hand-off");
+    Check(computeAllocator->Reset(),"Reset compute allocator");
+    Check(computeList->Reset(computeAllocator.Get(),nullptr),"Reset compute list");
+    Check(computeQueue->Wait(handoff.Get(),handoffValue),"Compute waits for direct");
+    return computeList.Get();
+}
+void Device::EndCompute()
+{
+    Check(computeList->Close(),"Close compute list");
+    ID3D12CommandList *lists[]={computeList.Get()}; computeQueue->ExecuteCommandLists(1,lists);
+    if(onSubmitted) onSubmitted(submissionContext,computeQueue.Get(),computeList.Get());
+    Check(computeQueue->Signal(handoff.Get(),++handoffValue),"Signal compute done");
+    Check(queue->Wait(handoff.Get(),handoffValue),"Direct waits for compute");
+    Check(list->Reset(allocator.Get(),nullptr),"Reopen list after compute");
+}
 D3D12_CPU_DESCRIPTOR_HANDLE Device::BackRtv() const { auto h=rtvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr+=SIZE_T(swap->GetCurrentBackBufferIndex())*rtvStep; return h; }
 ComPtr<ID3D12Resource> Device::Buffer(UINT64 bytes, D3D12_HEAP_TYPE type, D3D12_RESOURCE_STATES state, D3D12_RESOURCE_FLAGS flags)
 {

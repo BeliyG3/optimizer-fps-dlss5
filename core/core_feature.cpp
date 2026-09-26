@@ -1,3 +1,4 @@
+#include "core/gpu/host_list.h"
 #include "core/core_impl.h"
 #include "core/frame/dispatch.h"
 #include "core/frame/frame_inputs.h"
@@ -17,7 +18,7 @@ int Feature::Evaluate(ID3D12GraphicsCommandList *cmd, const OfpsFrameInputs *inp
     if (core_.InCallback())
         return OFPS_E_STATE;
     if (!cmd || !inputs || inputs->size < sizeof(*inputs) || !out || out->size < sizeof(uint32_t) ||
-        cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
+        !gpu::HostListRecordable(cmd))
         return OFPS_E_ARG;
     std::lock_guard lock(Ctx().mutex);
     const InsideCoreScope scope;

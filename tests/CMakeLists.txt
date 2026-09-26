@@ -246,7 +246,7 @@ set(OFPS_CORE_API_TEST_SOURCES
 add_executable(ofps_core_api_tests ${OFPS_CORE_API_TEST_SOURCES})
 target_sources(ofps_core_api_tests PRIVATE test_core_api_compute_direct.cpp)
 target_link_libraries(ofps_core_api_tests PRIVATE ofps_core OptimizerFps::SdkCore d3d12 dxgi d3dcompiler)
-target_include_directories(ofps_core_api_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+target_include_directories(ofps_core_api_tests PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/generated")
 target_compile_features(ofps_core_api_tests PRIVATE cxx_std_20)
 if(MSVC)
 target_compile_options(ofps_core_api_tests PRIVATE /W4 /WX /EHsc /permissive-)
@@ -260,7 +260,7 @@ if(TARGET ofps_core_dll)
     target_compile_definitions(ofps_core_api_dll_tests PRIVATE OFPS_TEST_DLL=1
         WIN32_LEAN_AND_MEAN= NOMINMAX=)
     target_include_directories(ofps_core_api_dll_tests PRIVATE "${PROJECT_SOURCE_DIR}"
-        "${PROJECT_SOURCE_DIR}/sdk" "${PROJECT_SOURCE_DIR}/sdk/include")
+        "${PROJECT_SOURCE_DIR}/sdk" "${PROJECT_SOURCE_DIR}/sdk/include" "${PROJECT_BINARY_DIR}/generated")
     target_compile_features(ofps_core_api_dll_tests PRIVATE cxx_std_20)
     target_compile_options(ofps_core_api_dll_tests PRIVATE /W4 /WX /EHsc /permissive-)
     target_link_libraries(ofps_core_api_dll_tests PRIVATE

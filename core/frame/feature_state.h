@@ -52,6 +52,7 @@ struct FeatureState {
     uint64_t modelGeneration = 0;
     bool codecGridActive = false;
     bool modelResolution = false;
+    bool hostListCompute = false; // the last evaluate came on a COMPUTE list (DLSS5-Reshade-AIO)
     bool withholdUi = false;
     uint32_t gpuNativeWidth = 0, gpuNativeHeight = 0, gpuWorkWidth = 0, gpuWorkHeight = 0;
     ID3D12Resource *answer = nullptr, *frameSnapshot = nullptr;

@@ -97,7 +97,8 @@ struct TemporalSettings {
     float colorTolerance = 0.08f;
     // Rejected pixels (disocclusions, frame edge) get the box-filtered residual instead of nothing.
     bool holeFill = true;
-    float mvSearchRadiusPx = 16.0f; // 26.14: search radius (native px) for a depth-matching motion texel when the pixel's own texels belong to another surface (block-constant optical-flow vectors); 0 = off
+    float mvSearchRadiusPx =
+        16.0f; // 26.14: search radius (native px) for a depth-matching motion texel when the pixel's own texels belong to another surface (block-constant optical-flow vectors); 0 = off
     bool residualCatmullRom = true; // interpolated frames resample the residual with Catmull-Rom instead of bilinear
     // Warped path: residual and interpolated frames are based on the packed colour unpacked without the
     // model (stage 26.3), so the residual carries only the model's contribution. Off = old behaviour.
@@ -206,6 +207,7 @@ struct CoreContext {
     std::mutex mutex;
     Status status;
     std::uint64_t evalCounter = 0; // every HookEvaluate, warped or not
+    bool evalOnCompute = false; // the evaluate being recorded came on a COMPUTE list (set per frame)
 
     ofps::core::gpu::Shaders shaders;
     std::unordered_map<void *, std::unique_ptr<FeatureState>> features;

@@ -149,7 +149,7 @@ void DrawOverlay(bool fitWindow) {
         case Connection::Disconnected:
             ImGui::TextWrapped("host disconnected"); break;
         default:
-            ImGui::TextWrapped("Optimizer FPS: host process not running (no shared block)"); break;
+            ImGui::TextWrapped("Optimizer FPS: the 64-bit host in host64 (DLSS5-Feeder or DLSS5-Reshade-AIO) is not running yet"); break;
         }
     } else {
         DrawStatus(snapshot);

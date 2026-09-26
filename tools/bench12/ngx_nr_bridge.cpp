@@ -65,12 +65,12 @@ void NrColourBridge::CreatePipelines(Device &d)
     descriptors=d.Allocate(4); // encode SRV/UAV, decode SRV/UAV
 }
 void NrColourBridge::Configure(Device &d, ID3D12Resource *source, ID3D12Resource *target, unsigned w, unsigned h, bool encoding,
-                               unsigned padX, unsigned padY, bool edge)
+                               unsigned padX, unsigned padY, bool edge, DXGI_FORMAT proxyFormat)
 {
     if(!root) CreatePipelines(d);
     colour=source; output=target; encode=encoding; padEdge=edge;
     const auto desc=source->GetDesc();
-    proxy=encode ? d.Texture(unsigned(desc.Width)+padX,desc.Height+padY,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,Uav) : nullptr;
+    proxy=encode ? d.Texture(unsigned(desc.Width)+padX,desc.Height+padY,proxyFormat,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,Uav) : nullptr;
     presented=d.Texture(w,h,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,Present);
     if(proxy) { d.TextureSrv(colour,descriptors); CreateUav(d,proxy.Get(),descriptors+1); }
     d.TextureSrv(output,descriptors+2); CreateUav(d,presented.Get(),descriptors+3);

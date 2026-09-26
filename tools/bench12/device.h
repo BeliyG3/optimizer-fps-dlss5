@@ -47,6 +47,13 @@ public:
     bool Pump();
     HWND Window() const { return window; }
     ID3D12CommandQueue *Queue() const { return queue.Get(); }
+    // --nr-list compute: the frame's direct list is closed and submitted, the returned COMPUTE list
+    // (its own queue) waits for it; EndCompute submits that list, makes the direct queue wait for it
+    // and reopens the direct list (no pipeline state, no descriptor heaps set).
+    void EnableCompute();
+    ID3D12CommandQueue *ComputeQueue() const { return computeQueue.Get(); }
+    ID3D12GraphicsCommandList4 *BeginCompute();
+    void EndCompute();
     void SetVsync(bool enabled) { vsyncEnabled=enabled; }
     bool Resize(unsigned w, unsigned h);
     LRESULT (*messageHandler)(HWND,UINT,WPARAM,LPARAM)=nullptr;
@@ -82,6 +89,11 @@ private:
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
     ComPtr<ID3D12Resource> back[2], readback;
     ComPtr<ID3D12Fence> fence;
+    ComPtr<ID3D12CommandQueue> computeQueue;
+    ComPtr<ID3D12CommandAllocator> computeAllocator;
+    ComPtr<ID3D12GraphicsCommandList4> computeList;
+    ComPtr<ID3D12Fence> handoff;
+    UINT64 handoffValue=0;
     HANDLE event=nullptr;
     UINT64 serial=0;
     unsigned nextDescriptor=0, descriptorStep=0, rtvStep=0;

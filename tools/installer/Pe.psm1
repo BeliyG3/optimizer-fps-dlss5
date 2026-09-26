@@ -336,12 +336,15 @@ function Resolve-InstallTarget
     else {
         $host64 = Join-Safe $gameRoot 'host64'
         $hostExe = Join-Safe $host64 $Context.HostExeName
+        $aioExe = Join-Safe $host64 $Context.AioHostExeName
+        $aio = (-not (Test-FileHere $hostExe)) -and (Test-FileHere $aioExe)
+        if ($aio) { $hostExe = $aioExe; $Context.HostExeName = $Context.AioHostExeName }  # DLSS5-Reshade-AIO
         if (-not (Test-FileHere $hostExe)) {
-            & $Context.Stop -Text 'This is a 32-bit game and DLSS5-Feeder''s 64-bit host is not installed.' `
-                -Detail ('Expected: ' + $hostExe) `
+            & $Context.Stop -Text 'This is a 32-bit game and no 64-bit NR host (DLSS5-Feeder or DLSS5-Reshade-AIO) is installed.' `
+                -Detail ('Expected: ' + $hostExe + ' or ' + $aioExe) `
                 -Manual ("A 32-bit process cannot load the 64-bit NGX runtime, so DLSS 5 Neural Rendering runs in`n" +
-                         "DLSS5-Feeder's host64 helper. Run Install-DLSS5Feeder.ps1 for this game first, then re-run`n" +
-                         'this installer.') `
+                         "a 64-bit helper in host64: DLSS5-Feeder's host or DLSS5-Reshade-AIO's 32-bit wrapper. Install one`n" +
+                         'of them for this game first (Install-DLSS5Feeder.ps1, or the AIO 32-bit zip), then re-run this installer.') `
                 -Code $Context.ExitNoHost64
         }
         $reshadeDll = Find-ReShadeDll -Dir $host64 -Bits 64 -Context $Context
@@ -364,9 +367,17 @@ function Resolve-InstallTarget
         }
         $remoteDir = Split-Path -Parent $remoteReshadeDll
 
-        $feed32 = Join-Safe $remoteDir 'dlss5-feed.addon32'
+        # Both helpers in host64: the 32-bit add-on beside the game says which one runs.
+        if ((-not $aio) -and (Test-FileHere $aioExe) -and
+            (Test-FileHere (Join-Safe $remoteDir 'standalone-dlssnr.addon32')) -and
+            (-not (Test-FileHere (Join-Safe $remoteDir 'dlss5-feed.addon32')))) {
+            $aio = $true
+            $Context.HostExeName = $Context.AioHostExeName
+        }
+        $feedName = if ($aio) { 'standalone-dlssnr.addon32' } else { 'dlss5-feed.addon32' }
+        $feed32 = Join-Safe $remoteDir $feedName
         if (-not (Test-FileHere $feed32)) {
-            & $Context.Report -Status 'Warn' -Text 'dlss5-feed.addon32 is not beside the 32-bit ReShade DLL.' `
+            & $Context.Report -Status 'Warn' -Text ($feedName + ' is not beside the 32-bit ReShade DLL.') `
                 -Detail 'Without the Feeder add-on the game never hands its frames to host64, so nothing will be warped.'
         }
     }
@@ -441,7 +452,7 @@ function Test-NeuralConsumer
     $consumerFound = @()
     foreach ($d in @($addonDir, $targetDir, $gameRoot, $remoteDir)) {
         if (-not (Test-DirHere $d)) { continue }
-        foreach ($pat in @('renodx-dlss5*.addon64', 'dlss5-feed*.addon64', 'dlss5-feed*.addon32')) {
+        foreach ($pat in @('renodx-dlss*.addon64', 'dlss5-feed*.addon64', 'dlss5-feed*.addon32', 'standalone-dlssnr.addon64', 'standalone-dlssnr.addon32')) {
             foreach ($h in @(Get-ChildItem -LiteralPath $d -File -Filter $pat -ErrorAction SilentlyContinue)) {
                 $consumerFound += $h.FullName
             }

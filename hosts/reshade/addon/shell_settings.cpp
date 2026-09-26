@@ -22,8 +22,10 @@ void LoadShellSettings() {
         g_settings.debugLayer = value != 0;
         g_settings.debugLayerPresent = true;
     }
-    if (::reshade::get_config_value(nullptr, section, "CrashGuard", value))
+    if (::reshade::get_config_value(nullptr, section, "CrashGuard", value)) {
         g_settings.crashGuard = value != 0;
+        g_settings.crashGuardPresent = true;
+    }
 }
 
 const ShellSettings &CurrentShellSettings() { return g_settings; }

@@ -45,7 +45,7 @@ if ($ReShade64 -and $ReShade32 -and
     $hostLog = Join-Path $g 'host64\ReShade.log'
     $remoteLog = Join-Path $g 'ReShade.log'
     [IO.File]::WriteAllText($hostLog, ('Registered add-on "Optimizer FPS for DLSS5"' + "`r`n" +
-        'Optimizer FPS: core loaded; ABI 1; release 2026.9.1'), (New-Object Text.UTF8Encoding($false)))
+        ('Optimizer FPS: core loaded; ABI 1; release ' + $testContext.ReleaseVersion)), (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText($remoteLog,
         'Registered add-on "Optimizer FPS for DLSS5 (tab for the 64-bit host)"',
         (New-Object Text.UTF8Encoding($false)))

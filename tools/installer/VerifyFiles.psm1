@@ -320,7 +320,7 @@ else { & $Context.Report -Status 'Warn' -Text 'nvngx_dlssnr.dll was not found be
 $consumers = @()
 foreach ($d in @($addonDir, $targetDir, $gameRoot, $remoteDir)) {
     if (-not (Test-DirHere $d)) { continue }
-    foreach ($pat in @('renodx-dlss5*.addon64', 'dlss5-feed*.addon64', 'dlss5-feed*.addon32')) {
+    foreach ($pat in @('renodx-dlss*.addon64', 'dlss5-feed*.addon64', 'dlss5-feed*.addon32', 'standalone-dlssnr.addon64', 'standalone-dlssnr.addon32')) {
         foreach ($h in @(Get-ChildItem -LiteralPath $d -File -Filter $pat -ErrorAction SilentlyContinue)) { $consumers += $h.Name }
     }
     $opti = Join-Safe $d 'OptiScaler.ini'

@@ -58,7 +58,7 @@ $packageCode = $LASTEXITCODE
 $ErrorActionPreference = $oldPreference
 Check 'package builds inside temporary test root' ($packageCode -eq 0) $packageOutput
 if ($packageCode -ne 0) { throw 'Temporary package build failed' }
-$original = Join-Path $packageOut 'Optimizer-FPS-for-DLSS5-2026.9.1.zip'
+$original = @(Get-ChildItem -LiteralPath $packageOut -File -Filter 'Optimizer-FPS-for-DLSS5-*.zip' | Select-Object -First 1)[0].FullName  # named after the release
 $extract = Join-Path $Root 'package-extracted'
 New-Item -ItemType Directory -Path $extract -Force | Out-Null
 [IO.Compression.ZipFile]::ExtractToDirectory($original, $extract)

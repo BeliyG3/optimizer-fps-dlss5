@@ -41,6 +41,21 @@ int main() {
     Check(DecidePack(RequestedPath::Auto, ready).path == PackPath::None,
           "no pixel draw on compute list");
 
+    ready.shadersLoaded = true;
+    ready.privateCompute = false;
+    ready.hostCompute = true; // the host's own list is COMPUTE (DLSS5-Reshade-AIO)
+    Check(DecidePack(RequestedPath::Auto, ready).path == PackPath::Compute,
+          "host compute list");
+    choice = DecidePack(RequestedPath::Pixel, ready);
+    Check(choice.path == PackPath::None && choice.reason == PathReason::UnsupportedList,
+          "forced pixel refused on a host compute list");
+    ready.colorTypedStore = false;
+    choice = DecidePack(RequestedPath::Auto, ready);
+    Check(choice.path == PackPath::None && choice.reason == PathReason::MissingTypedColor,
+          "host compute list has no pixel fallback");
+    ready.colorTypedStore = true;
+    ready.hostCompute = false;
+
     UnpackSupport out{};
     out.answerValid = true;
     out.outputTypedStore = true;
@@ -63,8 +78,8 @@ int main() {
 
     Check(DecideModelList({true, true, false}) == ModelListPath::HostDirect,
           "host direct list");
-    Check(DecideModelList({true, false, true}) == ModelListPath::None,
-          "host compute rejected");
+    Check(DecideModelList({true, false, true}) == ModelListPath::HostCompute,
+          "host compute accepted");
     Check(DecideModelList({false, false, true}) == ModelListPath::PrivateCompute,
           "private compute accepted");
     Check(DecideModelList({false, false, false}) == ModelListPath::None,

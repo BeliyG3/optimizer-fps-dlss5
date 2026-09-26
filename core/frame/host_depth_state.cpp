@@ -8,7 +8,12 @@ namespace ofps::core {
 D3D12_RESOURCE_STATES HostDepthState(const OfpsResource &resource)
 {
     ID3D12Resource *depth = resource.res;
-    const int mode = Ctx().diag.depthState; // DebugDepthState; 0/99 follow the supplied state
+    int mode = Ctx().diag.depthState; // DebugDepthState; 0/99 follow the supplied state
+    if ((mode == 2 || mode == 3) && Ctx().evalOnCompute) {
+        static bool s_ignored = false;
+        if (!s_ignored) { s_ignored = true; Log(true, "Optimizer FPS NGX hook: DebugDepthState=%d names a state a compute list cannot use; ignored on the host's compute list", mode); }
+        mode = 0;
+    }
     switch (mode) {
     case 1: return D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     case 2: return D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -23,7 +28,14 @@ D3D12_RESOURCE_STATES HostDepthState(const OfpsResource &resource)
         const D3D12_RESOURCE_DESC d = depth->GetDesc();
         if (d.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL) {
             static bool s_logged = false;
-            if (!s_logged) { s_logged = true; Log(false, "Optimizer FPS NGX hook: the host depth is a depth-stencil resource (fmt %d, %s): barriers address the depth plane only; resting state NON_PIXEL_SHADER_RESOURCE (DebugDepthState overrides)", (int) d.Format, ofps::core::gpu::PlanarDepthFormat(d.Format) ? "planar" : "single plane"); }
+            if (!s_logged) {
+                s_logged = true;
+                Log(false,
+                    "Optimizer FPS NGX hook: the host depth is a depth-stencil resource (fmt %d, %s): "
+                    "barriers address the depth plane only; resting state NON_PIXEL_SHADER_RESOURCE "
+                    "(DebugDepthState overrides)",
+                    (int)d.Format, ofps::core::gpu::PlanarDepthFormat(d.Format) ? "planar" : "single plane");
+            }
         }
     }
     return resource.restState;

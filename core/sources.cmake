@@ -1,4 +1,18 @@
-set(OFPS_CORE_SOURCES context.cpp context.h log.cpp log.h frame/common.h frame/debug_readback.cpp frame/debug_readback.h frame/dispatch.cpp frame/dispatch.h frame/feature_state.cpp frame/feature_state.h frame/host_depth_state.cpp frame/host_depth_state.h frame/host_shape.cpp frame/host_shape.h frame/lifecycle.cpp frame/lifecycle.h frame/model_passes.cpp frame/model_passes.h frame/motion_smooth.cpp frame/motion_smooth.h frame/spread_model.cpp frame/spread_passes.cpp frame/spread_passes.h frame/timing.cpp frame/timing.h frame/warp_recorder.cpp frame/warp_recorder.h gpu/barriers.cpp gpu/barriers.h gpu/crash_guard_seh.cpp gpu/crash_guard_seh.h gpu/graveyard.cpp gpu/graveyard.h gpu/queues.cpp gpu/queues.h gpu/shaders.cpp gpu/shaders.h temporal/accumulation.cpp temporal/async_entry.cpp temporal/async_frame.h temporal/async_scheduler.cpp temporal/async_scheduler.h temporal/background.cpp temporal/controller.cpp temporal/controller.h temporal/history.cpp temporal/history.h temporal/machine.cpp temporal/machine.h temporal/phase.h temporal/residual.cpp temporal/resources.cpp temporal/resources.h temporal/resources_create.cpp shaders/temporal_layout.h shaders/temporal_passes.def)
+set(OFPS_CORE_SOURCES
+    context.cpp context.h log.cpp log.h frame/common.h frame/debug_readback.cpp
+    frame/debug_readback.h frame/dispatch.cpp frame/dispatch.h frame/feature_state.cpp
+    frame/feature_state.h frame/host_depth_state.cpp frame/host_depth_state.h frame/host_shape.cpp
+    frame/host_shape.h frame/lifecycle.cpp frame/lifecycle.h frame/model_passes.cpp
+    frame/model_passes.h frame/motion_smooth.cpp frame/motion_smooth.h frame/spread_model.cpp
+    frame/spread_passes.cpp frame/spread_passes.h frame/timing.cpp frame/timing.h
+    frame/warp_recorder.cpp frame/warp_recorder.h gpu/barriers.cpp gpu/barriers.h
+    gpu/crash_guard_seh.cpp gpu/crash_guard_seh.h gpu/graveyard.cpp gpu/graveyard.h gpu/queues.cpp
+    gpu/queues.h gpu/shaders.cpp gpu/shaders.h temporal/accumulation.cpp temporal/async_entry.cpp
+    temporal/async_frame.h temporal/async_host_sync.cpp temporal/async_scheduler.cpp temporal/async_scheduler.h
+    temporal/background.cpp temporal/controller.cpp temporal/controller.h temporal/history.cpp
+    temporal/history.h temporal/machine.cpp temporal/machine.h temporal/mode_select.cpp
+    temporal/phase.h temporal/residual.cpp temporal/resources.cpp temporal/resources.h
+    temporal/resources_create.cpp shaders/temporal_layout.h shaders/temporal_passes.def)
 list(APPEND OFPS_CORE_SOURCES api/ofps_core.h api/ofps_settings_schema.h settings/schema.cpp)
 list(APPEND OFPS_CORE_SOURCES gpu/descriptor_pool.h gpu/descriptor_pool.cpp gpu/constant_ring.h gpu/constant_ring.cpp gpu/submission.h gpu/submission.cpp
     gpu/submission_recordings.cpp)

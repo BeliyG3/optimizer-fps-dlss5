@@ -30,6 +30,9 @@ struct Options {
     int coreMode=2, coreTemporal=0, coreWarpPath=0;
     std::string nr="off", mvFormat="rg16f"; // DLSS Neural Rendering host mode; motion texture layout for NGX
     std::string nrColour="srgb"; // colour handed to NR: sRGB-encoded proxy, or linear HDR as rendered
+    int switchEvery=0; // --switch N: cycle the add-on's layout every N frames (bench of the retire path)
+    std::string nrProxyFormat="rgba16f"; // format of the sRGB proxy handed to NR (r10g10b10a2: colour and output formats differ, as with DLSS5-Reshade-AIO)
+    std::string nrList="direct"; // list NR is evaluated on: the frame's direct list, or a COMPUTE list on a compute queue (DLSS5-Reshade-AIO)
     int nrLog=1; // NR runtime file log level echoed as [nr log] (0 off, 1 on, 2 verbose)
     int nrPadX=0, nrPadY=0, nrBaseX=0, nrBaseY=0; // NR output texture padding and region base
     int nrColourPadX=0, nrColourPadY=0, nrColourPadEdge=0; // NR colour (sRGB proxy) texture padding (region at 0,0); 1 = pad repeats the edge
@@ -88,6 +91,9 @@ inline Options ParseOptions(int argc, char **argv, Options o={})
         else if (key=="--nr") o.nr=value();
         else if (key=="--nr-log") o.nrLog=ParseInt(value());
         else if (key=="--nr-colour") o.nrColour=value();
+        else if (key=="--nr-list") o.nrList=value();
+        else if (key=="--nr-proxy-format") o.nrProxyFormat=value();
+        else if (key=="--switch") o.switchEvery=ParseInt(value());
         else if (key=="--mv-format") o.mvFormat=value();
         else if (key=="--nr-output-pad") {
             std::string s=value(); std::vector<int> n; size_t start=0;
@@ -153,6 +159,11 @@ inline Options ParseOptions(int argc, char **argv, Options o={})
     if (o.nr=="upscale" && o.upscaler!="none") throw std::runtime_error("--nr upscale replaces DLSS SR/RR; use it with --upscaler none");
     if (o.nrLog<0 || o.nrLog>2) throw std::runtime_error("--nr-log requires 0, 1 or 2");
     if (!contains(o.nrColour,{"srgb","linear"})) throw std::runtime_error("Invalid --nr-colour (srgb|linear)");
+    if (o.switchEvery<0) throw std::runtime_error("--switch requires N >= 0");
+    if (!contains(o.nrProxyFormat,{"rgba16f","r10g10b10a2"})) throw std::runtime_error("Invalid --nr-proxy-format (rgba16f|r10g10b10a2)");
+    if (o.nrProxyFormat!="rgba16f" && o.nrColour!="srgb") throw std::runtime_error("--nr-proxy-format needs --nr-colour srgb");
+    if (!contains(o.nrList,{"direct","compute"})) throw std::runtime_error("Invalid --nr-list (direct|compute)");
+    if (o.nrList=="compute" && o.nr!="native") throw std::runtime_error("--nr-list compute requires --nr native");
     if (o.nrColourPadX<0 || o.nrColourPadY<0 || o.nrColourPadX>4096 || o.nrColourPadY>4096) throw std::runtime_error("--nr-colour-pad requires 0..4096");
     if ((o.nrColourPadX || o.nrColourPadY) && o.nrColour!="srgb") throw std::runtime_error("--nr-colour-pad needs --nr-colour srgb (the padded texture is the proxy)");
     if (!contains(o.mvFormat,{"rg16f","rgba16f"})) throw std::runtime_error("Invalid --mv-format (rg16f|rgba16f)");

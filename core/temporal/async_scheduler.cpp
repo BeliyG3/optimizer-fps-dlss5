@@ -21,43 +21,6 @@
 #include "core/temporal/async_frame.h"
 
 namespace ofps::core {
-// Copies an input on the host list, restoring the host state and leaving its twin shader-readable.
-void AsyncCopyInput(ID3D12GraphicsCommandList *cmd, ID3D12Resource *host, ID3D12Resource *bg, D3D12_RESOURCE_STATES &bgState,
-                    D3D12_RESOURCE_STATES hostState, UINT hostSub)
-{
-    BarrierExternal(cmd, host, hostState, D3D12_RESOURCE_STATE_COPY_SOURCE, hostSub);
-    Barrier(cmd, bg, bgState, D3D12_RESOURCE_STATE_COPY_DEST);
-    if (hostSub != D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
-        D3D12_TEXTURE_COPY_LOCATION dstP{}, srcP{};
-        dstP.pResource = bg; dstP.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; dstP.SubresourceIndex = 0;
-        srcP.pResource = host; srcP.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX; srcP.SubresourceIndex = hostSub;
-        cmd->CopyTextureRegion(&dstP, 0, 0, 0, &srcP, nullptr);
-    } else {
-        cmd->CopyResource(bg, host);
-    }
-    Barrier(cmd, bg, bgState, kModelInputState);
-    BarrierExternal(cmd, host, D3D12_RESOURCE_STATE_COPY_SOURCE, hostState, hostSub);
-}
-
-void AsyncSignalPending(FeatureState &st)
-{
-    if (!st.async) return;
-    AsyncJob &a = *st.async;
-    // The submission event fires before the host's ExecuteCommandLists, so the signal is issued here,
-    // one evaluate later, when the tagged list is certainly queued ahead of it. Without the event the
-    // fallback signals every registered queue of the device.
-    if (a.signalPending) {
-        if (a.submitSeen && a.submitQueue) {
-            a.submitQueue->Signal(a.fInputs, a.jobId);
-        } else {
-            ofps::core::gpu::SignalRegisteredQueues(st.realDevice, st.device, a.fInputs, a.jobId);
-            if (!a.fallbackLogged) { a.fallbackLogged = true; Log(false, "Optimizer FPS NGX hook: background mode: host submission not observed, signalling the registered queues one frame later"); }
-        }
-        a.signalPending = false;
-        a.submitSeen = false;
-    }
-}
-
 int AsyncBody(AsyncCtx &c)
 {
     FeatureState &st = *c.st;
@@ -85,29 +48,8 @@ int AsyncBody(AsyncCtx &c)
             static_cast<float>(t1.QuadPart - t0.QuadPart) * 1000.0f / static_cast<float>(f0.QuadPart));
     }
 
-    // 0. Queue cap: the previous evaluate's list is already submitted (the host executes each frame's
-    //    list before the next evaluate), so a signal issued now lands behind it; then wait on the CPU
-    //    until at most maxQueue frames are unfinished.
-    const int maxQueue = std::clamp(Ctx().temporal.maxQueue, 0, 8);
-    if (maxQueue > 0 && a.fHost && a.hostEvent && Ctx().evalCounter > 1) {
-        const std::uint64_t prev = Ctx().evalCounter - 1;
-        if (prev > a.hostSignalled && ofps::core::gpu::SignalRegisteredQueues(st.realDevice, st.device, a.fHost, prev)) a.hostSignalled = prev;
-        const std::uint64_t target = a.hostSignalled > static_cast<std::uint64_t>(maxQueue) ? a.hostSignalled - static_cast<std::uint64_t>(maxQueue) : 0;
-        float waited = 0.0f;
-        if (target > 0 && a.fHost->GetCompletedValue() < target) {
-            LARGE_INTEGER f0, t0, t1;
-            QueryPerformanceFrequency(&f0);
-            QueryPerformanceCounter(&t0);
-            ResetEvent(a.hostEvent);
-            if (SUCCEEDED(a.fHost->SetEventOnCompletion(target, a.hostEvent))) WaitForSingleObject(a.hostEvent, 200);
-            QueryPerformanceCounter(&t1);
-            waited = static_cast<float>(t1.QuadPart - t0.QuadPart) * 1000.0f / static_cast<float>(f0.QuadPart);
-            ++a.queueWaits;
-        }
-        a.queueWaitMs = a.queueWaitMs * 0.95f + waited * 0.05f;
-    } else {
-        a.queueWaitMs *= 0.95f;
-    }
+    // 0. Queue cap (async_host_sync.cpp).
+    AsyncQueueCap(st);
 
     AsyncSignalPending(st);
     if (c.hostReset) {
@@ -193,10 +135,16 @@ int AsyncBody(AsyncCtx &c)
             const double elapsed = static_cast<double>(now.QuadPart - a.windowStart.QuadPart) / static_cast<double>(freq.QuadPart);
             if (elapsed >= 1.0) { a.passesPerSecond = static_cast<float>(a.windowPasses / elapsed); a.windowPasses = 0; a.windowStart = now; }
             if (a.passes <= 3 || a.passes % 30 == 0 || Ctx().temporal.debugLog)
-                Log(false, "Optimizer FPS NGX hook: background pass %llu adopted (age %u frames at adoption, average %.1f, %.2f ms on the %s queue, %.1f passes/s, forced waits %llu, stalls %llu, failures %llu, queue cap wait %.2f ms/frame over %llu frames)",
-                    static_cast<unsigned long long>(a.passes), adoptedAge, static_cast<double>(a.ageSum) / static_cast<double>(a.passes), a.lastModelMs,
-                    a.type == D3D12_COMMAND_LIST_TYPE_DIRECT ? "direct" : "compute", a.passesPerSecond, static_cast<unsigned long long>(a.forcedWaits),
-                    static_cast<unsigned long long>(a.stalls), static_cast<unsigned long long>(a.failures), a.queueWaitMs, static_cast<unsigned long long>(a.queueWaits));
+                Log(false,
+                    "Optimizer FPS NGX hook: background pass %llu adopted (age %u frames at adoption, "
+                    "average %.1f, %.2f ms on the %s queue, %.1f passes/s, forced waits %llu, stalls %llu, "
+                    "failures %llu, queue cap wait %.2f ms/frame over %llu frames)",
+                    static_cast<unsigned long long>(a.passes), adoptedAge,
+                    static_cast<double>(a.ageSum) / static_cast<double>(a.passes), a.lastModelMs,
+                    a.type == D3D12_COMMAND_LIST_TYPE_DIRECT ? "direct" : "compute", a.passesPerSecond,
+                    static_cast<unsigned long long>(a.forcedWaits), static_cast<unsigned long long>(a.stalls),
+                    static_cast<unsigned long long>(a.failures), a.queueWaitMs,
+                    static_cast<unsigned long long>(a.queueWaits));
         } else {
             a.discard = false;
             st.temporal->ResetPending();
@@ -352,7 +300,12 @@ int AsyncBody(AsyncCtx &c)
             bg.colorResource = codec.modelColor; bg.motionResource = privateInputs.motion; bg.outputResource = codec.answer;
             bg.color = codec.modelColor.res; bg.depth = a.depthBg; bg.motion = a.mvIsAcc ? a.modelAccBg : a.mvBg; bg.output = codec.answer.res;
             bg.ui = privateInputs.ui.res; bg.uiAlpha = privateInputs.uiAlpha.res; bg.backbuffer = privateInputs.backbuffer.res;
-            bg.colorRect = {codec.modelColor.rect.x, codec.modelColor.rect.y, codec.modelColor.rect.w, codec.modelColor.rect.h}; bg.depthRect = c.depthRect; bg.motionRect = c.motionRect; bg.outputRect = {codec.answer.rect.x, codec.answer.rect.y, codec.answer.rect.w, codec.answer.rect.h};
+            bg.colorRect = {codec.modelColor.rect.x, codec.modelColor.rect.y, codec.modelColor.rect.w,
+                            codec.modelColor.rect.h};
+            bg.depthRect = c.depthRect;
+            bg.motionRect = c.motionRect;
+            bg.outputRect = {codec.answer.rect.x, codec.answer.rect.y, codec.answer.rect.w,
+                             codec.answer.rect.h};
             bg.mvScaleX = a.mvIsAcc ? 1.0f : c.mvScaleX; bg.mvScaleY = a.mvIsAcc ? 1.0f : c.mvScaleY;
             bg.slot = bg.packSlot = bg.packSet = FeatureState::kBgPackSlot;
             bg.privateUsePoint = {sizeof(OfpsFencePoint), a.fModel, nextJob};
@@ -406,7 +359,11 @@ int AsyncBody(AsyncCtx &c)
             const HRESULT hrWait = a.queue->Wait(a.fInputs, nextJob);
             a.queue->ExecuteCommandLists(1, lists);
             const HRESULT hrSignal = a.queue->Signal(a.fModel, nextJob);
-            if (AsyncVerbose()) Log(false, "Optimizer FPS NGX hook [async] kicked job %llu (slot %u, wait 0x%08lX signal 0x%08lX)", static_cast<unsigned long long>(nextJob), slot, (unsigned long) hrWait, (unsigned long) hrSignal);
+            if (AsyncVerbose())
+                Log(false,
+                    "Optimizer FPS NGX hook [async] kicked job %llu (slot %u, wait 0x%08lX signal 0x%08lX)",
+                    static_cast<unsigned long long>(nextJob), slot, (unsigned long)hrWait,
+                    (unsigned long)hrSignal);
         }
     }
     ++a.sinceKick;

@@ -19,8 +19,9 @@
 namespace ofps::reshade {
 namespace {
 
-// The NGX interposer waits for the host's D3D12 graphics queue before dropping GPU objects; ReShade
-// reports every queue created through its proxy device, natives included.
+// The NGX interposer waits for the host's D3D12 queues before dropping GPU objects; ReShade reports
+// every queue created through its proxy device, natives included. Compute queues count too: a host
+// that evaluates Neural Rendering on async compute (DLSS5-Reshade-AIO) records our work there.
 // 26.7.4: queues are only NOTED while the game creates its device; the fence for GPU waits is created on the
 // first present. Death Stranding DC exited within 25 ms of its D3D12 device creation with our add-on loaded and
 // nothing else of ours running - the only work we did in that window was this registration on the fresh device.
@@ -44,8 +45,10 @@ void OnInitCommandQueue(::reshade::api::command_queue *queue)
 {
     ::reshade::api::device *device = queue != nullptr ? queue->get_device() : nullptr;
     if (device == nullptr || device->get_api() != ::reshade::api::device_api::d3d12) return;
-    if ((static_cast<std::uint32_t>(queue->get_type()) &
-         static_cast<std::uint32_t>(::reshade::api::command_queue_type::graphics)) == 0) return;
+    constexpr std::uint32_t kRecordable =
+        static_cast<std::uint32_t>(::reshade::api::command_queue_type::graphics) |
+        static_cast<std::uint32_t>(::reshade::api::command_queue_type::compute);
+    if ((static_cast<std::uint32_t>(queue->get_type()) & kRecordable) == 0) return;
     {
         std::lock_guard<std::mutex> lock(g_pendingQueueMutex);
         g_pendingQueues.emplace_back(reinterpret_cast<ID3D12Device *>(device->get_native()),

@@ -121,11 +121,23 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
         st.requestedWarpPath == requested &&
         st.gpuNativeWidth == st.layout.nativeWidth && st.gpuNativeHeight == st.layout.nativeHeight &&
         st.gpuWorkWidth == st.layout.workWidth && st.gpuWorkHeight == st.layout.workHeight) {
-        device->Release();
+        // A compute list (the host's, or our background one) takes only the compute path; a pixel
+        // path built on a direct list is rebuilt below when the host's list turns out to be COMPUTE.
         if (cmd->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT ||
-            (cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE && st.compute && st.async)) return true;
-        SetReason("warp path cannot record on command list type %d", (int)cmd->GetType());
-        return false;
+            (cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE && st.compute &&
+             st.warpPath == warp::PackPath::Compute)) {
+            device->Release();
+            return true;
+        }
+        // Our own background list is COMPUTE too; only the host's list (hostListCompute, which also
+        // keeps the background mode off) triggers the rebuild.
+        if (cmd->GetType() != D3D12_COMMAND_LIST_TYPE_COMPUTE || !st.hostListCompute) {
+            device->Release();
+            SetReason("warp path cannot record on command list type %d", (int)cmd->GetType());
+            return false;
+        }
+        if (st.async) { gpu::GateSet gate; BuryAsync(st, &gate); } // a job from the direct-list frames
+        Log(false, "Optimizer FPS NGX hook: the host's list is COMPUTE now; rebuilding the warp on the compute path");
     }
     if (st.codecGridActive) {
         BuryWarpGpu(st);
@@ -152,8 +164,7 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
         return false;
     }
     if (cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT &&
-        !(cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE && st.async &&
-          decision.path == warp::PackPath::Compute)) {
+        !(cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE && decision.path == warp::PackPath::Compute)) {
         SetReason("warp path cannot record on command list type %d", (int)cmd->GetType());
         return false;
     }
@@ -236,7 +247,7 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
     }
     std::size_t queuesTotal = 0;
     const std::size_t queuesOnDevice = ofps::core::gpu::CountQueues(st.realDevice, st.device, &queuesTotal);
-    Log(false, "Optimizer FPS NGX hook: GPU path ready (colour view %d, output view %d, work %ux%u, list device %p, resource device %p, queues for GPU waits: %zu of %zu on this device)",
+    Log(false, "Optimizer FPS NGX hook: GPU path ready (colour view %d, output view %d, work %ux%u, list device %p, resource device %p, graphics queues on this device: %zu, queues registered: %zu)",
         (int) colorView, (int) outputView, st.layout.workWidth, st.layout.workHeight, (void *) device, (void *) st.realDevice,
         queuesOnDevice, queuesTotal);
     return true;

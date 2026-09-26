@@ -117,11 +117,11 @@ Check 'missing VERSION.txt leaves no receipt' `
 $gv3   = New-X64Fixture -Root $root -ReShade64 $ReShade64 -Name 'x64-version-bom'
 $exev3 = Join-Path $gv3 'pwgame.exe'
 $pv3   = New-PayloadWithVersion -Root $root -Payload $Payload -Name 'payload-version-bom' `
-             -Bytes ([byte[]] (@(0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes("2026.9.1`r`n")))
+             -Bytes ([byte[]] (@(0xEF, 0xBB, 0xBF) + [Text.Encoding]::UTF8.GetBytes($testContext.ReleaseVersion + "`r`n")))
 $r = Invoke-Installer @('-GameExe', $exev3, '-Payload', $pv3, '-Yes', '-NoPause')
 Check 'install from a BOM-prefixed VERSION.txt exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
 $rv3 = (Get-Content -LiteralPath (Join-Path $gv3 '_OptimizerFPS\latest-receipt.json') -Raw) | ConvertFrom-Json
-Check 'neither the BOM nor the CRLF reaches the receipt' ([string]::Equals([string]$rv3.Version, '2026.9.1', [StringComparison]::Ordinal)) (Format-VersionDetail ([string]$rv3.Version))
+Check 'neither the BOM nor the CRLF reaches the receipt' ([string]::Equals([string]$rv3.Version, $testContext.ReleaseVersion, [StringComparison]::Ordinal)) (Format-VersionDetail ([string]$rv3.Version))
 
 # Verify has a reader of its own for the case where the receipt carries no version, and that
 # one has to strip the same bytes: with no receipt there is nothing left to correct it.
@@ -130,5 +130,5 @@ $r = Invoke-Verifier @('-GameExe', $exev3, '-Payload', $pv3, '-Json')
 $vjv3 = $null
 try { $vjv3 = $r.Out | ConvertFrom-Json } catch { }
 Check 'verify falls back to payload\VERSION.txt without carrying the BOM over' `
-    ($null -ne $vjv3 -and [string]::Equals([string]$vjv3.Version, '2026.9.1', [StringComparison]::Ordinal)) `
+    ($null -ne $vjv3 -and [string]::Equals([string]$vjv3.Version, $testContext.ReleaseVersion, [StringComparison]::Ordinal)) `
     ($(if ($null -eq $vjv3) { $r.Out } else { Format-VersionDetail ([string]$vjv3.Version) }))

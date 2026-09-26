@@ -1,3 +1,4 @@
+#include "core/gpu/host_list.h"
 #include "core/frame/model_passes.h"
 #include "core/frame/codec_frame.h"
 #include "core/frame/model_grid.h"
@@ -96,40 +97,6 @@ bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Reso
 }
 
 // Decides what this frame is. Requires the machine; `hostReset` forces a full pass.
-// 26.24: the background mode needs the host's command queue registered (it signals the queue after the host
-// submits our copies and waits on it). Hosts whose D3D12 device was created before ReShade loaded (OptiScaler
-// in Fallen Order) register no queue: every pass then ran into the forced wait at the age limit, 0.3 passes/s
-// and a stall on each - "async does not start, everything stutters". Without a queue the synchronous
-// interpolation runs instead, and the tab/log say so.
-bool BackgroundModeUsable(FeatureState &st)
-{
-    if (Ctx().temporal.mode != 3) return false;
-    std::size_t total = 0;
-    const bool ok = ofps::core::gpu::CountQueues(st.realDevice, st.device, &total) > 0;
-    static bool s_said = false;
-    if (!ok && !s_said) {
-        s_said = true;
-        Log(true, "Optimizer FPS NGX hook: background mode needs the host's D3D12 queue and none is registered in this process (device created before ReShade loaded); the synchronous interpolation runs instead");
-        TemporalReason(st, "background mode unavailable here (no registered host queue); running the synchronous interpolation");
-    }
-    return ok;
-}
-
-int EffectiveTemporalMode(FeatureState &st) {
-    // The model grid host still carries frames on the feature grid. Its background
-    // codec resources need a separate private-list protocol; run mode 3 synchronously.
-    if (st.modelResolution && Ctx().temporal.mode == 3) {
-        std::snprintf(Ctx().status.temporalReason, sizeof(Ctx().status.temporalReason),
-                      "background mode needs a private-list model-grid codec; using synchronous mode 1");
-        static std::atomic<bool> s_modelGridReported{false};
-        if (!s_modelGridReported.exchange(true)) {
-            Log(true, "Optimizer FPS NGX hook: %s", Ctx().status.temporalReason);
-        }
-        return 1;
-    }
-    return (Ctx().temporal.mode == 3 && !BackgroundModeUsable(st)) ? 1 : Ctx().temporal.mode;
-}
-
 int TryTemporalRoute(FeatureState &st, ID3D12GraphicsCommandList *cmd,
                      const OfpsModelInputs &inputs, const OfpsFrameInputs &frame, OfpsEvalResult &result) {
     const auto recordPath = [&] {
@@ -189,8 +156,9 @@ TemporalPlan PlanTemporal(FeatureState &st, bool hostReset)
     return p;
 }
 
-ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, const OfpsResource &motion, const OfpsResource &depth, float mvScaleX, float mvScaleY, bool depthInverted, bool hostModelGrid)
-{
+ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, const OfpsResource &motion,
+                                                 const OfpsResource &depth, float mvScaleX, float mvScaleY,
+                                                 bool depthInverted, bool hostModelGrid) {
     ofps::core::temporal::FrameInputs t;
     const auto& diagnostics = Ctx().temporalDiagnostics;
     const auto& profile = Ctx().frameProfile;
@@ -433,7 +401,7 @@ int NativeTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, con
     ID3D12Resource *depth = inputs.depth.res;
     ID3D12Resource *motion = inputs.motion.res;
     ID3D12Resource *output = inputs.output.res;
-    if (color == nullptr || depth == nullptr || motion == nullptr || output == nullptr || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
+    if (color == nullptr || depth == nullptr || motion == nullptr || output == nullptr || !gpu::HostListRecordable(cmd))
         return kNotHandled;
     const D3D12_RESOURCE_DESC colorDesc = color->GetDesc();
     const D3D12_RESOURCE_DESC outputDesc = output->GetDesc();

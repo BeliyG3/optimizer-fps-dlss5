@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026.9.2
+
+Works with DLSS5-Reshade-AIO, which runs Neural Rendering on an asynchronous compute queue. The idea
+and a first implementation came from cobaltmods (GitHub pull request #6). Tested with AIO 2.2.4 in
+Divinity: Original Sin 2 (64-bit) and Batman: Arkham City (32-bit).
+
+**Added**
+
+* **A consumer's COMPUTE command list.** DLSS5-Reshade-AIO evaluates the model on a compute list;
+  the add-on used to pass such frames through untouched ("DIRECT required"). The compression now
+  records on that list through the compute path; the pixel path, which draws, is never used there.
+  If the list type changes under a running model, the compression is rebuilt on the right path. On
+  the bench (`bench12 --nr-list compute`) the frames are bit-identical to the same run on a direct
+  list, with and without the temporal mode.
+* **Compute queues are registered** alongside the graphics queues, so the GPU wait before anything
+  is released also covers a consumer's compute queue.
+* **Installer and Verify** accept AIO's 32-bit layout: `AIO DLSS5 32-bit Wrapper.exe` in `host64\`
+  in place of DLSS5-Feeder's host, and AIO's `standalone-dlssnr.addon32` beside the game.
+* **A status line in `ReShade.log` every 30 s** while a model is hooked: the state (ACTIVE, NOT ACTIVE
+  or SAFE MODE), how many frames went through the add-on and how many were shown as plain colour,
+  and why the last frame was not warped.
+
+**Changed**
+
+* In AIO's 32-bit wrapper the crash guard is off unless `CrashGuard=1` is set: AIO ends that process
+  from outside on every "apply settings", which a marker cannot tell from a crash.
+* Background mode runs as the synchronous mode when the consumer evaluates on a compute list.
+
+**Fixed**
+
+* **Device removed when the colour and output formats differ.** The temporal mode's colour snapshot
+  keeps the format of what it was taken from (the game's colour, or the unpacked frame in the output's
+  format), but the next frame read it through that frame's colour format. With DLSS5-Reshade-AIO in
+  Divinity: Original Sin 2 (colour R10G10B10A2, output RGBA8) that view was invalid and the GPU
+  removed the device at once. The snapshot now keeps its own view format. The bench covers it with
+  `--nr-proxy-format r10g10b10a2`.
+* The temporal mode's accumulated motion rested in `ALL_SHADER_RESOURCE`, a state that a compute
+  list cannot use; on such a list the frame's commands were rejected and the device hung. It now
+  rests in `NON_PIXEL_SHADER_RESOURCE`, and the pixel path moves it to the pixel state and back
+  itself.
+* The 32-bit tab logged "x86 ReShade.ini section scan failed" in Batman: Arkham City, where the
+  game process cannot open ReShade.ini directly. The tab now reads its settings through ReShade.
+
 ## 2026.9.1
 
 One core for everything the add-on does, and the add-on now works on top of public OptiScaler builds.

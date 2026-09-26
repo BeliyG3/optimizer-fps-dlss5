@@ -32,7 +32,9 @@ constexpr std::uint32_t kFallbackTableSlots = 64; // independent capacity for ra
 constexpr std::uint32_t kLowDivisor = 16; // low-res residual and cell grid: native / 16 per axis
 constexpr D3D12_RESOURCE_STATES kReadable = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 // The accumulated displacement is also read by the model, which is a compute shader.
-constexpr D3D12_RESOURCE_STATES kAccState = D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE;
+// The accumulated motion rests where compute passes and the model read it. NON_PIXEL only: a COMPUTE
+// host list (DLSS5-Reshade-AIO) cannot name PIXEL_SHADER_RESOURCE; the pixel Pack moves it there and back.
+constexpr D3D12_RESOURCE_STATES kAccState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 
 // Output texture indices. The residual and both accumulation chains ping-pong, so each gets a pair; the
 // indices travel with the textures when the chains are swapped (PromotePending, RecordResidual).
@@ -143,6 +145,9 @@ struct Resources {
     std::uint64_t evalNow = 0;
     bool exhausted = false;
     DXGI_FORMAT colorFFormat = DXGI_FORMAT_UNKNOWN;
+    // The view the snapshot was taken with. The snapshot keeps the format of its source, which may be
+    // the host's colour or the unpacked base (output format); a later frame's colour view need not fit.
+    DXGI_FORMAT colorFView = DXGI_FORMAT_UNKNOWN;
     std::uint32_t colorFW = 0, colorFH = 0;
     std::uint32_t nativeW = 0, nativeH = 0, motionW = 0, motionH = 0, depthW = 0, depthH = 0, lowW = 0, lowH = 0;
     std::uint32_t historyPictureDivisor = 3;

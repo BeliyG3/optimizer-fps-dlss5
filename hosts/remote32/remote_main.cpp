@@ -37,8 +37,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
         ofps::remote::OverlayEventRegister();
         reshade::register_overlay(nullptr, DrawEmbedded);
         int floating = 0;
-        if (reshade::get_config_value(nullptr, ofps::remote::ActiveIniSectionReadOnly(),
-                                      "FloatingWindow", floating)) floatingWindow = floating != 0;
+        if (ofps::remote::GetConfigInt("FloatingWindow", floating)) floatingWindow = floating != 0;
         if (floatingWindow) reshade::register_overlay("Optimizer FPS for DLSS5", DrawWindow);
     } else if (reason == DLL_PROCESS_DETACH) {
         if (floatingWindow) reshade::unregister_overlay("Optimizer FPS for DLSS5", DrawWindow);

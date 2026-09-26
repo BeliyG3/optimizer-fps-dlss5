@@ -185,7 +185,13 @@ function Test-InstallProcesses
     # second copy of this game elsewhere) locks none of these files. A process whose path cannot be read
     # still counts - the safe side.
     $runningPaths = @($gameExePath)
-    if ($arch -eq 'x86') { $runningPaths += (Join-Safe $targetDir $Context.HostExeName) }
+    if ($arch -eq 'x86') {
+        # Both 64-bit helpers: host64 may hold DLSS5-Feeder's host and DLSS5-Reshade-AIO's wrapper.
+        $runningPaths += (Join-Safe $targetDir $Context.HostExeName)
+        if ($Context.AioHostExeName -and $Context.AioHostExeName -ne $Context.HostExeName) {
+            $runningPaths += (Join-Safe $targetDir $Context.AioHostExeName)
+        }
+    }
     foreach ($runningPath in $runningPaths) {
         $n = [IO.Path]::GetFileNameWithoutExtension($runningPath)
         $proc = @(Get-Process -Name $n -ErrorAction SilentlyContinue | Where-Object {

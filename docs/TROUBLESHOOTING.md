@@ -121,7 +121,7 @@ There are two add-ons for a 32-bit game and they do different jobs:
   the game, talking to the host over shared memory.
 
 If the game's overlay has no tab, the remote add-on is missing or disabled there. If it has a tab
-but the banner is gray (`host process not running (no shared block)`), then `host64` is not running
+but the banner is gray (`the 64-bit host in host64 ... is not running yet`), then `host64` is not running
 or its own ReShade never loaded `optimizer-fps-dlss5.addon64`; check the ReShade log inside `host64\`.
 
 Some Feeder builds already compress the frame before `host64` sees it. If yours does, set **Mode** to

@@ -257,7 +257,8 @@ to look first.
 **Release and layout changes.** The work extent changing re-creates the model; any other layout
 field rebuilds the packed slots. The host's D3D12 queue may run five or six frames behind the CPU
 (the DLSS 5 D3D11 bridge keeps up to six in flight), so nothing is released while the GPU can still
-read it: the add-on registers the D3D12 graphics queues ReShade reports, and a resource is buried
+read it: the add-on registers the D3D12 graphics and compute queues ReShade reports (a consumer
+such as DLSS5-Reshade-AIO runs the model on a compute queue), and a resource is buried
 only once a gate — an AND over all queues of the device — has passed it. Releases do not block the
 CPU. When no queue is known, objects are kept for 16 further evaluates and released afterwards
 (`ReShade.log` says so).
@@ -454,7 +455,14 @@ recorded sessions that died inside the render thread.
 If the marker is found at start-up, NR calls are forwarded untouched for this run and the tab shows
 a red notice with **Retry warping now**. A session that lived more than 20 s after its first warped
 frame is not counted as a crash — Feeder's `host64` is terminated at game exit and never unloads
-cleanly, and so are games the player kills. `CrashGuard=0` disables the guard.
+cleanly, and so are games the player kills. `CrashGuard=0` disables the guard. In
+DLSS5-Reshade-AIO's `AIO DLSS5 32-bit Wrapper.exe` the guard is off unless `CrashGuard=1` is set:
+AIO ends that process from outside on every "apply settings", which no marker can tell from a crash.
+
+**Status line.** While a model is hooked, `ReShade.log` gets one line every 30 s: ACTIVE, NOT ACTIVE
+or SAFE MODE, how many frames went through the add-on or were shown as plain colour in that time,
+the model and native sizes, the temporal mode, and the reason the last one did not warp. It is there
+for helper processes whose tab is out of reach.
 
 ## Remote tab for 32-bit games
 
@@ -480,7 +488,7 @@ left over from an earlier session cannot override this process's settings.
 
 The 32-bit side ([`hosts/remote32/remote_main.cpp`](../hosts/remote32/remote_main.cpp)) has no SDK core,
 no D3D and no Detours — only the ReShade API and ImGui headers. Its banner is green, orange, or grey
-(`host process not running (no shared block)`) when the mapping is missing or the heartbeat is older
+(`the 64-bit host ... is not running yet`) when the mapping is missing or the heartbeat is older
 than three seconds. The controls mirror the x64 tab and are seeded from `applied` when the host is
 first seen. A note in the tab points out that compression in these kits may already be done by the
 x86 feeder before the host sees the frame: if the Feeder build already compresses the frame, `Mode`

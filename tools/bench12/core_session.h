@@ -11,6 +11,7 @@ public:
     int Create(ID3D12GraphicsCommandList *, ID3D12Device *, unsigned, unsigned);
     int Evaluate(ID3D12GraphicsCommandList *, const OfpsFrameInputs &);
     void Submitted(ID3D12CommandQueue *, ID3D12CommandList *);
+    void RegisterQueue(ID3D12Device *device, ID3D12CommandQueue *extra); // --nr-list compute
     bool Close();
     void Log(OfpsLogLevel, const char *) override;
     void OnEvent(OfpsEvent, const OfpsEventData *) override;

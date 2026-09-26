@@ -59,7 +59,9 @@ int RecordPackStage(EvalContext &c)
     const auto colorSub = c.colorResource.subresource;
     BarrierExternal(cmd, c.color, colorState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, colorSub);
     BarrierExternal(cmd, c.depth, c.depthState, c.depthState | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, c.depthSub);
-    if (!c.motionIsAcc) BarrierExternal(cmd, c.motion, c.motionResource.restState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, c.motionResource.subresource);
+    const auto motionState = c.motionIsAcc ? kModelInputState : c.motionResource.restState;
+    const auto motionSub = c.motionIsAcc ? D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES : c.motionResource.subresource;
+    BarrierExternal(cmd, c.motion, motionState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, motionSub);
     Barrier(cmd, packed.resources.color.resource, st.packedColorState[slot], D3D12_RESOURCE_STATE_RENDER_TARGET);
     D3D12_RESOURCE_STATES guideState = st.packedGuideState[slot];
     Barrier(cmd, packed.resources.depth.resource, guideState, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -71,7 +73,7 @@ int RecordPackStage(EvalContext &c)
     c.stage = StagePackRestore;
     BarrierExternal(cmd, c.color, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, colorState, colorSub);
     BarrierExternal(cmd, c.depth, c.depthState | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, c.depthState, c.depthSub);
-    if (!c.motionIsAcc) BarrierExternal(cmd, c.motion, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, c.motionResource.restState, c.motionResource.subresource);
+    BarrierExternal(cmd, c.motion, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, motionState, motionSub);
     Barrier(cmd, packed.resources.color.resource, st.packedColorState[slot], kModelInputState);
     guideState = D3D12_RESOURCE_STATE_RENDER_TARGET;
     Barrier(cmd, packed.resources.depth.resource, guideState, kModelInputState);
@@ -127,8 +129,9 @@ void PackedGuidesToPixel(FeatureState &st, ID3D12GraphicsCommandList *cmd, std::
 // leaves the output unwritten (the host shows whatever its texture held - black from a pool, or a
 // frame from several frames back). Same formats: a copy; otherwise the temporal machine's raw-colour
 // reprojection (debugVis 3 returns the colour) when the machine exists.
-void FallbackOutput(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsResource &colorResource, const OfpsResource &outputResource, const ofps::core::temporal::FrameInputs *tin, const char *why)
-{
+void FallbackOutput(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsResource &colorResource,
+                    const OfpsResource &outputResource, const ofps::core::temporal::FrameInputs *tin,
+                    const char *why) {
     if (st.frameResult && st.frameResult->path != OFPS_PATH_CREATION_FRAME) {
         st.frameResult->path = OFPS_PATH_FALLBACK; st.frameResult->warpPath = OFPS_WARP_NONE;
     }

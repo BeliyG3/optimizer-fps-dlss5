@@ -93,16 +93,22 @@ void DrawStatusBanner(const OfpsStatus &hook, const ofps::sdk::ConfigV2 &config,
     const auto hookInfo = GetHookStatus();
     if (ofps::reshade::SafeMode()) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.3f, 1.0f), "CRASH GUARD: the previous session of this game ended right after the first frame this add-on warped (or was killed). Neural rendering runs untouched by this add-on now. Press Retry to warp again in this session; if the game dies again, the marker returns.");
+        ImGui::TextColored(
+            ImVec4(1.0f, 0.35f, 0.3f, 1.0f),
+            "CRASH GUARD: the previous session of this game ended right after the first frame this add-on "
+            "warped (or was killed). Neural rendering runs untouched by this add-on now. Press Retry to warp "
+            "again in this session; if the game dies again, the marker returns.");
         ImGui::PopTextWrapPos();
         if (ImGui::Button("Retry warping now")) CrashGuardRetry();
     }
     char line[512]{};
     if (hook.active) {
-        std::snprintf(line, sizeof(line), "Optimizer FPS ACTIVE: model %ux%u of %ux%u%s%s",
-                      hook.workW, hook.workH, hook.nativeW, hook.nativeH,
-                      hook.adopted ? " (model adopted)" : "",
-                      hook.temporalMode == 1 ? ", temporal: interpolating" : hook.temporalMode == 2 ? ", temporal: centre every frame" : hook.temporalMode == 3 ? ", temporal: model in the background" : "");
+        std::snprintf(line, sizeof(line), "Optimizer FPS ACTIVE: model %ux%u of %ux%u%s%s", hook.workW,
+                      hook.workH, hook.nativeW, hook.nativeH, hook.adopted ? " (model adopted)" : "",
+                      hook.temporalMode == 1   ? ", temporal: interpolating"
+                      : hook.temporalMode == 2 ? ", temporal: centre every frame"
+                      : hook.temporalMode == 3 ? ", temporal: model in the background"
+                                               : "");
         StatusLine(ImVec4(0.35f, 1.0f, 0.45f, 1.0f), line);
     } else {
         const char *why = nullptr;

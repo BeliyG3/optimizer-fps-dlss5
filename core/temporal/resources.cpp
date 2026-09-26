@@ -170,7 +170,7 @@ SlotKey Resources::BaseKey(const FrameInputs &in, ID3D12Resource *accPrev) const
     key.res[4] = accPrev; key.fmt[4] = kChainFormat;
     key.res[5] = in.depth; key.fmt[5] = in.depthView;
     key.res[6] = depthF; key.fmt[6] = in.depthView;
-    key.res[7] = colorF ? colorF : in.color; key.fmt[7] = in.colorView;
+    key.res[7] = colorF ? colorF : in.color; key.fmt[7] = colorF ? colorFView : in.colorView;
     key.res[8] = residualLow ? residualLow : residual; key.fmt[8] = kResidualFormat;
     // t1, t9, t10 are per pass; t11 is the expectation whenever there is one.
     if (expect[expectCurrent]) { key.res[11] = expect[expectCurrent]; key.fmt[11] = kExpectFormat; }
@@ -181,11 +181,12 @@ bool Resources::EnsureColorSnapshot(const FrameInputs &in)
 {
     const D3D12_RESOURCE_DESC cd = in.color->GetDesc();
     if (colorF != nullptr && colorFFormat == cd.Format && colorFW == static_cast<std::uint32_t>(cd.Width) && colorFH == cd.Height)
-        return true;
+        return true; // colorFView changes when RecordResidual copies the new snapshot in
     if (colorF) { colorF->Release(); colorF = nullptr; }
     if (!ofps::core::gpu::CreateTexture(device, static_cast<std::uint32_t>(cd.Width), cd.Height, cd.Format, D3D12_RESOURCE_FLAG_NONE, &colorF))
         return false;
     colorFFormat = cd.Format;
+    colorFView = in.colorView;
     colorFW = static_cast<std::uint32_t>(cd.Width);
     colorFH = cd.Height;
     colorFState = D3D12_RESOURCE_STATE_COMMON;

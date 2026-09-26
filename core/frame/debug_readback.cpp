@@ -63,11 +63,17 @@ void TemporalDebugReadback(FeatureState &st, ID3D12GraphicsCommandList *cmd, con
     if (FAILED(st.motionReadback->Map(0, &range, &mapped)) || mapped == nullptr) return;
     const auto *h = static_cast<const std::uint16_t *>(mapped);
     auto px = [&](int row, int i, int ch) { return HalfToFloat(h[row * 128 + i * 4 + ch]); };
-    Log(false, "Optimizer FPS NGX hook [temporal debug] mode %d every %d, full %llu / interpolated %llu, at (%u,%u): colour (%.4f %.4f %.4f) residual (%.4f %.4f %.4f) interp (%.4f %.4f %.4f) acc (%.2f %.2f) motion-texture px%s%s%s | colour tolerance %.2f, depth tolerance %.3f, hole fill %s",
-        Ctx().temporal.mode, Ctx().temporal.every, static_cast<unsigned long long>(Ctx().status.fullFrames), static_cast<unsigned long long>(Ctx().status.interpFrames),
-        x, y, px(0, 0, 0), px(0, 0, 1), px(0, 0, 2), px(1, 0, 0), px(1, 0, 1), px(1, 0, 2), px(2, 0, 0), px(2, 0, 1), px(2, 0, 2),
-        HalfToFloat(h[3 * 128 + 0]), HalfToFloat(h[3 * 128 + 1]), Ctx().temporal.flipMotionSign ? ", sign flipped" : "",
-        Ctx().temporal.debugRawInterpolation ? ", raw interpolation" : "", Ctx().temporal.debugSingleFrameMotion ? ", single-frame motion to the model" : "",
+    Log(false,
+        "Optimizer FPS NGX hook [temporal debug] mode %d every %d, full %llu / interpolated %llu, at "
+        "(%u,%u): colour (%.4f %.4f %.4f) residual (%.4f %.4f %.4f) interp (%.4f %.4f %.4f) acc (%.2f %.2f) "
+        "motion-texture px%s%s%s | colour tolerance %.2f, depth tolerance %.3f, hole fill %s",
+        Ctx().temporal.mode, Ctx().temporal.every, static_cast<unsigned long long>(Ctx().status.fullFrames),
+        static_cast<unsigned long long>(Ctx().status.interpFrames), x, y, px(0, 0, 0), px(0, 0, 1),
+        px(0, 0, 2), px(1, 0, 0), px(1, 0, 1), px(1, 0, 2), px(2, 0, 0), px(2, 0, 1), px(2, 0, 2),
+        HalfToFloat(h[3 * 128 + 0]), HalfToFloat(h[3 * 128 + 1]),
+        Ctx().temporal.flipMotionSign ? ", sign flipped" : "",
+        Ctx().temporal.debugRawInterpolation ? ", raw interpolation" : "",
+        Ctx().temporal.debugSingleFrameMotion ? ", single-frame motion to the model" : "",
         Ctx().temporal.colorTolerance, Ctx().temporal.depthTolerance, Ctx().temporal.holeFill ? "on" : "off");
     const D3D12_RANGE none{0, 0};
     st.motionReadback->Unmap(0, &none);

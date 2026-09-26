@@ -41,6 +41,9 @@ void OptionChecks()
     const auto pad=Parse({"bench","--nr","native","--nr-output-pad","64,32"});
     Require(pad.nrPadX==64 && pad.nrPadY==32 && pad.nrBaseX==0 && pad.nrBaseY==0,"NR output pad defaults to base 0,0");
     Require(Parse({"bench","--nr","upscale"}).nr=="upscale","NR upscale without DLSS");
+    Require(Parse({"bench"}).nrList=="direct","NR list defaults to direct");
+    Require(Parse({"bench","--nr","native","--nr-list","compute"}).nrList=="compute","NR on a compute list");
+    Require(Parse({"bench","--switch","60"}).switchEvery==60 && Parse({"bench"}).switchEvery==0,"layout switch interval");
     const std::vector<std::vector<std::string>> invalid{
         {"bench","--host","invalid"},{"bench","--host","core"},
         {"bench","--core-mode","-1"},{"bench","--core-mode","3"},
@@ -51,7 +54,8 @@ void OptionChecks()
         {"bench","--host","core","--nr","native","--upscaler","sr","--nr-colour","linear"},
         {"bench","--nr","on"},{"bench","--nr","upscale","--upscaler","sr"},{"bench","--nr","upscale","--upscaler","rr"},
         {"bench","--mv-format","rg32f"},{"bench","--nr-log","3"},{"bench","--nr-colour","pq"},{"bench","--nr-output-pad","64"},
-        {"bench","--nr-output-pad","64,32,65,0"},{"bench","--nr-output-pad","-1,0"},{"bench","--nr-output-pad","1,2,3"}};
+        {"bench","--nr-output-pad","64,32,65,0"},{"bench","--nr-output-pad","-1,0"},{"bench","--nr-output-pad","1,2,3"},
+        {"bench","--nr-list","copy"},{"bench","--nr-list","compute"},{"bench","--nr","upscale","--nr-list","compute"},{"bench","--switch","-1"},{"bench","--nr-proxy-format","rgb10"},{"bench","--nr-colour","linear","--nr-proxy-format","r10g10b10a2"}};
     Require(std::all_of(invalid.begin(),invalid.end(),[](const auto &args) { return Rejected(args); }),"Invalid NR option accepted");
 }
 void ParameterMapChecks()

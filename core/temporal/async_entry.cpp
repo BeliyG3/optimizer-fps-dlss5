@@ -223,7 +223,11 @@ void AsyncNoteSubmissions(const gpu::SubmissionEntry *entries, std::uint32_t cou
             if (st.async->submitQueue) st.async->submitQueue->Release();
             st.async->submitQueue = queue;
             st.async->submitSeen = true;
-            if (AsyncVerbose()) Log(false, "Optimizer FPS NGX hook [async] host submits the kick list of job %llu (%s match); the signal follows at the next evaluate", static_cast<unsigned long long>(st.async->jobId), "tag");
+            if (AsyncVerbose())
+                Log(false,
+                    "Optimizer FPS NGX hook [async] host submits the kick list of job %llu (%s match); the "
+                    "signal follows at the next evaluate",
+                    static_cast<unsigned long long>(st.async->jobId), "tag");
         }
     }
     Ctx().anyAsyncSignalPending.store(anyPending);

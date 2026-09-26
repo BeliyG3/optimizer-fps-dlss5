@@ -16,6 +16,9 @@ void NeuralRendering::Configure(Device &d, const Options &o, ID3D12Resource *col
     useCore=o.host=="core";
     mode=o.nr;
     if(mode=="off") return;
+    computeList=o.nrList=="compute";
+    layoutSwitch.Configure(o.switchEvery);
+    if(computeList) { d.EnableCompute(); std::printf("[nr] evaluated on a COMPUTE list on its own queue (--nr-list compute)\n"); }
     const bool upscale=mode=="upscale";
     const auto colourDesc=colour->GetDesc();
     const unsigned cw=unsigned(colourDesc.Width), ch=colourDesc.Height;
@@ -27,7 +30,8 @@ void NeuralRendering::Configure(Device &d, const Options &o, ID3D12Resource *col
         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,WriteState);
     pad.Configure(d,output.Get(),outputRect.width,outputRect.height,layout);
     bridge.Configure(d,colour,output.Get(),outputRect.width,outputRect.height,o.nrColour=="srgb",
-        unsigned(o.nrColourPadX),unsigned(o.nrColourPadY),o.nrColourPadEdge!=0);
+        unsigned(o.nrColourPadX),unsigned(o.nrColourPadY),o.nrColourPadEdge!=0,
+        o.nrProxyFormat=="r10g10b10a2" ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT);
     if(o.nrColourPadX || o.nrColourPadY)
         std::printf("[nr] colour region %ux%u at 0,0 of a %ux%u texture\n",cw,ch,cw+unsigned(o.nrColourPadX),ch+unsigned(o.nrColourPadY));
     depthInverted=o.reverse;
@@ -43,6 +47,7 @@ void NeuralRendering::Configure(Device &d, const Options &o, ID3D12Resource *col
     if(!runtime.Loaded()) { runtime.Load(ExecutableDirectory(),d.gpu.Get(),o.nrLog); deferCreate=true; }
     if(useCore) {
         coreSession.Open(ExecutableDirectory()/L"pw_bench12.exe",d.gpu.Get(),d.Queue(),o.coreMode,o.coreTemporal,o.coreWarpPath);
+        if(computeList) coreSession.RegisterQueue(d.gpu.Get(),d.ComputeQueue());
         d.submissionContext=&coreSession;
         d.onSubmitted=[](void *context, ID3D12CommandQueue *queue, ID3D12CommandList *list) {
             static_cast<CoreSession *>(context)->Submitted(queue,list);
@@ -84,6 +89,7 @@ void NeuralRendering::Prepare(Device &d, int frame)
 void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
 {
     if(!(useCore ? coreSession.Ready() : feature!=nullptr)) return;
+    layoutSwitch.Tick(frame);
     auto *list=d.list.Get();
     // NR reads the sRGB proxy (a UAV like the guides) or, with --nr-colour linear, the colour itself.
     auto *colour=bridge.Encode(d,in.colourState);
@@ -91,6 +97,8 @@ void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
     if(colourState!=ReadState) Transition(list,colour,colourState,ReadState);
     Transition(list,in.depth,WriteState,ReadState); Transition(list,in.motion,WriteState,ReadState);
     if(pad.Enabled()) pad.Fill(d);
+    // --nr-list compute: from here to the model's return everything is recorded on a COMPUTE list.
+    if(computeList) list=d.BeginCompute();
     currentFrame={}; auto &f=currentFrame;
     f.colour=colour; f.depth=in.depth; f.motion=in.motion; f.output=output.Get();
     f.colourRect=colourRect; f.guideRect=guideRect; f.outputRect=outputRect;
@@ -117,6 +125,7 @@ void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
         parameters.Audit(calls==0); NrWriteEvaluate(parameters,f); parameters.Audit(false);
         result=runtime.Evaluate(list,feature,&parameters);
     }
+    if(computeList) { d.EndCompute(); list=d.list.Get(); }
     // The runtime binds its own descriptor heap; the region decode below needs the bench's again.
     ID3D12DescriptorHeap *heaps[]={d.heap.Get()}; list->SetDescriptorHeaps(1,heaps);
     if(colourState!=ReadState) Transition(list,colour,ReadState,colourState);

@@ -9,6 +9,7 @@ struct ShellSettings {
     bool debugLayer = false;
     bool debugLayerPresent = false;
     bool crashGuard = true;
+    bool crashGuardPresent = false; // CrashGuard is set in the ini (overrides a host-specific default)
 };
 
 void LoadShellSettings();

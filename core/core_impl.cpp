@@ -1,3 +1,4 @@
+#include "core/gpu/host_list.h"
 #include "core/core_impl.h"
 #include "core/frame/lifecycle.h"
 #include "core/frame/model_passes.h"
@@ -57,7 +58,7 @@ int Core::CreateFeature(ID3D12GraphicsCommandList *cmd, const OfpsFeatureDesc *d
     if (InCallback())
         return OFPS_E_STATE;
     if (!out || !cmd || !desc || desc->size < sizeof(*desc) || !host || !desc->resourceDevice || !desc->width ||
-        !desc->height || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
+        !desc->height || !gpu::HostListRecordable(cmd))
         return OFPS_E_ARG;
     std::lock_guard lock(Ctx().mutex);
     const InsideCoreScope scope;
@@ -120,7 +121,7 @@ int Core::AdoptFeature(ID3D12GraphicsCommandList *cmd, const OfpsFeatureDesc *de
     if (InCallback())
         return OFPS_E_STATE;
     if (!out || !cmd || !desc || desc->size < sizeof(*desc) || !host || !handle || !desc->resourceDevice ||
-        !desc->width || !desc->height || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT)
+        !desc->width || !desc->height || !gpu::HostListRecordable(cmd))
         return OFPS_E_ARG;
     std::lock_guard lock(Ctx().mutex);
     const InsideCoreScope scope;

@@ -115,6 +115,7 @@ void Machine::RecordResidual(ID3D12GraphicsCommandList *cmd, const FrameInputs &
         }
         Barrier(cmd, m.colorF, m.colorFState, kReadable);
         BarrierExternal(cmd, in.color, D3D12_RESOURCE_STATE_COPY_SOURCE, kReadable, in.colorSubresource);
+        m.colorFView = in.colorView; // the passes above read the previous snapshot with its own view
     }
     // Depth snapshot of this frame.
     BarrierExternal(cmd, in.color, kReadable, in.colorState, in.colorSubresource);

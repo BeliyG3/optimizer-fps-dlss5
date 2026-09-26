@@ -1,4 +1,5 @@
 #include "test_core_api_checks.h"
+#include "ofps_version.h"
 #include "test_core_api_entry.h"
 #include "test_core_api_fakes.h"
 #include "test_core_api_scenarios.h"
@@ -29,7 +30,7 @@ IOfpsCore *ScenarioVersionAndCreate(FakeHost &hostA, FakeHost &hostB) {
     v.size = sizeof(v);
     api.version(&v);
     Check(v.abi == OFPS_ABI_VERSION, "OfpsCoreVersion reports the ABI this test was built against");
-    Check(std::strcmp(v.release, "2026.9.1") == 0, "OfpsCoreVersion reports release 2026.9.1");
+    Check(std::strcmp(v.release, OFPS_ADDON_VERSION_STRING) == 0, "OfpsCoreVersion reports the release of this build");
     IOfpsCore *core = nullptr;
     Check(api.create(OFPS_ABI_VERSION + 1u, &hostA, &core) == OFPS_E_ABI && core == nullptr,
           "another ABI version is refused with OFPS_E_ABI");

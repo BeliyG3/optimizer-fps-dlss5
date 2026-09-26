@@ -187,13 +187,19 @@ void WatchGameLeaving()
     OrderlyStop("the game's tab says the game is taking its Neural Rendering down (exit, or a re-created device)");
 }
 
-bool IsFeedHost()
+bool IsProcessNamed(const wchar_t *exe)
 {
     wchar_t path[MAX_PATH]{};
     if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0) return false;
     const wchar_t *name = wcsrchr(path, L'\\');
-    return _wcsicmp(name != nullptr ? name + 1 : path, L"dlss5-feed-host64.exe") == 0;
+    return _wcsicmp(name != nullptr ? name + 1 : path, exe) == 0;
 }
+
+bool IsFeedHost() { return IsProcessNamed(L"dlss5-feed-host64.exe"); }
+
+// DLSS5-Reshade-AIO's 64-bit process for 32-bit games. Its 32-bit add-on ends it from outside on every
+// "apply settings" and at the game's exit, so a marker left there cannot tell a crash from a restart.
+bool IsAioWrapper() { return IsProcessNamed(L"AIO DLSS5 32-bit Wrapper.exe"); }
 
 void HookOrderlyStop()
 {
@@ -250,16 +256,28 @@ void CrashGuardInit(const wchar_t *directory)
 {
     g_crashGuard = CurrentShellSettings().crashGuard;
     swprintf_s(g_crashMarkerPath, L"%s\\optimizer-fps-dlss5.session", directory);
+    if (!CurrentShellSettings().crashGuardPresent && IsAioWrapper()) {
+        g_crashGuard = false;
+        DeleteFileW(g_crashMarkerPath); // a marker from a guarded session would never be cleared
+        ::reshade::log::message(::reshade::log::level::info,
+            "Optimizer FPS: crash guard off in DLSS5-Reshade-AIO's 32-bit wrapper (it is ended from outside on every restart); CrashGuard=1 turns it on");
+    }
     g_feedHost = IsFeedHost();
     if (g_crashGuard && !CurrentShellSettings().passive && g_feedHost) HookOrderlyStop();
     if (g_crashGuard && GetFileAttributesW(g_crashMarkerPath) != INVALID_FILE_ATTRIBUTES && !CrashMarkerMeansCrash()) {
         DeleteFileW(g_crashMarkerPath); // the previous session ran on long after its first warped frame: not our crash (killed helper/game)
-        ::reshade::log::message(::reshade::log::level::info, "Optimizer FPS: crash guard - the previous session was not unloaded cleanly but had run long after its first warped frame; not treated as a crash");
+        ::reshade::log::message(::reshade::log::level::info,
+                                "Optimizer FPS: crash guard - the previous session was not unloaded cleanly "
+                                "but had run long after its first warped frame; not treated as a crash");
     }
     if (g_crashGuard && GetFileAttributesW(g_crashMarkerPath) != INVALID_FILE_ATTRIBUTES) {
         g_crashGuardTripped = true;
         ofps::reshade::SetSafeMode(true);
-        ::reshade::log::message(::reshade::log::level::warning, "Optimizer FPS: crash guard - the previous session of this game ended without unloading the add-on (optimizer-fps-dlss5.session was left behind): NR calls are forwarded untouched this session; Retry in the tab, or delete the file. CrashGuard=0 disables the guard.");
+        ::reshade::log::message(
+            ::reshade::log::level::warning,
+            "Optimizer FPS: crash guard - the previous session of this game ended without unloading the "
+            "add-on (optimizer-fps-dlss5.session was left behind): NR calls are forwarded untouched this "
+            "session; Retry in the tab, or delete the file. CrashGuard=0 disables the guard.");
     }
 }
 

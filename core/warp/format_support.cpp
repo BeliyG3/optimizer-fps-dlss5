@@ -67,6 +67,7 @@ PackDecision ProbePack(ID3D12Device* device, RequestedPath request,
     s.sourcesValid = true; // per-frame resource/rect validation happens in Pack
     s.hostDirect = listType == D3D12_COMMAND_LIST_TYPE_DIRECT;
     s.privateCompute = privateCompute && listType == D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    s.hostCompute = !privateCompute && listType == D3D12_COMMAND_LIST_TYPE_COMPUTE;
     const PackDecision d = DecidePack(request, s);
     if (d.reason == PathReason::MissingTypedColor ||
         d.reason == PathReason::MissingTypedDepth ||

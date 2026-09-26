@@ -88,6 +88,8 @@ def compare_directories(pixel, compute, limit, core=False):
     b, b_hash = read_manifest(compute, "compute")
     left = {run["name"]: run for run in a["runs"]}
     right = {run["name"]: run for run in b["runs"]}
+    # Cases on a COMPUTE host list (*_cl) have no pixel run: the pixel path cannot record there.
+    right = {name: run for name, run in right.items() if name in left or not name.endswith("_cl")}
     if left.keys() != right.keys():
         raise ValueError(f"Run inventory differs: {pixel} {compute}")
     audits = validate_audits(pixel, compute, core) if core or pixel.parent.name == "run_nrhost" else {}

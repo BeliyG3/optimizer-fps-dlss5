@@ -71,7 +71,8 @@ struct FrameInputs {
     UINT colorSubresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     UINT motionSubresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     UINT baseSubresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    UINT depthSubresource = 0xffffffffu; // 26.7.3: 0 for planar depth-stencil guides (depth plane only), ALL otherwise: the depth guide's own resting state (a depth-stencil resource rests in DEPTH_READ | NPSR)
+    UINT depthSubresource =
+        0xffffffffu; // 26.7.3: 0 for planar depth-stencil guides (depth plane only), ALL otherwise: the depth guide's own resting state (a depth-stencil resource rests in DEPTH_READ | NPSR)
     // Warped path: the colour the residual and the reprojection are based on is the *unpacked* colour
     // (native size, the output's format, no sub-rect) rather than the host's, so the residual holds
     // only the model's contribution and every frame carries the same compression blur. Null = use
@@ -108,7 +109,9 @@ public:
 
     // Records the residual of a full pass: fresh (the final native output, in `freshState`) minus
     // the host colour; also snapshots the host depth. Afterwards HasResidual() is true.
-    void RecordResidual(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *fresh, D3D12_RESOURCE_STATES freshState, UINT freshSubresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
+    void RecordResidual(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *fresh,
+                        D3D12_RESOURCE_STATES freshState,
+                        UINT freshSubresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
     // Accumulates the host's motion into the running displacement (call once per frame before any
     // use of Acc()).
     void RecordAccumulate(ID3D12GraphicsCommandList *cmd, const FrameInputs &in);

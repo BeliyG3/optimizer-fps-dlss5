@@ -2,7 +2,7 @@
 
 // ReShade device/queue events forwarded to the NGX interposer (stage 27.D2, moved from producer.cpp).
 //
-// The interposer waits for the host's D3D12 graphics queue before dropping GPU objects, so it needs
+// The interposer waits for the host's D3D12 graphics and compute queues before dropping GPU objects, so it needs
 // to know which queues execute the host's command lists. ReShade reports every queue created through
 // its proxy device; this module notes them while the game creates its device and hands them over on
 // the first present (FlushPendingQueues), never from inside the creation itself - see the comment on

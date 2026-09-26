@@ -54,7 +54,9 @@ ofps::sdk::D3D12PackedViews PackedViewsForFeature(const FeatureState &st, std::u
 int RecordPackStage(EvalContext &c);
 ofps::sdk::AdapterStatus RecordBaseUnpack(EvalContext &c);
 void PackedGuidesToPixel(FeatureState &st, ID3D12GraphicsCommandList *cmd, std::uint32_t slot, std::uint32_t packSlot);
-void FallbackOutput(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsResource &colorResource, const OfpsResource &outputResource, const ofps::core::temporal::FrameInputs *tin, const char *why);
+void FallbackOutput(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsResource &colorResource,
+                    const OfpsResource &outputResource, const ofps::core::temporal::FrameInputs *tin,
+                    const char *why);
 void FallbackOutput(EvalContext &c, const char *why);
 void FallbackFromFrame(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsFrameInputs &frame, const char *why);
 ofps::core::temporal::FrameInputs TemporalInputsWithBase(const EvalContext &c);

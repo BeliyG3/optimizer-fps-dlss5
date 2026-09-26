@@ -25,6 +25,7 @@
 #include "../readable_guides.h"
 #include "ofps_version.h"
 #include "optiscaler_link.h"
+#include "status_log.h"
 
 #include <cstdio>
 #include <cstring>
@@ -97,6 +98,7 @@ void OnPresent(::reshade::api::effect_runtime *)
     if (!DirectHostActive()) ofps::reshade::SetEnabled(true);
     CrashGuardOnPresent();
     OptiScalerLinkInit();
+    LogStatusPeriodically();
     ofps::reshade::Poll();
     PushSettingsToCore();
     if (Core()) Core()->Housekeeping();
@@ -127,7 +129,9 @@ void LogStack(const char *what, UINT code)
             GetModuleFileNameA(mod, name, sizeof(name));
             const char *base = strrchr(name, '\\'); if (base) memmove(name, base + 1, strlen(base));
         }
-        std::snprintf(line, sizeof(line), "Optimizer FPS exit trace:   #%02u %s+0x%llx", (unsigned) i, name, mod ? (unsigned long long) ((char *) frames[i] - (char *) mod) : (unsigned long long) frames[i]);
+        std::snprintf(line, sizeof(line), "Optimizer FPS exit trace:   #%02u %s+0x%llx", (unsigned)i, name,
+                      mod ? (unsigned long long)((char *)frames[i] - (char *)mod)
+                          : (unsigned long long)frames[i]);
         ::reshade::log::message(::reshade::log::level::warning, line);
     }
 }

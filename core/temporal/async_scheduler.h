@@ -96,7 +96,13 @@ struct AsyncJob final : public ofps::core::gpu::Disposable {
     void Settle()
     {
         if (!queue || !fModel) return;
-        if (AsyncVerbose()) ofps::core::Log(false, "Optimizer FPS NGX hook [async] settle: job %llu inflight %d fModel %llu fInputs %llu signalPending %d", (unsigned long long) jobId, inflight ? 1 : 0, (unsigned long long) fModel->GetCompletedValue(), (unsigned long long) fInputs->GetCompletedValue(), signalPending ? 1 : 0);
+        if (AsyncVerbose())
+            ofps::core::Log(false,
+                            "Optimizer FPS NGX hook [async] settle: job %llu inflight %d fModel %llu fInputs "
+                            "%llu signalPending %d",
+                            (unsigned long long)jobId, inflight ? 1 : 0,
+                            (unsigned long long)fModel->GetCompletedValue(),
+                            (unsigned long long)fInputs->GetCompletedValue(), signalPending ? 1 : 0);
         if (signalPending && fInputs) {
             // Retirement can precede the next evaluate. Use the observed host queue just as the
             // normal frame path does; its registry entry may use the proxy device, not this device.
@@ -106,13 +112,19 @@ struct AsyncJob final : public ofps::core::gpu::Disposable {
         }
         if (inflight && fModel->GetCompletedValue() < jobId) {
             const bool hostIdle = ofps::core::gpu::WaitForGpu(device, nullptr); // signal + CPU wait on the host queue: flushes its batch, so our input wait resolves
-            if (AsyncVerbose()) ofps::core::Log(false, "Optimizer FPS NGX hook [async] settle: host queue wait %s, fModel now %llu", hostIdle ? "ok" : "FAILED", (unsigned long long) fModel->GetCompletedValue());
+            if (AsyncVerbose())
+                ofps::core::Log(false,
+                                "Optimizer FPS NGX hook [async] settle: host queue wait %s, fModel now %llu",
+                                hostIdle ? "ok" : "FAILED", (unsigned long long)fModel->GetCompletedValue());
             // The event is reused: reset it first, or an earlier completion leaves it signalled and the wait
             // returns at once (the model would then be re-created while the pass still runs -> TDR).
             if (event) ResetEvent(event);
             if (event && fModel->GetCompletedValue() < jobId && SUCCEEDED(fModel->SetEventOnCompletion(jobId, event))) {
                 if (WaitForSingleObject(event, 3000) != WAIT_OBJECT_0)
-                    ofps::core::Log(true, "Optimizer FPS NGX hook: background pass %llu did not finish within 3 s; its objects stay in the graveyard until its fence", static_cast<unsigned long long>(jobId));
+                    ofps::core::Log(true,
+                                    "Optimizer FPS NGX hook: background pass %llu did not finish within 3 s; "
+                                    "its objects stay in the graveyard until its fence",
+                                    static_cast<unsigned long long>(jobId));
             }
         }
         if (AsyncVerbose()) ofps::core::Log(false, "Optimizer FPS NGX hook [async] settled (fModel %llu)", (unsigned long long) fModel->GetCompletedValue());

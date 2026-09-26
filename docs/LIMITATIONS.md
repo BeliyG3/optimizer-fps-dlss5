@@ -45,8 +45,12 @@
   elsewhere in its texture, runs the model untouched, and the temporal modes are off for it.
 - Per-stage GPU timing is limited. `DebugTiming` measures the model's evaluate with timestamp
   queries; it is not a Pack/Unpack profiler.
-- 32-bit games are supported only through DLSS5-Feeder's 64-bit host process, and the in-game tab
-  there is a remote view of that process.
+- 32-bit games are supported only through a 64-bit helper process (DLSS5-Feeder's host or
+  DLSS5-Reshade-AIO's 32-bit wrapper), and the in-game tab there is a remote view of that process.
+- A consumer that evaluates the model on a COMPUTE list (DLSS5-Reshade-AIO) gets the compute
+  compression path only: when the GPU lacks typed UAV stores for a format, the frame is not
+  compressed (there is no pixel fallback on a compute list), and background mode runs as the
+  synchronous one.
 - The add-on cannot tell a frame another tool has already compressed from a normal one. With an
   OptiScaler build that has its own peripheral compression (wilsjo2 `SpatialCompression`), use one
   of the two, not both.

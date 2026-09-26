@@ -53,7 +53,8 @@ def main():
         captured = manifest(candidate)
         expected = {r["name"] for r in ref_manifest["runs"]}
         actual = {r["name"] for r in captured["runs"]}
-        if expected != actual or not all(r["exit"] == 0 and r["ok"] for r in captured["runs"]):
+        # Cases added after the reference (no reference images) must still pass, but are not compared.
+        if not expected <= actual or not all(r["exit"] == 0 and r["ok"] for r in captured["runs"]):
             raise ValueError(f"Missing/failed runtime cases: {runtime}")
         results = images(reference, candidate, ref_manifest["runs"])
         if runtime == "run_nrhost":

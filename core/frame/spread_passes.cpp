@@ -1,3 +1,4 @@
+#include "core/gpu/host_list.h"
 #include "core/frame/spread_passes.h"
 #include "core/temporal/diagnostics.h"
 
@@ -84,7 +85,7 @@ int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsM
 {
     auto *color = inputs.color.res, *output = inputs.output.res;
     auto *motion = inputs.motion.res, *depth = inputs.depth.res;
-    if (!color || !output || !motion || !depth || cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return kNotHandled;
+    if (!color || !output || !motion || !depth || !gpu::HostListRecordable(cmd)) return kNotHandled;
     if (st.warped && !EnsureGpu(st, cmd, color, output, inputs.color.view, inputs.output.view)) return kNotHandled;
     if (!EnsureTemporal(st, cmd, output, motion, depth) || !EnsureSpread(st, output, motion, depth)) return kNotHandled;
     // Switching from asynchronous unspread work must settle that job before this queue uses its models.

@@ -31,4 +31,8 @@ struct AsyncCtx {
 
 int SnapshotAsyncCodecBase(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsResource &source, int slot);
 int AsyncGuarded(AsyncCtx &c);
+// async_host_sync.cpp
+void AsyncCopyInput(ID3D12GraphicsCommandList *cmd, ID3D12Resource *host, ID3D12Resource *bg,
+                    D3D12_RESOURCE_STATES &bgState, D3D12_RESOURCE_STATES hostState, UINT hostSub);
+void AsyncQueueCap(FeatureState &st);
 } // namespace ofps::core

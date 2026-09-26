@@ -4,9 +4,10 @@ namespace ofps::core::warp {
 
 PackDecision DecidePack(RequestedPath request, const PackSupport& s) noexcept {
     if (request == RequestedPath::Pixel)
-        return {PackPath::Pixel, PathReason::ForcedPixel};
+        return s.hostDirect ? PackDecision{PackPath::Pixel, PathReason::ForcedPixel}
+                            : PackDecision{PackPath::None, PathReason::UnsupportedList};
     PathReason failure = PathReason::None;
-    if (!s.hostDirect && !s.privateCompute) failure = PathReason::UnsupportedList;
+    if (!s.hostDirect && !s.privateCompute && !s.hostCompute) failure = PathReason::UnsupportedList;
     else if (!s.sourcesValid) failure = PathReason::InvalidSource;
     else if (!s.shadersLoaded) failure = PathReason::MissingShader;
     else if (!s.colorTypedStore) failure = PathReason::MissingTypedColor;
@@ -30,7 +31,8 @@ UnpackDecision DecideUnpack(const UnpackSupport& s) noexcept {
 }
 
 ModelListPath DecideModelList(const ModelListSupport& s) noexcept {
-    if (s.hostList) return s.direct ? ModelListPath::HostDirect : ModelListPath::None;
+    if (s.hostList) return s.direct ? ModelListPath::HostDirect :
+                           s.compute ? ModelListPath::HostCompute : ModelListPath::None;
     if (s.compute) return ModelListPath::PrivateCompute;
     if (s.direct) return ModelListPath::HostDirect;
     return ModelListPath::None;

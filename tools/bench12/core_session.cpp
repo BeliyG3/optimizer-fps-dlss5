@@ -162,3 +162,8 @@ void CoreSession::Log(OfpsLogLevel, const char *text) { std::puts(text); }
 void CoreSession::OnEvent(OfpsEvent eventKind, const OfpsEventData *) {
     if (eventKind == OFPS_EVENT_FEATURE_RELEASED) featureReleased = true;
 }
+
+void CoreSession::RegisterQueue(ID3D12Device *device, ID3D12CommandQueue *extra)
+{
+    if (auto *core = loader.Get()) core->RegisterQueue(device, extra);
+}

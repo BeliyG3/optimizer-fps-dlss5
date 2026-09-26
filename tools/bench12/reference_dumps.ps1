@@ -90,6 +90,14 @@ param(
           'off_nopad'         = @{ Mode = '0'; Temporal = '0'; Extra = $nr + @('--mv-format', 'rgba16f') }
           'off_cpad_only'     = @{ Mode = '0'; Temporal = '0'; Extra = $nr + @('--mv-format', 'rgba16f', '--nr-colour-pad', '64,32') }
           'warp_t1'           = @{ Mode = '2'; Temporal = '1'; Extra = $nr + $sf }
+          # The model on a COMPUTE list on its own queue, as DLSS5-Reshade-AIO calls it.
+          'off_t0_cl'         = @{ Mode = '0'; Temporal = '0'; Extra = $nr + $sf + @('--nr-list', 'compute') }
+          'warp_t0_cl'        = @{ Mode = '2'; Temporal = '0'; Extra = $nr + $sf + @('--nr-list', 'compute') }
+          'warp_t1_cl'        = @{ Mode = '2'; Temporal = '1'; Extra = $nr + $sf + @('--nr-list', 'compute') }
+          # Colour and output in different formats (the sRGB proxy in R10G10B10A2, the output RGBA16F), as
+          # DLSS5-Reshade-AIO hands them over: the temporal colour snapshot must keep its own view format.
+          'warp_t1_r10'       = @{ Mode = '2'; Temporal = '1'; Extra = $nr + @('--mv-format', 'rgba16f', '--nr-proxy-format', 'r10g10b10a2') }
+          'warp_t1_r10_cl'    = @{ Mode = '2'; Temporal = '1'; Extra = $nr + @('--mv-format', 'rgba16f', '--nr-proxy-format', 'r10g10b10a2', '--nr-list', 'compute') }
       } }
       default { throw "Unknown runtime kind '$kind': expected run_addon, run_r521 or run_nrhost" }
   }
@@ -116,6 +124,7 @@ param(
   $runs = New-Object System.Collections.Generic.List[object]
   foreach ($name in $configs.Keys) {
       if ($Case.Count -gt 0 -and $Case -notcontains $name) { continue }
+      if ($WarpPath -eq 'pixel' -and $name -like '*_cl') { "$name skipped: a COMPUTE list has no pixel path"; continue }
       $cfg = $configs[$name]
       Set-IniKey 'OptimizerFPS' 'CrashGuard' '0'      # the bench leaves through TerminateProcess
       Set-IniKey 'OptimizerFPS' 'Mode' $cfg.Mode

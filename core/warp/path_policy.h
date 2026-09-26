@@ -7,7 +7,7 @@ namespace ofps::core::warp {
 enum class RequestedPath : std::uint32_t { Auto = 0, Compute = 1, Pixel = 2 };
 enum class PackPath : std::uint32_t { None = 0, Compute = 1, Pixel = 2 };
 enum class UnpackPath : std::uint32_t { None = 0, DirectUav = 1, CopyFromUav = 2 };
-enum class ModelListPath : std::uint32_t { None = 0, HostDirect = 1, PrivateCompute = 2 };
+enum class ModelListPath : std::uint32_t { None = 0, HostDirect = 1, PrivateCompute = 2, HostCompute = 3 };
 
 enum class PathReason : std::uint32_t {
     None = 0,
@@ -30,6 +30,9 @@ struct PackSupport {
     bool sourcesValid = false;
     bool hostDirect = false;
     bool privateCompute = false;
+    // The host's own list is COMPUTE (DLSS5-Reshade-AIO runs NR on async compute): only the compute
+    // path can record there, so there is no pixel fallback.
+    bool hostCompute = false;
 };
 
 struct PackDecision {

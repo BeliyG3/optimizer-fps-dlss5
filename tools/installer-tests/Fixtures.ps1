@@ -43,17 +43,20 @@ function New-X64Fixture
 
 function New-X86Fixture
 {
-    param([string] $Name, [string] $Root, [string] $ReShade64, [string] $ReShade32)
+    param([string] $Name, [string] $Root, [string] $ReShade64, [string] $ReShade32, [switch] $Aio)
     $dir = Join-Path $Root $Name
     $null = New-Item -ItemType Directory -Path $dir -Force
     Copy-Item -LiteralPath $cmd32 -Destination (Join-Path $dir 'game.exe') -Force
     Copy-Item -LiteralPath $ReShade32 -Destination (Join-Path $dir 'dxgi.dll') -Force
     [IO.File]::WriteAllText((Join-Path $dir 'ReShade.ini'), ($MinimalIni -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding($false)))
-    # A Feeder install: the 32-bit side has the feeder add-on, the 64-bit host has ReShade.
-    [IO.File]::WriteAllText((Join-Path $dir 'dlss5-feed.addon32'), 'stub', (New-Object Text.UTF8Encoding($false)))
+    # A Feeder install (or, with -Aio, DLSS5-Reshade-AIO's): the 32-bit side has the feeder add-on, the
+    # 64-bit host has ReShade.
+    $feed32 = if ($Aio) { 'standalone-dlssnr.addon32' } else { 'dlss5-feed.addon32' }
+    $hostExe = if ($Aio) { 'AIO DLSS5 32-bit Wrapper.exe' } else { 'dlss5-feed-host64.exe' }
+    [IO.File]::WriteAllText((Join-Path $dir $feed32), 'stub', (New-Object Text.UTF8Encoding($false)))
     $h = Join-Path $dir 'host64'
     $null = New-Item -ItemType Directory -Path $h -Force
-    Copy-Item -LiteralPath $cmd64 -Destination (Join-Path $h 'dlss5-feed-host64.exe') -Force
+    Copy-Item -LiteralPath $cmd64 -Destination (Join-Path $h $hostExe) -Force
     Copy-Item -LiteralPath $ReShade64 -Destination (Join-Path $h 'dxgi.dll') -Force
     [IO.File]::WriteAllText((Join-Path $h 'ReShade.ini'), ($MinimalIni -replace "`n", "`r`n"), (New-Object Text.UTF8Encoding($false)))
     return $dir

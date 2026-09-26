@@ -11,6 +11,7 @@ Exit code 1 when a file reaches the hard limit, 0 otherwise (the soft limit only
 Vendored and generated code is skipped: it is not ours to split.
 """
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
@@ -50,7 +51,11 @@ def source_files(roots: list[str], changed: bool):
         if path.is_file():
             yield path
         elif path.is_dir():
-            yield from path.rglob("*")
+            # os.walk skips unreadable directories and dangling links (local bench captures link to
+            # removed temporary folders), where Path.rglob raises.
+            for folder, _dirs, names in os.walk(path, onerror=lambda _error: None):
+                for name in names:
+                    yield pathlib.Path(folder) / name
 
 
 def main() -> int:

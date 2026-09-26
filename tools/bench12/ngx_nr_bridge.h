@@ -12,7 +12,8 @@ public:
     // padX/padY: the proxy is that much larger than the colour (the host's colour region at 0,0 of a
     // larger texture, as with a render region inside a full-size target); the pad stays black.
     void Configure(Device &device, ID3D12Resource *colour, ID3D12Resource *output, unsigned frameWidth,
-                   unsigned frameHeight, bool encode, unsigned padX = 0, unsigned padY = 0, bool padEdge = false);
+                   unsigned frameHeight, bool encode, unsigned padX = 0, unsigned padY = 0, bool padEdge = false,
+                   DXGI_FORMAT proxyFormat = DXGI_FORMAT_R16G16B16A16_FLOAT);
     // Records the encode; the colour returns to `state`. Returns the proxy (a UAV), or the colour
     // itself when not encoding.
     ID3D12Resource *Encode(Device &device, D3D12_RESOURCE_STATES state);

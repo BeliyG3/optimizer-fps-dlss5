@@ -1,3 +1,4 @@
+#include "core/gpu/host_list.h"
 #include "core/frame/callback_guard.h"
 #include "core/context.h"
 #include "core/frame/codec_frame.h"
@@ -29,13 +30,15 @@ namespace ofps::core {
 int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
                       const OfpsFrameInputs &frame, OfpsEvalResult &evalResult) {
     evalResult.path = OFPS_PATH_PASSTHROUGH;
-    if (cmd->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) {
-        SetReason("host command list type %d cannot run the model; DIRECT required", (int)cmd->GetType());
+    if (!gpu::HostListRecordable(cmd)) {
+        SetReason("host command list type %d cannot run the model; DIRECT or COMPUTE required", (int)cmd->GetType());
         if (cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COMPUTE ||
             cmd->GetType() == D3D12_COMMAND_LIST_TYPE_COPY)
             FallbackFromFrame(st, cmd, frame, Ctx().status.reason);
         return OFPS_E_ARG;
     }
+    st.hostListCompute = gpu::HostListIsCompute(cmd);
+    Ctx().evalOnCompute = st.hostListCompute; // DebugDepthState overrides then stay legal (HostDepthState)
     OfpsModelInputs modelInputs = ModelInputsFrom(frame, st.nativeWidth, st.nativeHeight);
     AsyncSignalPending(st);
     CodecFrame codec;
@@ -279,10 +282,13 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
         Log(false, "Optimizer FPS NGX hook: host resources: colour %p fmt %d, depth %p fmt %d, motion %p fmt %d, output %p fmt %d%s %s",
             (void *) color, (int) colorDesc.Format, (void *) depth, (int) depthDesc.Format, (void *) motion, (int) motionDesc.Format, (void *) output, (int) outputDesc.Format,
             color == output ? " (output IS the colour: in-place host)" : "", resourcesTail ? resourcesTail : "(pointers may rotate every frame; logged on a change of formats/rects/scale)");
-        Log(false, "Optimizer FPS NGX hook: host motion input: texture %ux%u fmt %d, subrect %u,%u %ux%u, MVecScale %.4f x %.4f (%s), depth inverted %u, colour subrect %ux%u; Pack scale %.4f x %.4f (adjust %.3f%s)",
-            (unsigned) motionDesc.Width, motionDesc.Height, (int) motionDesc.Format, motionRect.x, motionRect.y, motionRect.w,
-            motionRect.h, mvScaleX, mvScaleY, descriptions,
-            depthInverted, colorRect.w, colorRect.h, input.motionScaleX, input.motionScaleY, Ctx().motionScaleAdjust.load(),
+        Log(false,
+            "Optimizer FPS NGX hook: host motion input: texture %ux%u fmt %d, subrect %u,%u %ux%u, MVecScale "
+            "%.4f x %.4f (%s), depth inverted %u, colour subrect %ux%u; Pack scale %.4f x %.4f (adjust "
+            "%.3f%s)",
+            (unsigned)motionDesc.Width, motionDesc.Height, (int)motionDesc.Format, motionRect.x, motionRect.y,
+            motionRect.w, motionRect.h, mvScaleX, mvScaleY, descriptions, depthInverted, colorRect.w,
+            colorRect.h, input.motionScaleX, input.motionScaleY, Ctx().motionScaleAdjust.load(),
             Ctx().motionInvert.load() ? ", inverted" : "");
         if (probeTail && *probeTail) Log(false, "%s", probeTail);
         Log(false, "Optimizer FPS NGX hook: host model inputs: UI %p, UIAlpha %p, Backbuffer %p (%s), %s",
@@ -372,7 +378,12 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
     // Background mode in the warped path: the host context carries the pack slot for the base.
     if (EffectiveTemporalMode(st) == 3 && plan.active) {
         const int handled = AsyncTemporalEvaluate(st, cmd, modelInputs, &c, frame);
-        if (handled != kNotHandled) { if (evalResult.path != OFPS_PATH_FALLBACK) evalResult.path = st.frameModelCalled ? (st.warped ? OFPS_PATH_WARPED : OFPS_PATH_PASSTHROUGH) : OFPS_PATH_CARRIED; return handled; }
+        if (handled != kNotHandled) {
+            if (evalResult.path != OFPS_PATH_FALLBACK)
+                evalResult.path = st.frameModelCalled ? (st.warped ? OFPS_PATH_WARPED : OFPS_PATH_PASSTHROUGH)
+                                                      : OFPS_PATH_CARRIED;
+            return handled;
+        }
     }
 
     if (plan.active && !plan.full) {

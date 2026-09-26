@@ -23,7 +23,9 @@ bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Reso
 bool BackgroundModeUsable(FeatureState &st);
 int EffectiveTemporalMode(FeatureState &st);
 TemporalPlan PlanTemporal(FeatureState &st, bool hostReset);
-ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, const OfpsResource &motion, const OfpsResource &depth, float mvScaleX, float mvScaleY, bool depthInverted, bool hostModelGrid);
+ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, const OfpsResource &motion,
+                                                 const OfpsResource &depth, float mvScaleX, float mvScaleY,
+                                                 bool depthInverted, bool hostModelGrid);
 bool TemporalExhausted(FeatureState &st);
 void TemporalFrameDone(FeatureState &st, bool full);
 // Temporal modes without the warp (Mode Off): kNotHandled falls back to the plain pass-through.

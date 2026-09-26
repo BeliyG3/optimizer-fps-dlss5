@@ -112,17 +112,18 @@ PowerShell offers the same installer options:
 
 ## 32-bit games
 
-A 32-bit process cannot load the 64-bit NGX runtime, so DLSS 5 Neural Rendering runs inside
-DLSS5-Feeder's helper process, `<game>\host64\dlss5-feed-host64.exe`. Install DLSS5-Feeder
-for that game first; then this installer:
+A 32-bit process cannot load the 64-bit NGX runtime, so DLSS 5 Neural Rendering runs inside a
+64-bit helper process in `<game>\host64\`: DLSS5-Feeder's `dlss5-feed-host64.exe`, or
+DLSS5-Reshade-AIO's `AIO DLSS5 32-bit Wrapper.exe` (see [DLSS5-Reshade-AIO](#dlss5-reshade-aio)).
+Install one of them for that game first; then this installer:
 
 * puts the add-on, core DLL, forwarder, and shaders into `host64\` (beside host64's own
   64-bit ReShade), and
 * puts `optimizer-fps-dlss5-remote.addon32` beside the game's own 32-bit ReShade DLL. That is
   only a tab: it shows and edits the host's settings from inside the game's overlay.
 
-If `host64\dlss5-feed-host64.exe` is not there, the installer stops with exit code 5 and
-points you at the DLSS5-Feeder installer. It also warns if `dlss5-feed.addon32` is missing
+If neither helper is in `host64\`, the installer stops with exit code 5. It also warns if the
+helper's 32-bit add-on (`dlss5-feed.addon32`, or AIO's `standalone-dlssnr.addon32`) is missing
 beside the 32-bit ReShade, because without it the game never hands its frames to host64.
 
 **Set Mode to `Off` if the Feeder already compresses the frame.** The installer seeds
@@ -130,6 +131,27 @@ beside the 32-bit ReShade, because without it the game never hands its frames to
 compress the frame before `host64` sees it. In that case set **Mode** to `Off` in the tab to
 avoid double compression; the temporal modes still work with Mode `Off`, because they run on
 the native model.
+
+## DLSS5-Reshade-AIO
+
+[DLSS5-Reshade-AIO](https://github.com/kibblerz/DLSS5-Reshade-AIO) is another Neural Rendering
+consumer. It runs the model on an asynchronous compute queue; the add-on records its compression
+on that compute list too (the compute path; the pixel path is not available there).
+
+* **64-bit games:** install AIO's 64-bit zip by its instructions, then run this installer on the
+  game's exe as for any 64-bit game.
+* **32-bit games:** install AIO's 32-bit zip (its wrapper and 64-bit ReShade go into `host64\`),
+  then run this installer; it treats AIO's wrapper like DLSS5-Feeder's host.
+  The game's 32-bit ReShade must find `DLSS5_Feed.fx`: if `EffectSearchPaths` in its ReShade.ini
+  is only `.\`, set it to `.\reshade-shaders\Shaders\**`. In a Direct3D 10/11 game, also enable
+  **DLSS 5 Feed** on ReShade's Home tab (AIO enables only its D3D9 capture effect on its own). If
+  either step is missing, AIO never starts its wrapper, so there is neither Neural Rendering nor this
+  add-on's tab.
+
+Keep AIO at one NR pass: extra model passes are not compressed on a compute list. With AIO,
+background mode runs as the synchronous one, and in AIO's 32-bit wrapper the crash guard
+is off by default: AIO ends that process from outside on every "apply settings", which a guard
+cannot tell from a crash. `CrashGuard=1` turns it back on.
 
 ## With a public OptiScaler
 

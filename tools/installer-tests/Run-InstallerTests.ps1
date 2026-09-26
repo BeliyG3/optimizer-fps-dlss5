@@ -60,7 +60,10 @@ $null = New-Item -ItemType Directory -Path $root -Force
 $requireIntegration = $PSBoundParameters.ContainsKey('ReShade64') -or
     $PSBoundParameters.ContainsKey('ReShade32') -or $PSBoundParameters.ContainsKey('BenchDir')
 
+# The release under test: every expectation about "this build's release" reads it from the payload.
+$ReleaseVersion = [IO.File]::ReadAllText((Join-Path $Payload 'VERSION.txt')).Trim().TrimStart([char]0xFEFF)
 $testContext = @{
+    ReleaseVersion = $ReleaseVersion
     PsExe = $PsExe
     Installer = $installer
     Verifier = $verifier
@@ -300,6 +303,14 @@ else {
     $ini3 = [IO.File]::ReadAllText((Join-Path $g3 'host64\ReShade.ini'))
     Check 'host64 ReShade.ini got [OptimizerFPS]' ($ini3 -match '(?m)^\[OptimizerFPS\]')
 
+    # DLSS5-Reshade-AIO's 32-bit layout: its wrapper in host64, its own add-on beside the game.
+    $gAio = New-X86Fixture -Root $root -ReShade64 $ReShade64 -ReShade32 $ReShade32 -Name 'x86-aio' -Aio
+    $r = Invoke-Installer @('-GameExe', (Join-Path $gAio 'game.exe'), '-Payload', $Payload, '-Yes', '-NoPause')
+    Check 'x86 AIO install exits 10' ($r.Code -eq 10) ('exit ' + $r.Code + "`n" + $r.Out)
+    Check 'AIO: the add-on went into host64' (Test-Path -LiteralPath (Join-Path $gAio 'host64\optimizer-fps-dlss5.addon64'))
+    Check 'AIO: the remote tab went beside the 32-bit ReShade' (Test-Path -LiteralPath (Join-Path $gAio 'optimizer-fps-dlss5-remote.addon32'))
+    Check 'AIO: no missing-feeder warning' (-not ($r.Out -match 'is not beside the 32-bit ReShade DLL')) $r.Out
+
     # --- 7. the game is running --------------------------------------------------------
     Say ''
     Say '== 7. the game is running' 'Cyan'
@@ -420,7 +431,7 @@ foreach ($case in @(
     $src = Join-Path $fixtures $case.File
     if (-not (Test-Path -LiteralPath $src)) { Skip ('runtime verdicts (' + $case.Label + ')') ('fixture missing: ' + $src); continue }
     Copy-Item -LiteralPath $src -Destination (Join-Path $g10 'ReShade.log') -Force
-    Add-Content -LiteralPath (Join-Path $g10 'ReShade.log') -Value 'Optimizer FPS: core loaded; ABI 1; release 2026.9.1'
+    Add-Content -LiteralPath (Join-Path $g10 'ReShade.log') -Value ('Optimizer FPS: core loaded; ABI 1; release ' + $ReleaseVersion)
     (Get-Item -LiteralPath (Join-Path $g10 'ReShade.log')).LastWriteTimeUtc = (Get-Date).ToUniversalTime()
 
     $r = Invoke-Verifier @('-GameExe', $exe10, '-Json')

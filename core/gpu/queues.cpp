@@ -11,6 +11,7 @@ struct QueueEntry {
     ID3D12Fence *fence = nullptr;
     HANDLE event = nullptr;
     UINT64 value = 0;
+    bool graphics = false; // DIRECT; compute queues only join the releases' GPU waits
 };
 std::mutex g_queueMutex;
 std::vector<QueueEntry> g_queues;
@@ -28,6 +29,7 @@ bool RegisterQueue(ID3D12Device *device, ID3D12CommandQueue *queue)
     QueueEntry e;
     e.device = device;
     e.queue = queue;
+    e.graphics = queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT;
     if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&e.fence)))) {
         Log(true, "Optimizer FPS NGX: could not create a fence for queue %p; GPU waits unavailable on it", (void *) queue);
         return false;
@@ -43,8 +45,8 @@ bool RegisterQueue(ID3D12Device *device, ID3D12CommandQueue *queue)
         std::lock_guard<std::mutex> lock(g_queueMutex);
         g_queues.push_back(e);
     }
-    Log(false, "Optimizer FPS NGX: D3D12 graphics queue %p (device %p) registered for GPU waits", (void *) queue,
-        (void *) device);
+    Log(false, "Optimizer FPS NGX: D3D12 %s queue %p (device %p) registered for GPU waits",
+        e.graphics ? "graphics" : "compute", (void *) queue, (void *) device);
     return true;
 }
 
@@ -136,7 +138,7 @@ bool SignalRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3
     std::lock_guard<std::mutex> lock(g_queueMutex);
     bool any = false;
     for (const QueueEntry &e : g_queues)
-        if (e.device == device || e.device == proxyDevice) { any |= SUCCEEDED(e.queue->Signal(fence, value)); }
+        if (e.graphics && (e.device == device || e.device == proxyDevice)) { any |= SUCCEEDED(e.queue->Signal(fence, value)); }
     return any;
 }
 
@@ -238,7 +240,7 @@ bool WaitRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D1
     std::lock_guard<std::mutex> lock(g_queueMutex);
     bool any = false;
     for (const QueueEntry &e : g_queues)
-        if (e.device == device || e.device == proxyDevice) { any |= SUCCEEDED(e.queue->Wait(fence, value)); }
+        if (e.graphics && (e.device == device || e.device == proxyDevice)) { any |= SUCCEEDED(e.queue->Wait(fence, value)); }
     return any;
 }
 
@@ -246,7 +248,7 @@ std::size_t CountQueues(ID3D12Device *device, ID3D12Device *proxyDevice, std::si
 {
     std::lock_guard<std::mutex> lock(g_queueMutex);
     std::size_t matching = 0;
-    for (const QueueEntry &e : g_queues) matching += (e.device == device || e.device == proxyDevice) ? 1 : 0;
+    for (const QueueEntry &e : g_queues) matching += e.graphics && (e.device == device || e.device == proxyDevice) ? 1 : 0;
     if (total) *total = g_queues.size();
     return matching;
 }
@@ -256,6 +258,7 @@ bool TimestampFrequency(ID3D12Device *device, ID3D12Device *proxyDevice, UINT64 
     std::lock_guard<std::mutex> lock(g_queueMutex);
     const QueueEntry *pick = nullptr;
     for (const QueueEntry &e : g_queues) {
+        if (!e.graphics) continue;
         if (e.device == device || e.device == proxyDevice) { pick = &e; break; }
         if (pick == nullptr) pick = &e;
     }

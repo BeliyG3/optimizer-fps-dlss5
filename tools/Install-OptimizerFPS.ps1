@@ -104,6 +104,7 @@ $script:LegacyShaderFolderName  = 'peripheral-warp'
 $script:LegacySessionMarker     = 'peripheral-warp.session'
 $script:StateFolderName   = '_OptimizerFPS'
 $script:HostExeName       = 'dlss5-feed-host64.exe'
+$script:AioHostExeName    = 'AIO DLSS5 32-bit Wrapper.exe'   # DLSS5-Reshade-AIO's host64 for 32-bit games
 $script:ReceiptSchema     = 3
 
 # A fresh host ini gets these defaults only when neither settings section exists.
@@ -181,6 +182,7 @@ $script:InstallerContext = @{
     LegacyShaderFolderName = $script:LegacyShaderFolderName
     LegacySessionMarker = $script:LegacySessionMarker
     HostExeName = $script:HostExeName
+    AioHostExeName = $script:AioHostExeName
     DefaultIniKeys = $script:DefaultIniKeys
     ReceiptSchema = $script:ReceiptSchema
     ExitNoReShade = $script:ExitNoReShade
