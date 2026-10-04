@@ -16,7 +16,7 @@ set(OFPS_NGX_SHELL_SOURCES
     menu_marker.h menu_marker.cpp menu_dump.h menu_dump.cpp menu_dump_d3d11.cpp
     menu_bridge_d3d11.h menu_bridge_d3d11.cpp menu_bridge_debug.cpp menu_pipeline_d3d11.cpp menu_pipeline_d3d11_gpu.cpp
     menu_model_pass.cpp menu_core_pass.h menu_core_pass.cpp menu_core_flow.h menu_core_flow.cpp menu_flow_switch.h menu_flow_switch.cpp menu_guides.h menu_guides.cpp menu_gpu_time.cpp menu_params.h menu_params.cpp menu_colour.h menu_colour.cpp
-    ngx_param_shim.h ngx_param_shim.cpp
+    ngx_param_iface.h ngx_param_shim.h ngx_param_shim.cpp
     menu_param_book.h menu_param_book.cpp
     ngx_hook_api.cpp ngx_params.cpp ngx_forwarder_calls.cpp readable_guides.cpp queue_submit_hook.h queue_submit_hook.cpp
     ngx_hook_api.h shell_host.h shell_host.cpp ngx_params.h ngx_forwarder_calls.h readable_guides.h)

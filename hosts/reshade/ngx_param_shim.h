@@ -11,7 +11,7 @@
 // Both are called by the NR runtime through the raw vtable. MSVC lays overloads of one name out in
 // reverse declaration order (the slots ngx_params.cpp uses on a host block: void* 0/8, int 3/11,
 // float 6/14); tests/test_ngx_param_shim.cpp checks these classes have that layout.
-#include "tools/bench12/external/ngx/nvsdk_ngx_params.h"
+#include "hosts/reshade/ngx_param_iface.h"
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -19,7 +19,7 @@
 
 namespace ofps::reshade {
 
-// The eight overloads, in the SDK header's declaration order.
+// The eight overloads, in the declaration order of ngx_param_iface.h.
 enum class NgxType : unsigned char { ULL, Float, Double, UInt, Int, D3D11, D3D12, Pointer };
 const char *NgxTypeName(NgxType type);
 
