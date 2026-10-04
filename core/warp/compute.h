@@ -28,6 +28,28 @@ struct UnpackTarget {
     bool temporalNeedsNativeRead = false;
 };
 
+// Asks Unpack for detail transfer (colour filters 2/3): the frame the slot's last Pack read plus the
+// model's edit. The colour and depth are the ones that Pack read, through its validated views, resting
+// states and subresources (plane 0 of a planar depth-stencil), all remembered by the Pack.
+// Lifetime: those are raw host resources, valid only during the evaluate that packed them. Unpack
+// transfers only when the slot's Pack ran in the current evaluate (Ctx().evalCounter unchanged);
+// otherwise it records the plain unpack and TransferApplied() is false.
+struct TransferRequest {
+    bool depthReversed = true; // near = 1 (reversed Z); standard Z is mirrored in the shader
+};
+
+// The colour-space rule of the transfer: the edit is computed and added in the numbers the shader
+// reads, so the frame and the model's answer must be read through views of the same sRGB-ness. The
+// core decides from it, before recording, whether the temporal base is replaced by the transfer.
+bool TransferEligible(DXGI_FORMAT colorView, DXGI_FORMAT answerView);
+
+// The parts of UnpackSupport that depend on the target alone, as ComputePath::Unpack fills them for a
+// target `td` written through `targetView` into the path's `outputView`. The typed-store flags are the
+// device's answers for those two views.
+UnpackSupport TargetUnpackSupport(const D3D12_RESOURCE_DESC& td, DXGI_FORMAT targetView,
+                                  DXGI_FORMAT outputView, std::uint32_t subresource,
+                                  bool targetTypedStore, bool outputTypedStore);
+
 // D3D12 adapter for the pure path policy. Source validation is repeated by Pack.
 PackDecision ProbePack(ID3D12Device* device, RequestedPath request,
                        D3D12_COMMAND_LIST_TYPE listType, DXGI_FORMAT colorView,
@@ -39,10 +61,17 @@ public:
     ComputePath(const ComputePath&) = delete;
     ComputePath& operator=(const ComputePath&) = delete;
 
+    // `frameSlots` packed texture triplets, each with its native copy intermediate.
     static std::unique_ptr<ComputePath> Create(
         ID3D12Device* commandListDevice, const sdk::LayoutV2& layout,
         DXGI_FORMAT colorView, DXGI_FORMAT outputView,
         std::uint32_t frameSlots, std::string& reason);
+    // Without `copyIntermediates` an Unpack whose target needs UnpackPath::CopyFromUav fails cleanly
+    // (no GPU work recorded); the caller prepares them when such a target can occur (warp/texture_plan.h).
+    static std::unique_ptr<ComputePath> Create(
+        ID3D12Device* commandListDevice, const sdk::LayoutV2& layout,
+        DXGI_FORMAT colorView, DXGI_FORMAT outputView,
+        std::uint32_t frameSlots, bool copyIntermediates, std::string& reason);
 
     bool Pack(ID3D12GraphicsCommandList* cmd, std::uint32_t frameSlot,
               const sdk::D3D12SourceResources& sources,
@@ -56,6 +85,16 @@ public:
                 const UnpackTarget& target, std::uint32_t outlines,
                 float gain, float gamma, const OfpsFencePoint* privateUsePoint,
                 std::string& reason);
+    // transferRequest == nullptr is the plain unpack. A request transfers only for colour filters 2/3,
+    // matching colour spaces, a Pack in the current evaluate, and a target and answer that are neither
+    // the colour nor the depth the Pack read; otherwise the plain unpack runs.
+    // TransferApplied() reports which one the last Unpack recorded.
+    bool Unpack(ID3D12GraphicsCommandList* cmd, std::uint32_t frameSlot,
+                ID3D12Resource* answer, DXGI_FORMAT answerView,
+                const UnpackTarget& target, std::uint32_t outlines,
+                float gain, float gamma, const OfpsFencePoint* privateUsePoint,
+                const TransferRequest* transferRequest, std::string& reason);
+    [[nodiscard]] bool TransferApplied() const noexcept;
 
     bool BaseUnpack(ID3D12GraphicsCommandList* cmd, std::uint32_t frameSlot,
                     const UnpackTarget& target, const OfpsFencePoint* privateUsePoint,

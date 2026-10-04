@@ -12,5 +12,5 @@
 # NAME, so a version inside the name resets the user's choice on every release); the version lives
 # in DESCRIPTION and in the overlay banner instead.
 
-set(OFPS_SDK_VERSION "0.6.0")
-set(OFPS_RELEASE_VERSION "2026.9.2")
+set(OFPS_SDK_VERSION "0.7.0")
+set(OFPS_RELEASE_VERSION "2026.10")

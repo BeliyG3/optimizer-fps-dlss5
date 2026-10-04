@@ -62,7 +62,7 @@ void NrColourBridge::CreatePipelines(Device &d)
         Check(d.gpu->CreateComputePipelineState(&c,IID_PPV_ARGS(&pso)),"Create NR colour bridge PSO");
     };
     make("Encode",encodePso); make("Decode",decodePso);
-    descriptors=d.Allocate(4); // encode SRV/UAV, decode SRV/UAV
+    descriptors=d.Allocate(6); // encode SRV/UAV, decode SRV/UAV, input decode SRV/UAV
 }
 void NrColourBridge::Configure(Device &d, ID3D12Resource *source, ID3D12Resource *target, unsigned w, unsigned h, bool encoding,
                                unsigned padX, unsigned padY, bool edge, DXGI_FORMAT proxyFormat)
@@ -72,7 +72,11 @@ void NrColourBridge::Configure(Device &d, ID3D12Resource *source, ID3D12Resource
     const auto desc=source->GetDesc();
     proxy=encode ? d.Texture(unsigned(desc.Width)+padX,desc.Height+padY,proxyFormat,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,Uav) : nullptr;
     presented=d.Texture(w,h,DXGI_FORMAT_R16G16B16A16_FLOAT,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,Present);
-    if(proxy) { d.TextureSrv(colour,descriptors); CreateUav(d,proxy.Get(),descriptors+1); }
+    if(proxy) {
+        d.TextureSrv(colour,descriptors); CreateUav(d,proxy.Get(),descriptors+1);
+        d.TextureSrv(proxy.Get(),descriptors+4);
+    } else d.TextureSrv(colour,descriptors+4); // --nr-pause-show input with linear colour: the colour itself
+    CreateUav(d,presented.Get(),descriptors+5);
     d.TextureSrv(output,descriptors+2); CreateUav(d,presented.Get(),descriptors+3);
     std::printf("[nr] colour handed to NR as %s; presented region %ux%u\n",encode ? "an sRGB-encoded proxy (white 1.0, knee 0.75)" : "linear HDR",w,h);
 }
@@ -102,4 +106,17 @@ void NrColourBridge::Resolve(Device &d, unsigned x, unsigned y)
     const unsigned constants[4]={x,y,encode ? 1u : 0u,0};
     Run(d,decodePso.Get(),descriptors+2,constants,presented.Get());
     Transition(list,presented.Get(),Uav,Present); Transition(list,output,Read,Uav);
+}
+void NrColourBridge::ResolveInput(Device &d, D3D12_RESOURCE_STATES colourState)
+{
+    auto *list=d.list.Get();
+    // The proxy (a UAV) is decoded; linear colour (in colourState) is copied as it is.
+    ID3D12Resource *input=proxy ? proxy.Get() : colour;
+    const auto rest=proxy ? Uav : colourState;
+    if(rest!=Read) Transition(list,input,rest,Read);
+    Transition(list,presented.Get(),Present,Uav);
+    const unsigned constants[4]={0,0,proxy ? 1u : 0u,0};
+    Run(d,decodePso.Get(),descriptors+4,constants,presented.Get());
+    Transition(list,presented.Get(),Uav,Present);
+    if(rest!=Read) Transition(list,input,Read,rest);
 }

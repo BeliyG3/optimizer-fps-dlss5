@@ -1,5 +1,6 @@
 #pragma once
 #include "test_core_api_fakes.h"
+#include <string>
 namespace coretest {
 inline int failures = 0;
 inline void Check(bool condition, const char *message) {
@@ -8,6 +9,7 @@ inline void Check(bool condition, const char *message) {
         ++failures;
     }
 }
+inline void Check(bool condition, const std::string &message) { Check(condition, message.c_str()); }
 inline void SetInt(OfpsSettingsValues &v, std::uint32_t id, std::int32_t value) {
     v.v[id].i = value;
     v.explicitMask[id / 64] |= 1ull << (id % 64);

@@ -21,6 +21,10 @@ bool EnsureTemporalDevice(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D
 bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *output, ID3D12Resource *motion,
                     ID3D12Resource *depth);
 bool BackgroundModeUsable(FeatureState &st);
+// The background mode may run on this feature (mode 3 on a direct-list, frame-grid host): the texture
+// sets it needs (pack slot 4, the machine's pending chains) are prepared. A superset of
+// EffectiveTemporalMode() == 3, which also needs a registered host queue.
+bool BackgroundCapable(const FeatureState &st);
 int EffectiveTemporalMode(FeatureState &st);
 TemporalPlan PlanTemporal(FeatureState &st, bool hostReset);
 ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, const OfpsResource &motion,

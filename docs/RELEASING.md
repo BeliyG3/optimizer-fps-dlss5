@@ -46,7 +46,7 @@ build until the section exists — write the changelog first.
 `build.yml` builds five presets (`windows-x64`, `windows-x64-mt`,
 `windows-x86`, `windows-x86-remote`, `sdk-only-x64`) on `windows-2022` with
 warnings as errors. It inventories and runs three CTest presets (currently
-26/13/10 tests), checks ABI and core includes, checks file size and PowerShell
+42/14/10 tests), checks ABI and core includes, checks file size and PowerShell
 5.1 compatibility, verifies dependencies, packages and validates the zip, and
 runs installer self-tests. Do not tag on red.
 

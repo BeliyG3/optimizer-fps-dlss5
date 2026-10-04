@@ -73,6 +73,33 @@ std::size_t ByteDifferences(const ReadbackCapture &a, const ReadbackCapture &b, 
                            << " pixelHigher=" << pixelHigher << '\n';
     return changed;
 }
+// One compute evaluate into an output that cannot take a UAV write (render target only, resting in
+// RENDER_TARGET): the frame must still be warped and match the SDK reference.
+bool UnpackThroughCopy(WarpDevice &w, IOfpsCore *core, IOfpsFeature *feature, HostFrame &frame) {
+    constexpr auto kRest = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    auto output = CreateTexture(w.device.Get(), kW, kH, kColorFormat, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, kRest);
+    if (!output || !BeginList(w)) return false;
+    ID3D12GraphicsCommandList *cmd = w.list.Get();
+    std::vector<ComPtr<ID3D12Resource>> uploads;
+    if (!UploadPattern(w, frame.color.Get(), frame.colorRest, 0, uploads) ||
+        !UploadPattern(w, frame.depth.Get(), kInputRest, 1, uploads) ||
+        !UploadPattern(w, frame.motion.Get(), kInputRest, 2, uploads)) return false;
+    OfpsFrameInputs in = FrameInputs(frame, output.Get(), 1);
+    in.output.restState = kRest;
+    OfpsEvalResult eval{};
+    eval.size = sizeof(eval);
+    const int result = feature->Evaluate(cmd, &in, &eval);
+    auto capture = CreateReadback(w.device.Get(), output.Get());
+    if (!capture.buffer) return false;
+    Transition(cmd, output.Get(), kRest, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    RecordReadback(cmd, output.Get(), capture);
+    Transition(cmd, output.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, kRest);
+    if (!SubmitList(w)) return false;
+    core->OnCommandListExecuted(w.queue.Get(), cmd);
+    if (!WaitForQueue(w.device.Get(), w.queue.Get())) return false;
+    return result == OFPS_OK && eval.path == OFPS_PATH_WARPED && eval.warpPath == OFPS_WARP_COMPUTE &&
+           MatchesSdkReference(capture);
+}
 } // namespace
 
 void ScenarioComputeWarp(WarpDevice &w, IOfpsCore *core, HostFrame &frame) {
@@ -108,14 +135,18 @@ void ScenarioComputeWarp(WarpDevice &w, IOfpsCore *core, HostFrame &frame) {
           PixelIs(run.output, kW, kH - 1, kMarker, 1.0e-6f),
           "compute output matches the SDK reference and preserves output padding");
     Check(model.endFrameCalls == 1, "compute warp calls EndFrame once");
+    // VRAM step 1: the set above has no copy intermediates (its output takes a direct UAV write). A host
+    // output without UAV access must get them prepared before its first frame, not fail or fall back.
+    Check(UnpackThroughCopy(w, core, feature, frame), "a non-UAV output after a UAV one is unpacked through the copy");
+    Check(model.endFrameCalls == 2, "the copy frame calls EndFrame once");
     SetInt(settings, OFPS_SET_TEMPORAL_MODE, 1);
     Check(core->SetSettings(&settings) == OFPS_OK, "compute temporal setting is accepted");
     const EvalRun temporal = RunEvaluate(w, core, feature, frame, frame.output.Get(), 1);
-    Check(temporal.ok && temporal.result == OFPS_OK && model.endFrameCalls == 2,
+    Check(temporal.ok && temporal.result == OFPS_OK && model.endFrameCalls == 3,
           "compute temporal frame records and closes without debug-layer errors");
     const EvalRun carried = RunEvaluate(w, core, feature, frame, frame.output.Get(), 0);
     Check(carried.ok && carried.result == OFPS_OK && carried.eval.path == OFPS_PATH_CARRIED &&
-          carried.eval.warpPath == OFPS_WARP_NONE && model.endFrameCalls == 3,
+          carried.eval.warpPath == OFPS_WARP_NONE && model.endFrameCalls == 4,
           "compute base Unpack records an interpolated frame and closes it");
     feature->Release();
     DrainReleasedModels(w, core);

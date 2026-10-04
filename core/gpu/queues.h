@@ -21,6 +21,10 @@ bool WaitForGpu(ID3D12Device *device, ID3D12Device *proxyDevice);
 bool SignalRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D12Fence *fence,
                             UINT64 value);
 bool WaitRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D12Fence *fence, UINT64 value);
+// Every registered queue of the device, compute ones too (a host may record on a COMPUTE list); when none is keyed on
+// either device, every registered queue of the same adapter (a native device and its proxy), never another device's.
+// True only when at least one queue was selected and every selected queue accepted the Wait.
+bool WaitEveryRegisteredQueue(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D12Fence *fence, UINT64 value);
 std::size_t CountQueues(ID3D12Device *device, ID3D12Device *proxyDevice, std::size_t *total);
 bool TimestampFrequency(ID3D12Device *device, ID3D12Device *proxyDevice, UINT64 *frequency);
 bool WaitFenceValue(ID3D12Fence *fence, UINT64 value, HANDLE event, DWORD milliseconds);

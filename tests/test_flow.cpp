@@ -7,8 +7,8 @@
 using namespace ofps::core::flow;
 namespace {
 struct Fake final : Backend {
-    int creates = 0, executes = 0, retained = 0;
-    bool createOk = true, executeOk = true;
+    int creates = 0, executes = 0, retained = 0, orders = 0;
+    bool createOk = true, executeOk = true, orderOk = true;
     void* Acquire(ID3D12Device*, std::uint32_t, std::uint32_t, std::string& reason) override {
         ++creates;
         if (!createOk) { reason = "nvofapi64.dll is missing"; return nullptr; }
@@ -20,6 +20,7 @@ struct Fake final : Backend {
     ID3D12Resource* Now(void*) const override { return nullptr; }
     ID3D12Resource* Then(void*) const override { return nullptr; }
     ID3D12Resource* Field(void*) const override { return nullptr; }
+    bool OrderAfterRegistration(void*, ID3D12Device*, ID3D12Device*) override { ++orders; return orderOk; }
     bool Execute(void*, ID3D12CommandQueue*) override { ++executes; return executeOk; }
     void RetainQueue(ID3D12CommandQueue*) override { ++retained; }
     void ReleaseQueue(ID3D12CommandQueue*) override { --retained; }
@@ -31,8 +32,9 @@ int main() {
     auto* queue = reinterpret_cast<ID3D12CommandQueue*>(&backend); // identity only; fake never dereferences it
     {
         FrameState flow(&backend);
-        assert(flow.Acquire(nullptr, 64, 64));
-        assert(flow.Acquire(nullptr, 64, 64) && backend.creates == 1);
+        assert(flow.Acquire(nullptr, nullptr, 64, 64));
+        assert(flow.Acquire(nullptr, nullptr, 64, 64) && backend.creates == 1);
+        assert(backend.orders == 1); // the registration is ordered once, before this machine's first capture
         flow.NowWritten(true);
         assert(flow.ArmTag() == 0); // no residual reference yet
         flow.ThenWritten(true);
@@ -47,7 +49,7 @@ int main() {
         assert(!flow.Ready() && backend.retained == 0);
         flow.Reset(); // switching to game vectors discards the old frame and its queue
         assert(!flow.Ready());
-        assert(flow.Acquire(nullptr, 64, 64) && backend.creates == 1);
+        assert(flow.Acquire(nullptr, nullptr, 64, 64) && backend.creates == 1 && backend.orders == 1);
         flow.NowWritten(true); flow.ThenWritten(true);
         const auto second = flow.ArmTag();
         assert(second != first);
@@ -57,12 +59,24 @@ int main() {
         backend.executeOk = false; // fence timeout or driver failure
         assert(!flow.Execute());
         flow.Disable("optical flow fence timed out");
-        assert(!flow.Acquire(nullptr, 64, 64) && !flow.Ready());
+        assert(!flow.Acquire(nullptr, nullptr, 64, 64) && !flow.Ready());
     }
     assert(backend.retained == 0);
+    {
+        // No host queue can wait for the registration (device removed, none registered): the images are never
+        // written, the session counts as failed for this machine, with a reason.
+        Fake unordered;
+        unordered.orderOk = false;
+        FrameState flow(&unordered);
+        assert(!flow.Acquire(nullptr, nullptr, 64, 64) && !flow.HasSession());
+        assert(!flow.Problem().empty());
+        flow.NowWritten(true); flow.ThenWritten(true);
+        assert(flow.ArmTag() == 0);
+        assert(!flow.Acquire(nullptr, nullptr, 64, 64) && unordered.creates == 1);
+    }
     Fake missing;
     missing.createOk = false;
     FrameState flow(&missing);
-    assert(!flow.Acquire(nullptr, 64, 64));
-    assert(flow.Problem() == "nvofapi64.dll is missing");
+    assert(!flow.Acquire(nullptr, nullptr, 64, 64));
+    assert(flow.Problem() == "nvofapi64.dll is missing" && missing.orders == 0);
 }

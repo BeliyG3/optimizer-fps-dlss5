@@ -41,7 +41,7 @@ from old-only `[PeripheralWarp]` through ReShade's API. It saves only changed,
 explicit persisted values; read-only diagnostics are never written back.
 `addon/ini_schema.h` and the public core schema provide defaults, ranges and
 conversions. `test_settings_schema` covers selection and migration. The public
-core schema contains 45 setting IDs.
+core schema contains 46 setting IDs.
 
 `direct_host.h/.cpp` replaces the removed `addon/layout_bridge.h/.cpp`. It probes
 `Local\OptimizerFpsDirectHost_<pid>` and latches direct-host ownership after a signal;
@@ -61,6 +61,16 @@ shell responsibilities, not model or frame logic.
 through `IOfpsCore` and reports executed command lists. The core owns submission
 serials, descriptor reuse and deferred retirement. `Housekeeping` runs from present;
 queue callbacks do not reach internal GPU structures.
+
+`queue_submit_hook.h/.cpp` hooks `ID3D12CommandQueue::ExecuteCommandLists` for a host whose D3D12
+device ReShade never wraps (OptiScaler's own device in D3D11 games): no `execute_command_list`
+event ever reports its queue. It swaps the entry in the D3D12 runtime's queue vtable (one atomic
+pointer write, no code patching) and pins the add-on module for the session. Menu mode asks for
+it (`MenuHostQueue::UnobservedFor`, from a host evaluate, MenuMode on) and `queue_events` installs
+it once with two sinks for calls made outside the add-on, the core and ReShade: menu mode's
+observer before the native call, the core's and the readable guides' completion tracking after it.
+A new graphics/compute queue is registered with the core on the next present (MenuMode on). The
+entry goes back at process exit.
 
 `addon/addon_main.cpp` is the entry/composition layer: ReShade registration, overlay
 and queue handlers, settings initialization, present work and unload. Existing
@@ -86,6 +96,39 @@ Remote edits use the same core setters and INI writers as the local tab.
 `PeripheralWarpSetTemporalV1` for bench and compatibility consumers, and adds
 `OptimizerFpsSetSettingV1` for one schema setting. `NAME` remains unversioned
 because ReShade uses it in its disabled-add-on list.
+
+## Menu mode
+
+All in `hosts/reshade/`, one responsibility per file. User-level description: [RESHADE_ADDON.md](../RESHADE_ADDON.md#menu-mode);
+bench results: [menu-mode-acceptance.md](menu-mode-acceptance.md).
+
+| Module | Responsibility |
+|---|---|
+| `menu_settings.{h,cpp}` | The MenuMode checkbox, Mode and TemporalMode, cached from `OFPS_EVENT_SETTINGS_CHANGED`; a settings epoch that advances when anything but MenuMode changes |
+| `menu_state.{h,cpp}` (pure) | Entry/exit rule (150 ms and 5 presents; the next host evaluate ends a run), blockers, suspension, stop, the tab's status line |
+| `menu_param_book.{h,cpp}` (pure) | Per-generation trace of the runtime's reads, immutable snapshots with exact result codes, aux refusal, tags, the pass block, the shape check |
+| `ngx_param_shim.{h,cpp}` | `TraceParams`, `OwnParams` (absent keys answer the host's code), the exit-reset wrapper |
+| `menu_params.{h,cpp}` | Host side: the traced evaluate wrapper, `DebugMenuOwnBlock`, the host shape, the one-generation snapshot at a host evaluate |
+| `menu_guides.{h,cpp}` | Depth snapshot sets copied on the host's list (motion is a zero texture), reserved per pass, retired through the core |
+| `menu_host_queue.{h,cpp}` | GPU fences between the private queue and a host NR queue other than the present queue |
+| `menu_outstanding.{h,cpp}` | Proof, bounded and off the present path, that menu passes finished before the core may free the watched feature's model; a slow pass is held (evaluates withheld without waiting), only a removed device quarantines |
+| `menu_fence.h` | Fence completion as menu mode relies on it: a removed device (`UINT64_MAX`, `GetDeviceRemovedReason`) never counts as passed |
+| `menu_colour.{h,cpp}` | Colour space and format check (the frame goes as it is), the copy shader's pipeline |
+| `menu_pipeline.h` | Public entry points of menu mode (hook, queue events, present, drain, tab) |
+| `menu_pipeline_state.h` | Pipeline internals shared by the files below |
+| `menu_pipeline.cpp` | The pipeline and its lock, present entry, status, the `destroy_swapchain` drain of the one swap chain menu mode serves (one 500 ms deadline, waited without the lock) |
+| `menu_pipeline_host.cpp` | Host-evaluate side: the watched feature, the end of a run, the exit reset, the host queue's exit order |
+| `menu_pipeline_step.cpp` | One D3D12 present under the state machine: blockers, entry, end of a run |
+| `menu_pipeline_gpu.cpp` | Private queue, fences and rings, size-bound resources, graveyard, drain |
+| `menu_submit.cpp` | One menu present on D3D12: capture, pass, write-back, fences |
+| `menu_model_pass.cpp` | The direct model pass: convert in, NR evaluate with the own block, convert out |
+| `menu_core_pass.{h,cpp}` | The menu frame through the core's feature (Uniform/Peripheral layout, and the sync cadence): the frame's outcome (untouched, written, last output shown again) and the redo as a full frame when a carried frame has no flow field |
+| `menu_core_flow.{h,cpp}` | The core's motion source in menus: switched to optical flow at a run's first core frame and back at the run's end, the flow check after each core frame, the latched "optical flow is not available" state, the retry before the game's next evaluate |
+| `menu_flow_switch.{h,cpp}` (pure) | The switch state: on, owed (a refused switch-back), and the host-evaluate gate that retries it or withholds the evaluate |
+| `menu_gpu_time.cpp` | Private-list GPU timestamps; the slow-pass budget |
+| `menu_bridge_d3d11.{h,cpp}` | D3D11 swap chains: the shared-texture bridge to the host's D3D12 device |
+| `menu_pipeline_d3d11.cpp`, `menu_pipeline_d3d11_gpu.cpp` | The D3D11 pipeline, and the bridge's lifetime towards the core (queue registration, keying, drain) |
+| `menu_marker.{h,cpp}`, `menu_dump.{h,cpp}`, `menu_dump_d3d11.cpp`, `menu_bridge_debug.cpp` | Diagnostics behind `DebugMenuPass=1` / `DebugMenuDump=1` and, for the bridge's debug-layer messages, `DebugMenuBridgeCanary=1`; `DebugMenuNoFlow` 0-3 fakes a missing (1) or failing (2, 3) optical flow for the bench |
 
 For frame protocol, resource states and retirement details, see
 [NGX_MODULES.md](NGX_MODULES.md). For public contracts, see [API.md](../API.md).

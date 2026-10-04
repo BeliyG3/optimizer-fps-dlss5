@@ -57,6 +57,14 @@ void ScenarioSettings(IOfpsCore *core, FakeHost &host) {
     float lo = 0.0f, hi = 0.0f;
     core->GetSettingRange(OFPS_SET_OFFSET_X, &lo, &hi);
     Check(Near(lo, -9.5f, 1.0e-3f) && Near(hi, 9.5f, 1.0e-3f), "GetSettingRange(OffsetX) at Center 80 is -9.5..9.5");
+    OfpsSettingsValues menu = CurrentSettings(core);
+    Check(menu.v[OFPS_SET_MENU_MODE].i == 0, "MenuMode defaults to 0 (off)");
+    SetInt(menu, OFPS_SET_MENU_MODE, 1);
+    Check(core->SetSettings(&menu) == OFPS_OK && CurrentSettings(core).v[OFPS_SET_MENU_MODE].i == 1 &&
+              host.lastSettings.v[OFPS_SET_MENU_MODE].i == 1,
+          "MenuMode passes through the core and reaches SETTINGS_CHANGED");
+    SetInt(menu, OFPS_SET_MENU_MODE, 0);
+    Check(core->SetSettings(&menu) == OFPS_OK, "MenuMode back to off");
 }
 IOfpsFeature *ScenarioPassthrough(WarpDevice &w, IOfpsCore *core, FakeHost &host, FakeModelHost &m, HostFrame &f) {
     OfpsSettingsValues v = CurrentSettings(core);
@@ -346,7 +354,8 @@ int main(int argc, char **argv) {
     caps.flags = OFPS_CAP_QUEUES;
     core->SetHostCaps(&hostA, &caps);
     ScenarioSettings(core, hostA);
-    Check(hostB.events[OFPS_EVENT_SETTINGS_CHANGED] == 1 && hostB.lastSettings.v[OFPS_SET_TEMPORAL_EVERY].i == 8,
+    // 3 = the temporal edit plus the two MenuMode edits at the end of ScenarioSettings.
+    Check(hostB.events[OFPS_EVENT_SETTINGS_CHANGED] == 3 && hostB.lastSettings.v[OFPS_SET_TEMPORAL_EVERY].i == 8,
           "second host receives SETTINGS_CHANGED");
     HostFrame frame;
     Check(coretest::CreateHostFrame(w, frame), "host colour/depth/motion/output textures allocate");
@@ -363,10 +372,15 @@ int main(int argc, char **argv) {
     ScenarioDeferred(w, core, m4, frame);
     ScenarioFailureAndUnfit(w, core, hostA, frame);
     ScenarioRetirement(w, core);
+    coretest::ScenarioMenuQueueRelease(w, core, hostA, frame);
+    coretest::ScenarioMenuRebuild(w, core, frame);
     coretest::ScenarioExtensions(w, core, hostA, frame);
     coretest::ScenarioComputeWarp(w, core, frame);
+    coretest::ScenarioComputeTransferCore(w, core, frame);
+    coretest::ScenarioPlanDeferral(w, core, hostA, frame);
 #ifndef OFPS_TEST_DLL
     coretest::ScenarioComputeDirect(w, frame);
+    coretest::ScenarioComputeTransfer(w);
 #endif
     core->Housekeeping();
     core->UnregisterHost(&hostB);

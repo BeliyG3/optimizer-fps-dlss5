@@ -3,6 +3,13 @@
 #include <cstring>
 
 namespace {
+// Scripted runs open on a secondary monitor when there is one, so the bench does not cover the owner's work.
+BOOL CALLBACK FindSecondaryMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM out)
+{
+    MONITORINFO info{sizeof(info)};
+    if(GetMonitorInfoW(monitor,&info) && !(info.dwFlags&MONITORINFOF_PRIMARY)) { *reinterpret_cast<POINT*>(out)={info.rcWork.left,info.rcWork.top}; return FALSE; }
+    return TRUE;
+}
 LRESULT CALLBACK WindowProc(HWND window, UINT msg, WPARAM w, LPARAM l)
 {
     auto *device=reinterpret_cast<Device *>(GetWindowLongPtrW(window,GWLP_USERDATA));
@@ -60,7 +67,9 @@ Device::Device(unsigned w, unsigned h, bool debug, bool vsync, bool interactive)
     if(!RegisterClassW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS) throw std::runtime_error("RegisterClass failed");
     const DWORD style=interactive ? WS_OVERLAPPEDWINDOW : WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
     RECT rect{0,0,LONG(w),LONG(h)}; AdjustWindowRect(&rect,style,FALSE);
-    window=CreateWindowW(wc.lpszClassName,L"pw_bench12",style,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,wc.hInstance,nullptr);
+    POINT origin{CW_USEDEFAULT,CW_USEDEFAULT};
+    if(!interactive) EnumDisplayMonitors(nullptr,nullptr,FindSecondaryMonitor,reinterpret_cast<LPARAM>(&origin));
+    window=CreateWindowW(wc.lpszClassName,L"pw_bench12",style,origin.x,origin.y,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,wc.hInstance,nullptr);
     if(!window) throw std::runtime_error("CreateWindow failed");
     SetWindowLongPtrW(window,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(this));
     DXGI_SWAP_CHAIN_DESC1 sd{}; sd.Width=w; sd.Height=h; sd.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -80,7 +89,7 @@ Device::Device(unsigned w, unsigned h, bool debug, bool vsync, bool interactive)
     Check(gpu->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&list)),"CreateCommandList");
     Check(list->Close(),"Close initial list"); Check(gpu->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"CreateFence");
     event=CreateEventW(nullptr,FALSE,FALSE,nullptr); if(!event) throw std::runtime_error("CreateEvent failed");
-    ShowWindow(window,SW_SHOW); PrintMessages();
+    ShowWindow(window,interactive ? SW_SHOW : SW_SHOWNOACTIVATE); PrintMessages(); // scripted runs never take the focus
 }
 Device::~Device()
 {
@@ -102,6 +111,7 @@ void Device::Submit(bool present)
 {
     Check(list->Close(),"Close list"); ID3D12CommandList *lists[]={list.Get()}; queue->ExecuteCommandLists(1,lists);
     if(onSubmitted) onSubmitted(submissionContext,queue.Get(),list.Get());
+    if(present && onPresenting) onPresenting(presentingContext);
     // Retire even if Present fails, so transient resources cannot be released while in flight.
     HRESULT hr=present ? swap->Present(vsyncEnabled ? 1u : 0u,!vsyncEnabled && tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0u) : S_OK;
     Wait(); PrintMessages(); Check(hr,"Present");

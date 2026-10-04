@@ -54,7 +54,7 @@ int main() {
     OfpsSettingsValues v{};
     v.size = sizeof(v);
     core->GetSettings(&v);
-    check(v.count == 45, "45 settings");
+    check(v.count == OFPS_SET_COUNT, "every schema id");
     v.v[OFPS_SET_TEMPORAL_MODE].i = 2;
     v.v[OFPS_SET_TEMPORAL_EVERY].i = 99;
     v.explicitMask[0] |= 1ull << OFPS_SET_TEMPORAL_EVERY;
@@ -62,7 +62,7 @@ int main() {
     check(a.reentrantResult == OFPS_E_STATE, "event reentry refused");
     core->GetSettings(&v);
     check(v.v[OFPS_SET_TEMPORAL_MODE].i == 1 && v.v[OFPS_SET_TEMPORAL_EVERY].i == 8, "temporal clamp");
-    check(a.changes == 1 && b.changes == 1 && a.effective.count == 45, "effective event to both hosts");
+    check(a.changes == 1 && b.changes == 1 && a.effective.count == OFPS_SET_COUNT, "effective event to both hosts");
     float lo = 0, hi = 0;
     core->GetSettingRange(OFPS_SET_OFFSET_X, &lo, &hi);
     check(std::abs(lo + 9.5f) < 0.001f && std::abs(hi - 9.5f) < 0.001f, "dynamic range");
@@ -145,7 +145,7 @@ int main() {
     check(core->StatusLines(rows, 1) <= 1, "bounded rows");
     core->Release();
     core->GetSettings(&v);
-    check(v.count == 45, "registered hosts keep core alive");
+    check(v.count == OFPS_SET_COUNT, "registered hosts keep core alive");
     core->UnregisterHost(&a);
     core->UnregisterHost(&b);
     core->Release();

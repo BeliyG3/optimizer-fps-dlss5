@@ -47,7 +47,38 @@ struct EvalContext {
     ofps::sdk::D3D12SourceResources packSources{};
     ofps::sdk::InputDescriptionV2 packInput{};
     OfpsFencePoint privateUsePoint{};
+    // Set by WarpedBody when a temporal consumer's transfer, expected by TransferReplacesBase, was
+    // declined: no residual from this frame. WarpedBody resets a host temporal frame's history itself;
+    // the background pass is discarded and the spread cycle restarted by their callers.
+    bool transferDeclined = false;
 };
+
+// Colour filters 2/3: the compute Unpack returns the full-size host frame plus the model's edit.
+inline bool DetailTransferOn(const FeatureState &st) {
+    return static_cast<std::uint32_t>(st.layout.colorFilter) >=
+           static_cast<std::uint32_t>(ofps::sdk::ColorFilter::DetailTransfer);
+}
+// With the transfer there is no stretched frame to measure a temporal residual against, so the base
+// (Pack -> Unpack without the model) is not recorded. Only where the transfer will apply: the pixel
+// path (soft filter) and a colour/answer view pairing the transfer declines keep their base. The other
+// declines (a Pack from another evaluate, a source aliasing the target) cannot happen on a temporal,
+// spread or background frame; WarpedBody resets the history if one does.
+inline bool TransferReplacesBase(const ofps::sdk::LayoutV2 &layout, warp::PackPath path, DXGI_FORMAT colorView,
+                                 DXGI_FORMAT outputView) {
+    return static_cast<std::uint32_t>(layout.colorFilter) >=
+               static_cast<std::uint32_t>(ofps::sdk::ColorFilter::DetailTransfer) &&
+           path == warp::PackPath::Compute && warp::TransferEligible(colorView, outputView);
+}
+inline bool TransferReplacesBase(const FeatureState &st) {
+    return TransferReplacesBase(st.layout, st.warpPath, st.colorView, st.outputView);
+}
+// After a compute Unpack: false when the base was dropped for a transfer that was requested but not
+// applied - a residual measured from that plain, stretched unpack would carry the stretch blur.
+// Over-cautious by design: a decline on a reproject-only frame or on the non-identity codec path (no
+// residual, no unpack base) also invalidates the history; unreachable today, and harmless.
+constexpr bool KeepResidualAfterUnpack(bool requested, bool applied, bool replacesBase) {
+    return !(requested && !applied && replacesBase);
+}
 
 D3D12_CPU_DESCRIPTOR_HANDLE BaseRtv(const FeatureState &st);
 ofps::sdk::D3D12PackedViews PackedViewsForFeature(const FeatureState &st, std::uint32_t slot);

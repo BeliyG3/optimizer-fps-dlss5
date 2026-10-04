@@ -19,7 +19,7 @@ struct FrameConstants {
     unsigned bounces, opaqueTriangles, lightCount, accumulation;
     float jitterX, jitterY, firefly, sunCos;
     float lightPower; unsigned reverse, view, lightCandidates;
-    float hazeDensity, hazeG, bloom; unsigned neutralTonemap;
+    float hazeDensity, hazeG, bloom; unsigned neutralTonemap; // 0 ACES filmic, 1 neutral, 2 none
     int pickX=-1, pickY=-1; unsigned accumulationLimit=UINT_MAX, padding=0;
     unsigned dynamicBase=0, dynamicOpaque=0, motionNdc=0, animationPadding=0;
 };

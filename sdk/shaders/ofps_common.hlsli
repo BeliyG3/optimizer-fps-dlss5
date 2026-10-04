@@ -27,7 +27,9 @@ cbuffer OfpsWarpConstants : register(OFPS_WARP_CONSTANTS_REGISTER)
 
 cbuffer OfpsDiagnosticConstants : register(OFPS_DIAGNOSTIC_CONSTANTS_REGISTER)
 {
-    uint4 OfpsDiagnosticOptions; // x outline flags, y output gain (float bits, 0 = 1), z output 1/gamma (float bits, 0 = 1)
+    uint4 OfpsDiagnosticOptions; // x outline flags, y output gain (float bits, 0 = 1), z output 1/gamma (float bits, 0 = 1),
+                                 // w detail transfer: bit 0 depth reversed (near = 1), bit 1 transfer inputs bound
+                                 //   (read by core/shaders/warp_cs.hlsl; 0 elsewhere)
 };
 
 static const uint OFPS_MODE_OFF = 0;
@@ -35,6 +37,8 @@ static const uint OFPS_MODE_UNIFORM = 1;
 static const uint OFPS_MODE_PERIPHERAL = 2;
 static const uint OFPS_FILTER_BILINEAR = 0;
 static const uint OFPS_FILTER_ADAPTIVE_FOUR_TAP = 1;
+static const uint OFPS_FILTER_DETAIL_TRANSFER = 2;
+static const uint OFPS_FILTER_DETAIL_TRANSFER_DEPTH = 3;
 static const uint OFPS_FLAG_EXTEND_MOTION_AT_EDGE = 1u;
 static const uint OFPS_DIAGNOSTIC_OUTLINE_CENTER = 1u;
 static const uint OFPS_DIAGNOSTIC_OUTLINE_RAW_WORK = 2u;

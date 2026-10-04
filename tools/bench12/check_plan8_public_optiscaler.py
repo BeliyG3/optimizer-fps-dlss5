@@ -84,6 +84,15 @@ CASES = {
     "presr_pixel_t0": ("d3d12", True, 2, 0, 2),
     "own_spatial_control": ("d3d12", False, 0, 0, 1),
     "own_spatial_pixel_t0": ("d3d12", True, 2, 0, 2),
+    "compute_t0_f3": ("d3d12", True, 2, 0, 1),
+    "model50_control": ("d3d12", False, 0, 0, 1),
+    "model50_compute_f1": ("d3d12", True, 2, 0, 1),
+    "model50_compute_f3": ("d3d12", True, 2, 0, 1),
+    # Menu mode: MenuMode=1 traces the NR runtime's reads (frames unchanged); DebugMenuOwnBlock=1 runs the host's model evaluates with menu mode's own block; compare with "off".
+    "params_trace": ("d3d12", True, 0, 0, 1),
+    "params_own": ("d3d12", True, 0, 0, 1),
+    "d3d11_params_trace": ("d3d11", True, 0, 0, 1),
+    "d3d11_params_own": ("d3d11", True, 0, 0, 1),
 }
 # name: (bench upscaler, [(section, key, value)] for OptiScaler.ini)
 EXTRA = {
@@ -91,6 +100,21 @@ EXTRA = {
     "presr_pixel_t0": ("sr", [("DlssNr", "RunBeforeSR", "true")]),
     "own_spatial_control": ("rr", [("DlssNr", "SpatialCompression", "true")]),
     "own_spatial_pixel_t0": ("rr", [("DlssNr", "SpatialCompression", "true")]),
+    # OptiScaler's own model resolution at 50 %: the core runs on the model grid and writes the codec answer.
+    "model50_control": ("rr", [("DlssNr", "WorkingScale", "0.5")]),
+    "model50_compute_f1": ("rr", [("DlssNr", "WorkingScale", "0.5")]),
+    "model50_compute_f3": ("rr", [("DlssNr", "WorkingScale", "0.5")]),
+}
+# name: [(key, value)] for [OptimizerFPS] in ReShade.ini (detail transfer, plan 2026-09-27)
+ADDON_EXTRA = {
+    "compute_t0": [("DebugTiming", "1")],
+    "compute_t0_f3": [("ColorFilter", "3"), ("DebugTiming", "1")],
+    "model50_compute_f1": [("ColorFilter", "1"), ("DebugTiming", "1")],
+    "model50_compute_f3": [("ColorFilter", "3"), ("DebugTiming", "1")],
+    "params_trace": [("MenuMode", "1")],
+    "params_own": [("MenuMode", "1"), ("DebugMenuOwnBlock", "1")],
+    "d3d11_params_trace": [("MenuMode", "1")],
+    "d3d11_params_own": [("MenuMode", "1"), ("DebugMenuOwnBlock", "1")],
 }
 
 
@@ -140,6 +164,8 @@ def stage(directory: Path, optiscaler: Path, case: tuple, extra: tuple) -> None:
     for key, value in (("Mode", mode), ("TemporalMode", temporal), ("DebugWarpPath", warp),
                        ("CrashGuard", 0)):
         reshade = set_ini(reshade, "OptimizerFPS", key, str(value))
+    for key, value in ADDON_EXTRA.get(directory.name, []):
+        reshade = set_ini(reshade, "OptimizerFPS", key, value)
     (directory / "ReShade.ini").write_text(reshade, encoding="utf-8")
 
 
@@ -160,9 +186,20 @@ def capture(directory: Path, optiscaler: Path, case: tuple, extra: tuple) -> dic
         bench_args = [*D3D12_ARGS[:3], "--gltf", str(scene), *D3D12_ARGS[3:]]
         bench_args[bench_args.index("--upscaler") + 1] = upscaler
         result = run(directory, [exe, *bench_args], "")
+        # The sentinel run below starts ReShade and OptiScaler again, which rewrite their logs: keep the
+        # measured run's logs as ReShade.log / OptiScaler.log, the sentinel's as sentinel_*.log.
+        logs = ("ReShade.log", "OptiScaler.log")
+        for name in logs:
+            if (directory / name).is_file():
+                (directory / name).replace(directory / f"main_{name}")
         sentinel = run(directory, [exe, "12", "--host", "ngx", "--gltf", str(scene), "--upscaler",
                                    upscaler, "--bloom", "0", "--core-state-sentinel", "compute",
                                    "--core-state-rebind", "--debug-layer"], "sentinel_")
+        for name in logs:
+            if (directory / name).is_file():
+                (directory / name).replace(directory / f"sentinel_{name}")
+            if (directory / f"main_{name}").is_file():
+                (directory / f"main_{name}").replace(directory / name)
         sentinel_log = (directory / "sentinel_stdout.txt").read_text(errors="replace")
         sentinel_state = "PASS" if sentinel == 0 and "core state sentinel: PASS" in sentinel_log else "FAIL"
         sentinel_errors = debug_errors(directory)
@@ -175,7 +212,10 @@ def capture(directory: Path, optiscaler: Path, case: tuple, extra: tuple) -> dic
     stdout = (directory / "stdout.txt").read_text(errors="replace")
     created, temporal_hit, background = (pattern.search(reshade_log)
                                          for pattern in (CREATED, TEMPORAL, BACKGROUND))
-    lowered = (reshade_log + opti_log + stdout).lower()
+    sentinel_logs = "".join((directory / f"sentinel_{name}").read_text(errors="replace")
+                            for name in ("ReShade.log", "OptiScaler.log")
+                            if (directory / f"sentinel_{name}").is_file())
+    lowered = (reshade_log + opti_log + stdout + sentinel_logs).lower()
     manifest = {
         "case": {"stand": stand, "addon": addon, "Mode": mode, "TemporalMode": temporal,
                  "DebugWarpPath": warp},

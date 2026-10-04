@@ -46,6 +46,10 @@ void FillRemoteSnapshot(ofps::remote::WireSnapshot &out) {
         if (!out.available[id])
             CopyText(out.unavailableReason[id], kReasonLength,
                      core == nullptr ? "core unavailable" : "unsupported host capability");
+        if (id == OFPS_SET_MENU_MODE) { // the 32-bit game's swap chain is in the game's process, not in this host
+            out.available[id] = false;
+            CopyText(out.unavailableReason[id], kReasonLength, "not for 32-bit games");
+        }
         if (core != nullptr && desc.rangeFrom != 0) {
             float lo = 0, hi = 0;
             core->GetSettingRange(id, &lo, &hi);

@@ -56,6 +56,20 @@ bool ViewCompatible(DXGI_FORMAT resource, DXGI_FORMAT view) {
 
 namespace ofps::core::warp {
 
+UnpackSupport TargetUnpackSupport(const D3D12_RESOURCE_DESC& td, DXGI_FORMAT targetView,
+                                  DXGI_FORMAT outputView, std::uint32_t subresource,
+                                  bool targetTypedStore, bool outputTypedStore) {
+    UnpackSupport s{};
+    s.outputTypedStore = targetTypedStore;
+    s.outputAllowsUav = (td.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) != 0;
+    s.outputSubresourceZero = subresource == 0;
+    s.outputSingleSample2D = td.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && td.SampleDesc.Count == 1 &&
+        td.DepthOrArraySize == 1 && detail::ViewCompatible(td.Format, targetView);
+    s.copyFormatsCompatible = targetView == outputView && detail::ViewCompatible(td.Format, outputView);
+    s.intermediateTypedStore = outputTypedStore;
+    return s;
+}
+
 PackDecision ProbePack(ID3D12Device* device, RequestedPath request,
                        D3D12_COMMAND_LIST_TYPE listType, DXGI_FORMAT colorView,
                        bool privateCompute, bool shadersLoaded, std::string& reason) {

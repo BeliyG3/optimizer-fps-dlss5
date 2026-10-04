@@ -20,7 +20,8 @@ extern "C" {
 typedef struct PeripheralWarpLayoutStateV1 {
     uint32_t structSize;      /* sizeof(PeripheralWarpLayoutStateV1) */
     uint32_t mode;            /* 0 off, 1 uniform, 2 peripheral (ofps::sdk::WarpMode) */
-    uint32_t filter;          /* 0 bilinear, 1 adaptive four-tap (ofps::sdk::ColorFilter) */
+    uint32_t filter;          /* 0..3: bilinear, adaptive four-tap, detail transfer, depth-guided */
+                               /* detail transfer (ofps::sdk::ColorFilter) */
     float centerX;            /* percent, 1..99 */
     float workX;              /* percent, 25..100 */
     float centerY;

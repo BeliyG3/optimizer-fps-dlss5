@@ -31,7 +31,7 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
                        std::uint32_t nativeHeight, DXGI_FORMAT outFormat, DXGI_FORMAT outView, std::uint32_t motionWidth,
                        std::uint32_t motionHeight, DXGI_FORMAT depthFmt, std::uint32_t depthWidth,
                        std::uint32_t depthHeight, char *error, std::size_t errorSize,
-                       std::uint32_t pictureDivisor)
+                       std::uint32_t pictureDivisor, MachineRole machineRole)
 {
     auto fail = [&](const char *what) {
         if (error && errorSize) std::snprintf(error, errorSize, "temporal: %s", what);
@@ -44,13 +44,15 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
     motionW = motionWidth; motionH = motionHeight;
     depthW = depthWidth; depthH = depthHeight;
     outputFormat = outFormat; outputView = outView; depthFormat = depthFmt;
+    role = machineRole;
+    const RoleTextures owned = TexturesFor(role);
     for (const DXGI_FORMAT format : {outputView, kResidualFormat, kChainFormat, kExpectFormat, DXGI_FORMAT_R32_FLOAT}) {
         D3D12_FEATURE_DATA_FORMAT_SUPPORT support{format};
         if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))) ||
             (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) == 0)
             return fail("temporal target format does not support typed UAV stores");
     }
-    if (!history.Create(device, nativeW, nativeH, pictureDivisor)) return fail("older-pass allocation failed");
+    if (owned.history && !history.Create(device, nativeW, nativeH, pictureDivisor)) return fail("older-pass allocation failed");
 
     D3D12_DESCRIPTOR_RANGE ranges[2]{};
     auto &range = ranges[0];
@@ -108,12 +110,14 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
 
     constexpr D3D12_RESOURCE_FLAGS kTarget = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     if (!ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residual) ||
-        !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residualPrev) ||
+        (owned.previousResidual &&
+         !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residualPrev)) ||
         !ofps::core::gpu::CreateTexture(device, depthWidth, depthHeight, depthFormat, D3D12_RESOURCE_FLAG_NONE, &depthF) ||
         !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kChainFormat, kTarget, &acc[0]) ||
         !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kChainFormat, kTarget, &acc[1]) ||
-        !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kChainFormat, kTarget, &accP[0]) ||
-        !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kChainFormat, kTarget, &accP[1]) ||
+        (owned.pendingChains &&
+         (!ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kChainFormat, kTarget, &accP[0]) ||
+          !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kChainFormat, kTarget, &accP[1]))) ||
         !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, outputView, kTarget, &interp))
         return fail("texture allocation failed");
     if (downsamplePso) {
@@ -126,16 +130,21 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
     }
     // 26.28: the passes that only improve the result. Each is optional; without its texture the pass
     // is simply not recorded and the machine behaves as 26.27 did.
+    // The pending expectations and the kick's lookup are read by the background mode's records alone.
     if (expectPso && (!ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, kTarget, &expect[0]) ||
                       !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, kTarget, &expect[1]) ||
-                      !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, kTarget, &expectP[0]) ||
-                      !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, kTarget, &expectP[1]) ||
-                      !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, D3D12_RESOURCE_FLAG_NONE, &expectKick) ||
+                      (owned.pendingChains &&
+                       (!ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, kTarget, &expectP[0]) ||
+                        !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, kTarget, &expectP[1]))) ||
+                      (owned.kickExpectation &&
+                       !ofps::core::gpu::CreateTexture(device, motionWidth, motionHeight, kExpectFormat, D3D12_RESOURCE_FLAG_NONE, &expectKick)) ||
                       !ofps::core::gpu::CreateTexture(device, depthWidth, depthHeight, depthFormat, D3D12_RESOURCE_FLAG_NONE, &depthPrev)))
         return fail("expected-depth allocation failed");
-    if (residualOldPso && !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residualOld))
+    if (owned.residualOld && residualOldPso &&
+        !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residualOld))
         return fail("phase-in allocation failed");
-    if (applyPso && !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residualMix))
+    if (owned.residualMix && applyPso &&
+        !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &residualMix))
         return fail("residual-mix allocation failed");
     if (cellsPso && residualLow && (!ofps::core::gpu::CreateTexture(device, lowW, lowH, kResidualFormat, kTarget, &cellsAdd) ||
                                     !ofps::core::gpu::CreateTexture(device, lowW, lowH, kResidualFormat, kTarget, &cellsLook)))

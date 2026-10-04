@@ -11,7 +11,7 @@ The historical SDK ABI versions `1` and `2` remain binary-compatible. Version `3
 `core/api/ofps_core.h` is the single entry header for `ofps_core`
 (`OptimizerFps::Core`, Windows x64). `OfpsCoreVersion` reports release `2026.9.1` and
 `OFPS_ABI_VERSION = 1`; `OfpsCreateCore` attaches an `IOfpsHost` and returns `IOfpsCore`.
-This ABI number is independent of SDK 0.6.0 and the historical spatial ABIs above.
+This ABI number is independent of SDK 0.7.0 and the historical spatial ABIs above.
 The target is linked statically into the ReShade shell and is not an installed SDK export.
 
 Hosts provide size-tagged `OfpsFrameInputs` with typed views, explicit rectangles,

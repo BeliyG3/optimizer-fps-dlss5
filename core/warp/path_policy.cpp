@@ -30,6 +30,12 @@ UnpackDecision DecideUnpack(const UnpackSupport& s) noexcept {
     return {UnpackPath::None, PathReason::CannotCopy};
 }
 
+bool NeedsCopyFallback(UnpackSupport target) noexcept {
+    target.answerValid = true;
+    target.outputRegionFits = true;
+    return DecideUnpack(target).path == UnpackPath::CopyFromUav;
+}
+
 ModelListPath DecideModelList(const ModelListSupport& s) noexcept {
     if (s.hostList) return s.direct ? ModelListPath::HostDirect :
                            s.compute ? ModelListPath::HostCompute : ModelListPath::None;

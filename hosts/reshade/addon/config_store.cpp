@@ -10,6 +10,7 @@
 #include "ini_store.h"
 #include "../shell_host.h"
 #include "../direct_host.h"
+#include "core/settings/product_defaults.h"
 
 #include <mutex>
 
@@ -17,7 +18,7 @@ namespace ofps::reshade {
 namespace {
 
 std::mutex g_mutex;
-ofps::sdk::ConfigV2 g_config = ofps::sdk::DefaultConfigV2();
+ofps::sdk::ConfigV2 g_config = ofps::core::ProductDefaultConfig();
 ofps::sdk::Status g_lastConfigStatus = ofps::sdk::Status::Ok;
 } // namespace
 

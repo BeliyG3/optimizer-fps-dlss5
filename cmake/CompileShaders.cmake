@@ -42,7 +42,8 @@ set(_ofps_shader_sources
     "${PROJECT_SOURCE_DIR}/core/shaders/temporal_reproject.hlsli"
     "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl"
     "${PROJECT_SOURCE_DIR}/core/shaders/motion_smooth.hlsl"
-    "${PROJECT_SOURCE_DIR}/core/shaders/warp_cs.hlsl")
+    "${PROJECT_SOURCE_DIR}/core/shaders/warp_cs.hlsl"
+    "${PROJECT_SOURCE_DIR}/core/shaders/menu_convert_cs.hlsl")
 
 # One manifest drives both products' temporal binaries and pipeline tables.
 set(OFPS_TEMPORAL_SOURCE "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl")
@@ -74,6 +75,8 @@ ofps_compile_dxbc(outline_ps "${PROJECT_SOURCE_DIR}/sdk/shaders/outline.hlsl" PS
 ofps_compile_dxbc(motion_smooth_cs "${PROJECT_SOURCE_DIR}/core/shaders/motion_smooth.hlsl" CSMain cs_5_0)
 ofps_compile_dxbc(warp_pack_cs "${PROJECT_SOURCE_DIR}/core/shaders/warp_cs.hlsl" CSPack cs_5_0)
 ofps_compile_dxbc(warp_unpack_cs "${PROJECT_SOURCE_DIR}/core/shaders/warp_cs.hlsl" CSUnpack cs_5_0)
+# Menu mode: loaded by the ReShade host, not by the core.
+ofps_compile_dxbc(menu_convert_cs "${PROJECT_SOURCE_DIR}/core/shaders/menu_convert_cs.hlsl" CSConvert cs_5_0)
 foreach(_ofps_pass_name _ofps_pass_entry IN ZIP_LISTS OFPS_TEMPORAL_PASSES_NAMES OFPS_TEMPORAL_PASSES_ENTRIES)
     ofps_compile_dxbc("${_ofps_pass_name}" "${OFPS_TEMPORAL_SOURCE}" "${_ofps_pass_entry}" cs_5_0)
 endforeach()

@@ -17,6 +17,7 @@ void NeuralRendering::Configure(Device &d, const Options &o, ID3D12Resource *col
     mode=o.nr;
     if(mode=="off") return;
     computeList=o.nrList=="compute";
+    for(auto &r:o.nrPause) std::printf("[nr] --nr-pause: frames %d..%d skip the feature-18 evaluate\n",r.first,r.second-1);
     layoutSwitch.Configure(o.switchEvery);
     if(computeList) { d.EnableCompute(); std::printf("[nr] evaluated on a COMPUTE list on its own queue (--nr-list compute)\n"); }
     const bool upscale=mode=="upscale";
@@ -48,6 +49,7 @@ void NeuralRendering::Configure(Device &d, const Options &o, ID3D12Resource *col
     if(useCore) {
         coreSession.Open(ExecutableDirectory()/L"pw_bench12.exe",d.gpu.Get(),d.Queue(),o.coreMode,o.coreTemporal,o.coreWarpPath);
         if(computeList) coreSession.RegisterQueue(d.gpu.Get(),d.ComputeQueue());
+        if(o.coreFlow) coreSession.UseOpticalFlow();
         d.submissionContext=&coreSession;
         d.onSubmitted=[](void *context, ID3D12CommandQueue *queue, ID3D12CommandList *list) {
             static_cast<CoreSession *>(context)->Submitted(queue,list);
@@ -60,6 +62,12 @@ void NeuralRendering::Prepare(Device &d, int frame)
 {
     presented=false;
     pad.Report(); // the previous frame has been submitted and retired
+    if(releaser.Running()) { // --nr-release-thread: no evaluate and no create until the release returned
+        if(!releaser.Done()) return;
+        const auto released=releaser.Finish(d,frame);
+        runtime.log.Echo();
+        CheckNgx(released,"DLSSNR ReleaseFeature (second thread)");
+    }
     if(mode=="off" || (useCore ? coreSession.Ready() : feature)) return;
     if(deferCreate) {
         deferCreate=false;
@@ -86,7 +94,7 @@ void NeuralRendering::Prepare(Device &d, int frame)
         frame,mode.c_str(),create.width,create.height,unsigned(result));
     pendingReset=true; calls=0;
 }
-void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
+void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame, const Options &options)
 {
     if(!(useCore ? coreSession.Ready() : feature!=nullptr)) return;
     layoutSwitch.Tick(frame);
@@ -105,6 +113,7 @@ void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
     f.mvScaleX=in.mvScaleX; f.mvScaleY=in.mvScaleY; f.scalingRatio=create.scalingRatio;
     f.depthInverted=depthInverted; f.reset=in.reset || pendingReset;
     NVSDK_NGX_Result result=NVSDK_NGX_Result_Success;
+    bool pauseInput=false; // --nr-pause-show input: this paused frame presents its NR input
     if(useCore) {
         auto resource=[](ID3D12Resource *r, const NrRect &rect, D3D12_RESOURCE_STATES state) {
             return OfpsResource{sizeof(OfpsResource),r,r ? r->GetDesc().Format : DXGI_FORMAT_UNKNOWN,
@@ -121,7 +130,14 @@ void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
         const int rc=coreSession.Evaluate(list,inputs);
         result=rc>=0 ? NVSDK_NGX_Result_Success : NVSDK_NGX_Result_FAIL_InvalidParameter;
         if(rc<0) std::fprintf(stderr,"[core host] evaluate %d, model NGX 0x%08X\n",rc,unsigned(coreSession.model.last));
+    } else if(options.NrPaused(frame)) {
+        // "Menu": the host keeps presenting but neither writes the block nor calls feature 18.
+        // The output texture is presented as it stands (whatever last wrote it), or with
+        // --nr-pause-show input the frame's own NR input (a menu drawn without NR).
+        if(paused++==0) std::printf("[nr] frame %d: pause starts, no feature-18 evaluate\n",frame);
+        pauseInput=options.nrPauseShow=="input";
     } else {
+        if(paused) { std::printf("[nr] frame %d: pause ends after %u skipped evaluates\n",frame,paused); paused=0; }
         parameters.Audit(calls==0); NrWriteEvaluate(parameters,f); parameters.Audit(false);
         result=runtime.Evaluate(list,feature,&parameters);
     }
@@ -133,7 +149,8 @@ void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
     const bool report=calls<3 || frame%60==0 || result!=lastResult;
     if(pad.Enabled() && report) pad.Capture(d,frame);
     presented=NVSDK_NGX_SUCCEED(result);
-    if(presented) bridge.Resolve(d,outputRect.x,outputRect.y);
+    if(presented && pauseInput) bridge.ResolveInput(d,colourState);
+    else if(presented) bridge.Resolve(d,outputRect.x,outputRect.y);
     ++calls; pendingReset=false;
     if(presented) ++succeeded; else ++failed;
     if(report) {
@@ -147,9 +164,21 @@ void NeuralRendering::Evaluate(Device &d, const NrInputs &in, int frame)
     lastResult=result;
     runtime.log.Echo();
 }
+void NeuralRendering::Recreate(Device &d, int frame, bool onThread)
+{
+    if(useCore || !feature) return;
+    d.Wait();
+    if(onThread) { releaser.Start(d,runtime,feature,frame); feature=nullptr; return; }
+    const auto result=runtime.Release(feature);
+    feature=nullptr;
+    std::printf("[nr] frame %d: feature 18 released (result 0x%08X); created again below\n",frame,unsigned(result));
+    CheckNgx(result,"DLSSNR ReleaseFeature");
+    runtime.log.Echo();
+}
 void NeuralRendering::Release(Device &d)
 {
     presented=false;
+    if(releaser.Running()) releaser.Finish(d,-1); // the bench ends or reconfigures during a threaded release
     if(useCore) {
         d.Wait();
         if(!coreSession.Close()) throw std::runtime_error("core session drain timed out");

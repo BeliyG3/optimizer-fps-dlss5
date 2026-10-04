@@ -2,6 +2,25 @@
 #include "core/gpu/queues.h"
 namespace ofps::core::gpu
 {
+namespace
+{
+thread_local bool t_nonBlocking = false;
+thread_local std::uint32_t t_misses = 0;
+} // namespace
+void SetNonBlockingAcquire(bool on)
+{
+    t_nonBlocking = on;
+    if (on)
+        t_misses = 0;
+}
+bool NonBlockingAcquire()
+{
+    return t_nonBlocking;
+}
+std::uint32_t NonBlockingMisses()
+{
+    return t_misses;
+}
 DescriptorPool::~DescriptorPool()
 {
     Reset(0);
@@ -36,8 +55,14 @@ void DescriptorPool::Tag(Slot &slot, const OfpsFencePoint &use)
 std::uint32_t DescriptorPool::Acquire(const OfpsFencePoint &use, std::uint64_t evalNow, DWORD waitMs)
 {
     const std::uint32_t n = Count();
-    if (n == 0)
+    // In the non-blocking scope every refusal counts: the caller then records the core's fallback, not the frame.
+    const auto miss = [] {
+        if (t_nonBlocking)
+            ++t_misses;
         return kNone;
+    };
+    if (n == 0)
+        return miss();
     for (std::uint32_t k = 0; k < n; ++k)
     {
         const std::uint32_t i = (cursor_ + k) % n;
@@ -55,8 +80,8 @@ std::uint32_t DescriptorPool::Acquire(const OfpsFencePoint &use, std::uint64_t e
         if (oldest == kNone || slots_[i].ticket < slots_[oldest].ticket)
             oldest = i;
     }
-    if (oldest == kNone)
-        return kNone;
+    if (oldest == kNone || t_nonBlocking)
+        return miss();
     if (event_ == nullptr)
         event_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!WaitFenceValue(slots_[oldest].fence, slots_[oldest].value, event_, waitMs))

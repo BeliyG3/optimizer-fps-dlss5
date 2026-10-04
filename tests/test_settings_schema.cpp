@@ -12,7 +12,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -120,7 +122,7 @@ private:
 
 bool SameSettings(const ofps::reshade::AddonPersisted &lhs, const ofps::reshade::AddonPersisted &rhs)
 {
-    return lhs.showCenterOutline == rhs.showCenterOutline &&
+    return lhs.menuMode == rhs.menuMode && lhs.showCenterOutline == rhs.showCenterOutline &&
            lhs.showWorkOutline == rhs.showWorkOutline &&
            lhs.workShiftEnabled == rhs.workShiftEnabled &&
            Near(lhs.brightnessPercent, rhs.brightnessPercent) &&
@@ -172,13 +174,14 @@ ofps::reshade::AddonPersisted NonDefaultPersisted()
     persisted.temporal.mode = 3;
     persisted.temporal.every = 4;
     persisted.temporal.maxQueue = 1;
+    persisted.menuMode = true;
     return persisted;
 }
 
 // (a) A save writes exactly kIniKeys[] - no read-only key, no Debug* diagnostic, nothing left out.
 void TestSavedKeySet()
 {
-    Check(std::size(ofps::reshade::kIniKeys) == 22, "the add-on persists 22 keys");
+    Check(std::size(ofps::reshade::kIniKeys) == 23, "the add-on persists 23 keys");
 
     MemoryIni ini;
     ofps::reshade::SaveToStore(ini, NonDefaultPersisted());
@@ -269,11 +272,11 @@ void TestLegacySection()
     // The withdrawn keys are not settings any more: nothing of them reaches the add-on.
     Check(loaded.temporal.mode == 1, "withdrawn Temporal keys do not override the cadence");
 
-    // Only the model-pass keys are added to this legacy section.
+    // Only the model-pass keys and MenuMode (both newer than this fixture) are added to this legacy section.
     const std::size_t before = ini.Keys().size();
     ofps::reshade::SaveToStore(ini, loaded);
     const std::vector<std::string> after = ini.Keys();
-    Check(after.size() == before + 2, "a save adds the model-pass keys and removes none");
+    Check(after.size() == before + 3, "a save adds the model-pass keys and MenuMode and removes none");
     for (const char *foreign : {"TemporalFeather", "TemporalSeparateZone", "TemporalToneMatch",
                                 "TemporalToneSmoothing", "TemporalCatmullRom", "TemporalHoleFill",
                                 "TemporalWarpBase", "TemporalMaxMotion", "TemporalResidualBlend",
@@ -351,8 +354,13 @@ void TestDefaults()
     ofps::reshade::AddonPersisted loaded;
     Check(!ofps::reshade::LoadFromStore(ini, loaded), "an ini without our keys reports no saved layout");
     const ofps::reshade::AddonPersisted defaults;
-    Check(SameConfig(loaded.config, defaults.config) && SameConfig(loaded.config, ofps::sdk::DefaultConfigV2()),
-          "the layout stays at ofps::sdk::DefaultConfigV2()");
+    Check(SameConfig(loaded.config, defaults.config) &&
+              SameConfig(loaded.config, ofps::core::ProductDefaultConfig()),
+          "the layout stays at ofps::core::ProductDefaultConfig()");
+    Check(static_cast<int>(ofps::core::ProductDefaultConfig().colorFilter) ==
+              kOfpsSettings[OFPS_SET_COLOR_FILTER].defaultValue.i &&
+              loaded.config.colorFilter == ofps::sdk::ColorFilter::DetailTransfer,
+          "a missing ColorFilter key gives the schema default (detail transfer)");
     Check(SameSettings(loaded, defaults), "outlines, colour, temporal stay at their defaults");
     Check(!defaults.showCenterOutline && !defaults.showWorkOutline &&
               !defaults.workShiftEnabled && Near(defaults.brightnessPercent, 0.0f) && Near(defaults.gamma, 1.0f),
@@ -413,6 +421,27 @@ void TestAbiRoundTrip() {
 #endif
 }
 
+// (i) MenuMode: a persisted checkbox of the Mode group, off by default, read back from the ini.
+void TestMenuModeKey()
+{
+    const OfpsSettingDesc &d = kOfpsSettings[OFPS_SET_MENU_MODE];
+    Check(std::strcmp(d.iniKey, "MenuMode") == 0 && d.type == OFPS_TYPE_BOOL && d.group == OFPS_GROUP_MODE,
+          "MenuMode is a bool of the Mode group");
+    Check(d.defaultValue.i == 0 && (d.flags & OFPS_FLAG_PERSISTED) != 0 && (d.flags & OFPS_FLAG_DIAGNOSTIC) == 0,
+          "MenuMode is persisted and off by default");
+    auto values = ofps::reshade::SchemaDefaults();
+    Check(!ofps::reshade::LoadValuesFromStore(MemoryIni("SomeoneElsesKey=1\n"), values) &&
+              values.v[OFPS_SET_MENU_MODE].i == 0,
+          "a missing MenuMode key leaves menu mode off");
+    Check(ofps::reshade::LoadValuesFromStore(MemoryIni("MenuMode=1\n"), values) && values.v[OFPS_SET_MENU_MODE].i == 1,
+          "MenuMode=1 in the ini turns menu mode on");
+    std::set<std::string> persisted;
+    for (uint32_t i = 0; i < OFPS_SET_COUNT; ++i)
+        if ((kOfpsSettings[i].flags & OFPS_FLAG_PERSISTED) != 0) persisted.insert(kOfpsSettings[i].iniKey);
+    const std::set<std::string> declared(std::begin(ofps::reshade::kIniKeys), std::end(ofps::reshade::kIniKeys));
+    Check(persisted == declared, "kIniKeys lists exactly the persisted schema keys");
+}
+
 } // namespace
 
 void TestIniMigration(const std::string &root);
@@ -429,6 +458,7 @@ int main(int argc, char **argv)
     TestDefaults();
     TestObsoleteOwnershipKeys();
     TestAbiRoundTrip();
+    TestMenuModeKey();
     {
         ofps::reshade::TemporalConfig t;
         ofps::reshade::LoadTemporalFromStore(MemoryIni("ModelPasses=99\nSpreadPasses=0\n"), t);

@@ -20,6 +20,9 @@ public:
     // Records the decode (or copy) of the frame region at x,y of the output, which is a UAV before
     // and after. The presented texture ends as a pixel-shader resource.
     void Resolve(Device &device, unsigned x, unsigned y);
+    // --nr-pause-show input: presents this frame's NR input instead (the proxy decoded, or the linear colour
+    // as it is: a menu drawn without NR). The proxy is a UAV before and after; the linear colour is in colourState.
+    void ResolveInput(Device &device, D3D12_RESOURCE_STATES colourState);
     ID3D12Resource *Presented() const { return presented.Get(); }
     bool Encoding() const { return encode; }
     void Reset() { proxy.Reset(); presented.Reset(); colour=output=nullptr; }

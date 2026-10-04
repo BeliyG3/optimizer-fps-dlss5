@@ -3,6 +3,7 @@
 #include "core/temporal/diagnostics.h"
 
 #include "core/frame/feature_state.h"
+#include "core/frame/frame_inputs.h"
 #include "core/context.h"
 #include "core/frame/host_depth_state.h"
 #include "core/temporal/controller.h"
@@ -44,7 +45,8 @@ static bool EnsureSpread(FeatureState &st, ID3D12Resource *output, ID3D12Resourc
     if (st.spread) {
         if (st.spread->hidden[0]->Matches(st.nativeWidth, st.nativeHeight, outputDesc.Format,
                 static_cast<unsigned>(motionDesc.Width), motionDesc.Height, depthDesc.Format,
-                static_cast<unsigned>(depthDesc.Width), depthDesc.Height, pictureDivisor)) return true;
+                static_cast<unsigned>(depthDesc.Width), depthDesc.Height, pictureDivisor,
+                ofps::core::temporal::MachineRole::Hidden)) return true;
         RetireSpread(st, ofps::core::gpu::SignalGate(st.realDevice, st.device));
     }
     auto s = std::make_unique<SpreadState>();
@@ -52,11 +54,14 @@ static bool EnsureSpread(FeatureState &st, ID3D12Resource *output, ID3D12Resourc
     s->every = std::max(Ctx().temporal.every, s->stages);
     const auto od = output->GetDesc(), md = motion->GetDesc(), dd = depth->GetDesc();
     char error[256] = {};
+    // The hidden stages are never shown and record their residual without a blend or a phase-in (Quiet):
+    // a Hidden machine keeps one residual and no history (machine_role.h).
     for (int i = 0; i < s->stages - 1; ++i) {
         s->hidden[i] = std::make_unique<ofps::core::temporal::Machine>();
         if (!s->hidden[i]->Initialize(st.device, Ctx().shaders, st.nativeWidth, st.nativeHeight,
                                       od.Format, TypedView(od.Format, false), static_cast<unsigned>(md.Width), md.Height,
-                                      dd.Format, static_cast<unsigned>(dd.Width), dd.Height, error, sizeof(error), pictureDivisor)) {
+                                      dd.Format, static_cast<unsigned>(dd.Width), dd.Height, error, sizeof(error), pictureDivisor,
+                                      ofps::core::temporal::MachineRole::Hidden)) {
             std::snprintf(Ctx().status.modelPassReason, sizeof(Ctx().status.modelPassReason), "Cannot spread model passes: %.140s", error);
             return false;
         }
@@ -81,12 +86,22 @@ static ofps::core::temporal::FrameInputs Quiet(ofps::core::temporal::FrameInputs
     return in;
 }
 
+// Drops every stage's history and restarts the cycle (a host reset, or a declined detail transfer).
+static void ResetSpreadHistory(FeatureState &st, SpreadState &s)
+{
+    st.temporal->Invalidate();
+    for (auto &hidden : s.hidden) if (hidden) hidden->Invalidate();
+    s.position = 0;
+    st.passReset[0] = st.passReset[1] = true;
+}
+
 int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs, const OfpsFrameInputs &frame)
 {
     auto *color = inputs.color.res, *output = inputs.output.res;
     auto *motion = inputs.motion.res, *depth = inputs.depth.res;
     if (!color || !output || !motion || !depth || !gpu::HostListRecordable(cmd)) return kNotHandled;
-    if (st.warped && !EnsureGpu(st, cmd, color, output, inputs.color.view, inputs.output.view)) return kNotHandled;
+    if (st.warped && !EnsureGpu(st, cmd, color, output, inputs.color.view, inputs.output.view, CopySubresource(inputs.output)))
+        return kNotHandled;
     if (!EnsureTemporal(st, cmd, output, motion, depth) || !EnsureSpread(st, output, motion, depth)) return kNotHandled;
     // Switching from asynchronous unspread work must settle that job before this queue uses its models.
     if (st.async) {
@@ -105,12 +120,7 @@ int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsM
     auto fallbackInputs = in;
     fallbackInputs.mvScaleX = fallbackInputs.mvScaleY = 1.0f;
     fallbackInputs.depthInverted = false;
-    if (reset) {
-        st.temporal->Invalidate();
-        for (auto &hidden : s.hidden) if (hidden) hidden->Invalidate();
-        s.position = 0;
-        st.passReset[0] = st.passReset[1] = true;
-    }
+    if (reset) ResetSpreadHistory(st, s);
     Barrier(cmd, s.raw, s.rawState, kModelInputState);
     Barrier(cmd, s.carried, s.carriedState, kModelInputState);
     // A separate immutable raw snapshot also handles hosts with Color == Output and differing formats.
@@ -131,6 +141,7 @@ int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsM
     const bool runs = s.position < s.stages;
     const bool last = s.position == s.stages - 1;
     int result = OFPS_OK;
+    bool declined = false; // the stage's expected detail transfer was declined
     if (runs) {
         auto &stage = last ? *st.temporal : *s.hidden[s.position];
         auto *input = s.raw;
@@ -142,7 +153,7 @@ int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsM
             Log(false, "Optimizer FPS NGX hook: spread schedule frame %llu: stage %d/%d, publish=%d",
                 static_cast<unsigned long long>(Ctx().evalCounter), s.position + 1, s.stages, last ? 1 : 0);
         st.activeModelStage = s.position;
-        result = SpreadModel(st, cmd, inputs, frame, in, input, stage);
+        result = SpreadModel(st, cmd, inputs, frame, in, input, stage, &declined);
         st.activeModelStage = -1;
         if (result == OFPS_S_MODEL_NEXT_FRAME) {
             s.position = 0;
@@ -154,14 +165,17 @@ int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsM
             FallbackOutput(st, cmd, frame.color, frame.output, &fallbackInputs, "spread pack stage unavailable");
             return OFPS_OK;
         }
-        if (result == OFPS_OK) {
+        // A declined transfer leaves this stage's plain, stretched unpack: no residual from it, every
+        // stage's history dropped and the cycle restarted; the frame goes out as the raw colour below.
+        if (declined) ResetSpreadHistory(st, s);
+        if (result == OFPS_OK && !declined) {
             auto residual = last ? in : Quiet(in);
             residual.residualBlend = last ? kResidualBlend : 0.0f;
             stage.RecordResidual(cmd, residual, output, inputs.output.restState, inputs.output.subresource);
             if (last) stage.RecordApply(cmd, residual, output, inputs.output.restState, out.x, out.y, inputs.output.subresource);
         }
     }
-    if (!last || !runs || result != OFPS_OK) {
+    if (!last || !runs || result != OFPS_OK || declined) {
         if (st.temporal->HasResidual()) st.temporal->RecordReproject(cmd, in, output, inputs.output.restState, out.x, out.y, inputs.output.subresource);
         else st.temporal->RecordRaw(cmd, in, output, inputs.output.restState, out.x, out.y, inputs.output.subresource);
     }
@@ -173,9 +187,9 @@ int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsM
         std::snprintf(Ctx().status.modelPassReason, sizeof(Ctx().status.modelPassReason), "Spread stage %d failed (0x%X); cycle restarted", s.position + 1, result);
         Log(true, "Optimizer FPS NGX hook: %s", Ctx().status.modelPassReason);
         s.position = 0;
-    } else ++s.position;
+    } else if (!declined) ++s.position;
     ++s.frames;
-    TemporalFrameDone(st, runs && last && result == OFPS_OK);
+    TemporalFrameDone(st, runs && last && result == OFPS_OK && !declined);
     if (!runs || !st.warped) ++Ctx().status.evaluations;
     Ctx().status.active = true;
     Ctx().status.modelPassesRunning = s.stages;

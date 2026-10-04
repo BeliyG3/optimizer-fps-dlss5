@@ -41,7 +41,7 @@ bool WarpResources::Create(ID3D12Device* sourceDevice,
                            std::uint32_t workWidth, std::uint32_t workHeight,
                            std::uint32_t nativeWidth, std::uint32_t nativeHeight,
                            DXGI_FORMAT colorView, DXGI_FORMAT outputView,
-                           std::uint32_t frameSlots,
+                           std::uint32_t frameSlots, bool intermediates,
                            std::uint32_t descriptorSets) {
     if (device || !sourceDevice || !workWidth || !workHeight ||
         !nativeWidth || !nativeHeight || !frameSlots || descriptorSets < 64)
@@ -56,15 +56,15 @@ bool WarpResources::Create(ID3D12Device* sourceDevice,
                          &slot.depth) ||
             !MakeTexture(device, workWidth, workHeight, DXGI_FORMAT_R16G16_FLOAT,
                          &slot.motion) ||
-            !MakeTexture(device, nativeWidth, nativeHeight, outputView,
-                         &slot.intermediate))
+            (intermediates && !MakeTexture(device, nativeWidth, nativeHeight, outputView,
+                                           &slot.intermediate)))
             return false;
     }
     descriptorStride = device->GetDescriptorHandleIncrementSize(
         D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_DESCRIPTOR_HEAP_DESC desc{};
     desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    desc.NumDescriptors = descriptorSets * 10u;
+    desc.NumDescriptors = descriptorSets * kWarpDescriptorsPerSet;
     desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     if (FAILED(device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&heap))))
         return false;

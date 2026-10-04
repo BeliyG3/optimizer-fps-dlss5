@@ -18,7 +18,8 @@ list(APPEND OFPS_CORE_SOURCES gpu/descriptor_pool.h gpu/descriptor_pool.cpp gpu/
     gpu/submission_recordings.cpp)
 list(APPEND OFPS_CORE_SOURCES gpu/compute_pipeline.h gpu/compute_pipeline.cpp)
 list(APPEND OFPS_CORE_SOURCES warp/path_policy.h warp/path_policy.cpp warp/compute.h warp/compute.cpp
-    warp/resources.h warp/resources.cpp warp/format_support.h warp/format_support.cpp)
+    warp/resources.h warp/resources.cpp warp/format_support.h warp/format_support.cpp
+    warp/texture_plan.h warp/texture_plan.cpp)
 
 list(APPEND OFPS_CORE_SOURCES frame/model_protocol.h frame/model_protocol.cpp frame/codec_frame.h frame/codec_frame.cpp)
 list(APPEND OFPS_CORE_SOURCES frame/dispatch_body.cpp)
@@ -32,7 +33,7 @@ list(APPEND OFPS_CORE_SOURCES temporal/flow.cpp)
 list(APPEND OFPS_CORE_SOURCES temporal/diagnostic_keys.h temporal/diagnostics.h temporal/diagnostics.cpp temporal/profile.h temporal/profile.cpp)
 list(APPEND OFPS_CORE_SOURCES temporal/stats.h temporal/stats.cpp)
 list(APPEND OFPS_CORE_SOURCES temporal/pass_timing.h temporal/pass_timing.cpp)
-list(APPEND OFPS_CORE_SOURCES flow/Backend.h flow/DriverBackend.cpp flow/OpticalFlow.h flow/OpticalFlowInternal.h flow/OpticalFlow.cpp flow/Submit.cpp flow/FrameState.h flow/FrameState.cpp flow/motion_source.h)
+list(APPEND OFPS_CORE_SOURCES flow/Backend.h flow/DriverBackend.cpp flow/OpticalFlow.h flow/OpticalFlowInternal.h flow/OpticalFlow.cpp flow/Registration.cpp flow/Submit.cpp flow/FrameState.h flow/FrameState.cpp flow/motion_source.h)
 
 list(APPEND OFPS_CORE_SOURCES frame/frame_inputs.h frame/frame_inputs.cpp)
 

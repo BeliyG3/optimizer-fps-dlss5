@@ -17,6 +17,7 @@
 #include "core/api/ofps_settings_schema.h"
 
 #include "optimizer_fps/types_v2.h"
+#include "core/settings/product_defaults.h"
 
 #include <algorithm>
 #include <cmath>
@@ -53,7 +54,8 @@ template<class Store> void SaveValuesToStore(Store &store, const OfpsSettingsVal
 // of LoadDiagnosticsFromReShadeIni, deliberately never written back) or belongs to somebody else's
 // add-on in the same ReShade.ini and is never touched. Removing the producer role in 27.C changed
 // nothing here: the effect's Preview and Input source were per-runtime UI state and were never
-// persisted, and ColorFilter is the D3D12 unpack filter (bilinear/adaptive), not an effect setting.
+// persisted, and ColorFilter is the D3D12 unpack filter (0..3, see ofps::sdk::ColorFilter), not an
+// effect setting.
 inline constexpr const char *kIniKeys[] = {
     "Mode", "ColorFilter", "CenterX", "WorkX", "CenterY", "WorkY", "GlobalScale", "Flags",
     "OffsetX", "OffsetY", "WorkShiftX", "WorkShiftY",              // SaveConfigToStore
@@ -62,8 +64,9 @@ inline constexpr const char *kIniKeys[] = {
     "Brightness", "Gamma",                                         // SaveColorAdjustToStore
     "TemporalMode", "TemporalEvery", "TemporalMaxQueue",           // SaveTemporalToStore
     "ModelPasses", "SpreadPasses",
+    "MenuMode",                                                    // SaveToStore
 };
-static_assert(std::size(kIniKeys) == 22, "keep the list in step with the Save* functions below");
+static_assert(std::size(kIniKeys) == 23, "keep the list in step with the Save* functions below");
 
 // Only the mode, N and the queue cap are user settings (26.6.J). Everything else of the temporal machine
 // is fixed at the values that were verified on the bench and in the game (depth 0.05, colour 0.08, no
@@ -80,16 +83,17 @@ static_assert(TemporalModeFromIni(0) == 0 && TemporalModeFromIni(1) == 1 && Temp
 static_assert(TemporalModeFromIni(-1) == 0 && TemporalModeFromIni(9) == 1, "out-of-range ini modes are clamped");
 
 // Everything the add-on persists: the validated layout plus the AddonState fields that are saved with
-// it. The defaults mirror ofps::sdk::DefaultConfigV2() and AddonState, so a missing key leaves the built-in
+// it. The defaults mirror ofps::core::ProductDefaultConfig() and AddonState, so a missing key leaves the built-in
 // default in place exactly as the add-on does on a first launch.
 struct AddonPersisted {
-    ofps::sdk::ConfigV2 config = ofps::sdk::DefaultConfigV2();
+    ofps::sdk::ConfigV2 config = ofps::core::ProductDefaultConfig();
     bool showCenterOutline = false;
     bool showWorkOutline = false;
     bool workShiftEnabled = false;
     float brightnessPercent = 0.0f;
     float gamma = 1.0f;
     TemporalConfig temporal{};
+    bool menuMode = false;
 };
 
 // --- layout -------------------------------------------------------------------------------------
@@ -199,6 +203,7 @@ bool LoadFromStore(const Store &store, AddonPersisted &out)
     if (store.GetInt("ShowCenterOutline", integer)) out.showCenterOutline = integer != 0;
     if (store.GetInt("ShowWorkOutline", integer)) out.showWorkOutline = integer != 0;
     if (store.GetInt("WorkShiftEnabled", integer)) out.workShiftEnabled = integer != 0;
+    if (store.GetInt("MenuMode", integer)) out.menuMode = integer != 0;
     float number = 0.0f;
     if (store.GetFloat("Brightness", number) && std::isfinite(number)) out.brightnessPercent = std::clamp(number, -20.0f, 20.0f);
     if (store.GetFloat("Gamma", number) && std::isfinite(number) && number > 0.0f) out.gamma = std::clamp(number, 0.7f, 1.4f);
@@ -216,6 +221,7 @@ void SaveToStore(Store &store, const AddonPersisted &persisted)
     SaveWorkShiftEnabledToStore(store, persisted.workShiftEnabled);
     SaveColorAdjustToStore(store, persisted.brightnessPercent, persisted.gamma);
     SaveTemporalToStore(store, persisted.temporal);
+    store.SetInt("MenuMode", persisted.menuMode ? 1 : 0);
 }
 
 } // namespace ofps::reshade

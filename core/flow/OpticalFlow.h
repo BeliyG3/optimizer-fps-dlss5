@@ -13,7 +13,9 @@
 // images are written by list t, and at the start of frame t+1 (list t has been submitted by then)
 // Execute() signals the input fence on the game's queue, starts the engine, and makes the queue wait for
 // the result before list t+1 runs. The engine works while the GPU renders frame t+1, so the wait is
-// short or none.
+// short or none. Registering the textures is GPU work on the engine's queue too; the host's first capture follows in a
+// list that nothing else orders behind it, so OrderAfterRegistration() makes the host's queues wait for it on the GPU
+// (Acquire can run on a present thread: no CPU wait).
 //
 // Sessions live as long as the process. The temporal machine is rebuilt whenever the game changes its
 // buffers and the replaced one is destroyed some frames later; destroying its session there took the
@@ -48,6 +50,12 @@ class Session
     ID3D12Resource* Now() const;  // luminance of the frame being measured (input)
     ID3D12Resource* Then() const; // luminance of the frame it is measured against (reference)
     ID3D12Resource* Field() const; // the result: for a pixel of Now, where it is in Then
+
+    // Before the first list that writes Now/Then: while the textures' registration is still pending on the engine's
+    // queue, every queue registered with the core for `device` / `proxyDevice` (graphics and compute; all registered
+    // queues if none is keyed on them) waits for it on the GPU. False: the device was removed or no registered queue
+    // could wait; the images must not be written.
+    bool OrderAfterRegistration(ID3D12Device* device, ID3D12Device* proxyDevice);
 
     // Start of the frame after the one whose list wrote Now/Then. `queue` is the queue the game submits
     // the pass's lists on. False: the engine refused, the field must not be used this frame.

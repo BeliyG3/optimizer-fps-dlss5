@@ -23,6 +23,7 @@
 #include "../direct_host.h"
 #include "../ngx_hook_api.h"
 #include "../readable_guides.h"
+#include "../menu_pipeline.h"
 #include "ofps_version.h"
 #include "optiscaler_link.h"
 #include "status_log.h"
@@ -103,6 +104,18 @@ void OnPresent(::reshade::api::effect_runtime *)
     PushSettingsToCore();
     if (Core()) Core()->Housekeeping();
     RemotePublish();
+}
+
+// Menu mode: the present event fires before ReShade's effects and overlay.
+void OnMenuPresent(::reshade::api::command_queue *queue, ::reshade::api::swapchain *swapchain, const ::reshade::api::rect *,
+                   const ::reshade::api::rect *, uint32_t, const ::reshade::api::rect *)
+{
+    MenuPipelinePresent(queue, swapchain);
+}
+// The swap chain going away (not a resize) is the teardown point outside DllMain: drain there, if menu mode serves it.
+void OnMenuDestroySwapchain(::reshade::api::swapchain *swapchain, bool resize)
+{
+    if (!resize) MenuPipelineDrain(swapchain);
 }
 
 // 26.13: the settings are drawn inside ReShade's Add-ons tab by default (register_overlay with a null
@@ -205,10 +218,15 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
         ::reshade::register_event<::reshade::addon_event::execute_command_list>(ofps::reshade::OnExecuteCommandList);
         ::reshade::register_event<::reshade::addon_event::reshade_present>(ofps::reshade::OnPresent);
         ::reshade::register_event<::reshade::addon_event::reshade_open_overlay>(ofps::reshade::OnReShadeOpenOverlay);
+        ::reshade::register_event<::reshade::addon_event::present>(ofps::reshade::OnMenuPresent);
+        ::reshade::register_event<::reshade::addon_event::destroy_swapchain>(ofps::reshade::OnMenuDestroySwapchain);
         ::reshade::register_overlay(nullptr, ofps::reshade::DrawOverlayEmbedded); // Add-ons tab (default)
         ofps::reshade::g_floatingWindow = ofps::reshade::CurrentShellSettings().floatingWindow;
         if (ofps::reshade::g_floatingWindow) ::reshade::register_overlay("Optimizer FPS for DLSS5", ofps::reshade::DrawOverlay);
     } else if (reason == DLL_PROCESS_DETACH) {
+        // First: the ExecuteCommandLists hook stops reporting into the add-on and its vtable entry goes back. Once
+        // installed it pinned this module, so a FreeLibrary never unmaps it; this then runs at process exit only.
+        ofps::reshade::ShutdownHostSubmitHook();
         ofps::reshade::OptiScalerLinkShutdown();
         ofps::reshade::RemoteClose();
         ofps::reshade::CrashGuardClose();
@@ -220,6 +238,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
         ofps::reshade::CrashMarkerClear(); // a clean unload: the next session may warp
         if (ofps::reshade::g_floatingWindow) ::reshade::unregister_overlay("Optimizer FPS for DLSS5", ofps::reshade::DrawOverlay);
         ::reshade::unregister_overlay(nullptr, ofps::reshade::DrawOverlayEmbedded);
+        // Menu mode never waits here: its GPU objects were drained on destroy_swapchain or are left to the process.
+        ::reshade::unregister_event<::reshade::addon_event::destroy_swapchain>(ofps::reshade::OnMenuDestroySwapchain);
+        ::reshade::unregister_event<::reshade::addon_event::present>(ofps::reshade::OnMenuPresent);
         ::reshade::unregister_event<::reshade::addon_event::reshade_open_overlay>(ofps::reshade::OnReShadeOpenOverlay);
         ::reshade::unregister_event<::reshade::addon_event::reshade_present>(ofps::reshade::OnPresent);
         ::reshade::unregister_event<::reshade::addon_event::destroy_command_queue>(ofps::reshade::OnDestroyCommandQueue);

@@ -1,6 +1,8 @@
 #include "core/core_impl.h"
 #include "core/frame/feature_state.h"
 #include "core/frame/spread_passes.h"
+#include "core/gpu/descriptor_pool.h"
+#include "core/gpu/nonblocking_descriptors.h"
 #include "core/temporal/diagnostics.h"
 #include <algorithm>
 #include <cstddef>
@@ -151,4 +153,11 @@ extern "C" __declspec(dllexport) int OfpsSetTemporalDiagnosticsV1(
 extern "C" __declspec(dllexport) int OfpsSetTemporalMotionSourceV1(IOfpsCore *core, std::uint32_t source) {
     if (core != &ofps::core::CoreInstance()) return OFPS_E_ARG;
     return ofps::core::CoreInstance().SetTemporalMotionSource(source);
+}
+// core/gpu/nonblocking_descriptors.h: thread-local, so it needs neither the core's lock nor a host.
+extern "C" __declspec(dllexport) int OfpsNonBlockingDescriptorsV1(IOfpsCore *core, std::uint32_t on) {
+    if (core != &ofps::core::CoreInstance() || on > 1) return OFPS_E_ARG;
+    const std::uint32_t misses = ofps::core::gpu::NonBlockingMisses();
+    ofps::core::gpu::SetNonBlockingAcquire(on != 0);
+    return on ? OFPS_OK : static_cast<int>(misses > 0x7fffffffu ? 0x7fffffffu : misses);
 }

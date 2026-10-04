@@ -27,6 +27,7 @@ struct Options {
     std::string host="ngx";
     std::string coreStateSentinel;
     bool coreStateRebind=false;
+    bool coreFlow=false; // --core-flow: the core's temporal motion source is NVIDIA optical flow (game frames)
     int coreMode=2, coreTemporal=0, coreWarpPath=0;
     std::string nr="off", mvFormat="rg16f"; // DLSS Neural Rendering host mode; motion texture layout for NGX
     std::string nrColour="srgb"; // colour handed to NR: sRGB-encoded proxy, or linear HDR as rendered
@@ -36,8 +37,17 @@ struct Options {
     int nrLog=1; // NR runtime file log level echoed as [nr log] (0 off, 1 on, 2 verbose)
     int nrPadX=0, nrPadY=0, nrBaseX=0, nrBaseY=0; // NR output texture padding and region base
     int nrColourPadX=0, nrColourPadY=0, nrColourPadEdge=0; // NR colour (sRGB proxy) texture padding (region at 0,0); 1 = pad repeats the edge
+    std::vector<std::pair<int,int>> nrPause; // --nr-pause A,B[,A2,B2...]: half-open ranges, frames A<=f<B skip the feature-18 evaluate ("menu")
+    std::string nrPauseShow="frozen"; // what a paused frame presents: the last NR output (frozen) or this frame's NR input (a menu without NR)
+    int nrRecreate=-1; // --nr-recreate F: frame F releases feature 18 and creates it again (menu mode's lifetime check)
+    struct SetAt { int frame=-1, id=0, value=0; };
+    std::vector<SetAt> setAt; // --set-at F,ID,VALUE[,F2,ID2,VALUE2...]: frame F sets one add-on setting (menu mode's settings checks)
+    bool nrReleaseThread=false; // --nr-release-thread: that release runs on a second thread during frame F's present (menu mode's C4 race)
+    int resizeAt=-1, resizeWidth=0, resizeHeight=0; // --resize-at F[,W,H]: frame F resizes the swap chain (W,H 0: same size)
+    int recreateSwapChainAt=-1; // --recreate-swapchain F: frame F destroys the swap chain and creates a new one on the window
     std::string gltf="../bench/assets/lab_scene.glb", hdri, camera="script", view="colour";
     std::vector<int> dumps;
+    bool NrPaused(int frame) const { for(auto &r:nrPause) if(frame>=r.first && frame<r.second) return true; return false; }
 };
 inline float ParseFloat(const std::string &s)
 {
@@ -85,6 +95,7 @@ inline Options ParseOptions(int argc, char **argv, Options o={})
                 throw std::runtime_error("Expected draw or compute");
         }
         else if (key=="--core-state-rebind") o.coreStateRebind=true;
+        else if (key=="--core-flow") o.coreFlow=true;
         else if (key=="--core-mode") o.coreMode=ParseInt(value());
         else if (key=="--core-temporal") o.coreTemporal=ParseInt(value());
         else if (key=="--core-warp-path") o.coreWarpPath=ParseInt(value());
@@ -108,6 +119,38 @@ inline Options ParseOptions(int argc, char **argv, Options o={})
             o.nrColourPadX=ParseInt(s.substr(0,comma)); o.nrColourPadY=ParseInt(s.substr(comma+1,second==std::string::npos ? std::string::npos : second-comma-1));
             o.nrColourPadEdge=second==std::string::npos ? 0 : ParseInt(s.substr(second+1));
         }
+        else if (key=="--nr-pause") {
+            std::string s=value(); std::vector<int> n; size_t start=0;
+            do { size_t end=s.find(',',start); n.push_back(ParseInt(s.substr(start,end-start))); if(end==std::string::npos) break; start=end+1; } while(true);
+            if (n.empty() || n.size()%2!=0) throw std::runtime_error("--nr-pause expects A,B[,A,B...] ascending");
+            o.nrPause.clear();
+            for (size_t k=0; k<n.size(); k+=2) {
+                const int a=n[k], b=n[k+1];
+                if (a<0 || b<=a) throw std::runtime_error("--nr-pause expects A,B[,A,B...] ascending");
+                if (!o.nrPause.empty() && a<o.nrPause.back().second) throw std::runtime_error("--nr-pause expects A,B[,A,B...] ascending");
+                o.nrPause.emplace_back(a,b);
+            }
+        }
+        else if (key=="--nr-pause-show") o.nrPauseShow=value();
+        else if (key=="--nr-recreate") o.nrRecreate=ParseInt(value());
+        else if (key=="--nr-release-thread") o.nrReleaseThread=true;
+        else if (key=="--set-at") {
+            std::string s=value(); std::vector<int> n; size_t start=0;
+            do { size_t end=s.find(',',start); n.push_back(ParseInt(s.substr(start,end-start))); if(end==std::string::npos) break; start=end+1; } while(true);
+            if (n.empty() || n.size()%3!=0) throw std::runtime_error("--set-at expects F,ID,VALUE[,F2,ID2,VALUE2...]");
+            o.setAt.clear();
+            for (size_t k=0;k<n.size();k+=3) {
+                if (n[k]<0 || n[k+1]<0) throw std::runtime_error("--set-at expects F,ID,VALUE[,F2,ID2,VALUE2...]");
+                o.setAt.push_back({n[k],n[k+1],n[k+2]});
+            }
+        }
+        else if (key=="--resize-at") {
+            std::string s=value(); std::vector<int> n; size_t start=0;
+            do { size_t end=s.find(',',start); n.push_back(ParseInt(s.substr(start,end-start))); if(end==std::string::npos) break; start=end+1; } while(true);
+            if (n.size()!=1 && n.size()!=3) throw std::runtime_error("--resize-at expects F or F,W,H");
+            o.resizeAt=n[0]; o.resizeWidth=n.size()==3 ? n[1] : 0; o.resizeHeight=n.size()==3 ? n[2] : 0;
+        }
+        else if (key=="--recreate-swapchain") o.recreateSwapChainAt=ParseInt(value());
         else if (key=="--tonemap") o.tonemap=value();
         else if (key=="--haze") o.haze=ParseFloat(value());
         else if (key=="--haze-g") o.hazeG=ParseFloat(value());
@@ -166,10 +209,18 @@ inline Options ParseOptions(int argc, char **argv, Options o={})
     if (o.nrList=="compute" && o.nr!="native") throw std::runtime_error("--nr-list compute requires --nr native");
     if (o.nrColourPadX<0 || o.nrColourPadY<0 || o.nrColourPadX>4096 || o.nrColourPadY>4096) throw std::runtime_error("--nr-colour-pad requires 0..4096");
     if ((o.nrColourPadX || o.nrColourPadY) && o.nrColour!="srgb") throw std::runtime_error("--nr-colour-pad needs --nr-colour srgb (the padded texture is the proxy)");
+    if (!o.nrPause.empty() && (o.nr!="native" || o.host!="ngx")) throw std::runtime_error("--nr-pause requires --nr native --host ngx");
+    if (!contains(o.nrPauseShow,{"frozen","input"})) throw std::runtime_error("Invalid --nr-pause-show (frozen|input)");
+    if (o.nrRecreate>=0 && (o.nr!="native" || o.host!="ngx" || o.nrRecreate>=o.frames)) throw std::runtime_error("--nr-recreate F requires --nr native --host ngx and F below the frame count");
+    if (o.nrReleaseThread && o.nrRecreate<0) throw std::runtime_error("--nr-release-thread requires --nr-recreate F");
+    if (o.resizeAt>=o.frames || o.resizeWidth<0 || o.resizeHeight<0 || o.resizeWidth>16384 || o.resizeHeight>16384 || (o.resizeWidth==0)!=(o.resizeHeight==0) || (o.resizeAt>=0 && o.interactive))
+        throw std::runtime_error("--resize-at F[,W,H] requires F below the frame count, 1..16384 for W and H, and no --interactive");
+    if (o.recreateSwapChainAt>=o.frames || (o.recreateSwapChainAt>=0 && o.interactive))
+        throw std::runtime_error("--recreate-swapchain F requires F below the frame count and no --interactive");
     if (!contains(o.mvFormat,{"rg16f","rgba16f"})) throw std::runtime_error("Invalid --mv-format (rg16f|rgba16f)");
     if (o.nrPadX<0 || o.nrPadY<0 || o.nrPadX>4096 || o.nrPadY>4096 || o.nrBaseX<0 || o.nrBaseY<0 || o.nrBaseX>o.nrPadX || o.nrBaseY>o.nrPadY)
         throw std::runtime_error("--nr-output-pad requires 0 <= BX <= X <= 4096 and 0 <= BY <= Y <= 4096");
-    if (!contains(o.tonemap,{"aces","neutral"})) throw std::runtime_error("Invalid tonemap (aces|neutral)");
+    if (!contains(o.tonemap,{"aces","neutral","none"})) throw std::runtime_error("Invalid tonemap (aces|neutral|none)");
     if (o.haze<0 || o.hazeG<=-1 || o.hazeG>=1 || o.bloom<0) throw std::runtime_error("Requires haze/bloom >= 0 and -1 < haze-g < 1");
     if (o.lightCandidates<1 || o.lightCandidates>1024) throw std::runtime_error("--light-candidates requires 1..1024");
     if (o.frames<1 || o.width<1 || o.height<1 || o.width>16384 || o.height>16384 || o.spp<1 || o.spp>4096 || o.bounces<0 || o.bounces>8)
@@ -193,13 +244,18 @@ inline void PrintUsage()
         "  --cam-dolly 0 --cam-lift 0 --cam-pos x,y,z --cam-target x,y,z --fov 60\n"
         "  --sun-dir x,y,z --sun-strength 1 --sun-angle 0.5 --exposure 1.45 --albedo 1\n"
         "  --firefly 50 --jitter 0|1 --depth standard|reverse|linear-negative|linear-positive --motion pixels|ndc\n"
-        "  --haze 0.012 --haze-g 0.6 --tonemap aces|neutral --bloom 0.06 --auto-exposure 0|1\n"
+        "  --haze 0.012 --haze-g 0.6 --tonemap aces|neutral|none --bloom 0.06 --auto-exposure 0|1\n"
         "  --light-candidates 8 --vsync 0|1 --upscaler none|sr|rr (quality from render scale)\n"
         "  --host ngx|core --core-mode 0|1|2 --core-temporal 0|1 --core-warp-path 0|1|2 (core: native NR, sRGB, SR)\n"
         "  --core-state-sentinel draw|compute (diagnostic NGX state check)\n"
         "  --core-state-rebind (explicit host rebinding before the next draw or dispatch)\n"
         "  --nr off|native|upscale (DLSS Neural Rendering host) --nr-colour srgb|linear --nr-log 0|1|2\n"
-        "  --nr-output-pad X,Y[,BX,BY] --nr-colour-pad X,Y\n"
+        "  --nr-output-pad X,Y[,BX,BY] --nr-colour-pad X,Y --nr-pause A,B[,A2,B2...] (skip the NR evaluate on frames A..B-1)\n"
+        "  --nr-pause-show frozen|input (a paused frame presents the last NR output, or its own NR input)\n"
+        "  --nr-recreate F (frame F releases feature 18 and creates it again) --resize-at F[,W,H] (frame F resizes the swap chain)\n"
+        "  --nr-release-thread (the --nr-recreate release runs on a second thread during frame F's present)\n"
+        "  --recreate-swapchain F (frame F destroys the swap chain and creates a new one on the same window)\n"
+        "  --set-at F,ID,VALUE[,F2,ID2,VALUE2...] (frame F sets add-on setting ID to the integer VALUE through its export)\n"
         "  --mv-format rg16f|rgba16f (motion texture handed to DLSS/NR)\n"
         "  --view colour|noisy|accum|depth|motion|normal|roughness|albedo|specular --dump N[,N...] --debug-layer");
 }

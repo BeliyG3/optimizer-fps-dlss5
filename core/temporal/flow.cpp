@@ -8,11 +8,12 @@ using gpu::Barrier;
 using gpu::BarrierExternal;
 
 void Machine::RecordFlowCapture(ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn,
-                                ID3D12Device *nativeDevice, bool full, bool referenceOnly) {
+                                ID3D12Device *nativeDevice, ID3D12Device *proxyDevice, bool full,
+                                bool referenceOnly) {
     if (!rawIn.opticalFlow || !cmd || !res_) return;
     if (full && !referenceOnly) flowRunning_ = false;
     Resources &m = *res_;
-    if (!flow_.Acquire(nativeDevice, m.nativeW / 2, m.nativeH / 2)) {
+    if (!flow_.Acquire(nativeDevice, proxyDevice, m.nativeW / 2, m.nativeH / 2)) {
         if (!flowLogged_) Log(true, "Optimizer FPS optical flow unavailable: %s", flow_.Problem().c_str());
         flowLogged_ = true;
         return;

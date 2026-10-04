@@ -39,7 +39,7 @@ Percentages are per axis.
 | `centerOffsetXPercent` / `centerOffsetYPercent` (v2) | signed offset of that band from the frame center, percent of the axis; Peripheral only. Work stays the same size: the wider periphery is compressed harder, the narrower one never below 1:1. Limit: `|offset| <= (100 - center) / 2 - 0.5` |
 | `workPercent` | total work extent relative to native |
 | `globalScale` (v3) | uniform scale applied to both axes inside the same Pack mapping |
-| `colorFilter` | bilinear or adaptive four-tap peripheral prefilter |
+| `colorFilter` | `Bilinear` (0), `AdaptiveFourTap` (1, soft pre-filter and cubic unpack), `DetailTransfer` (2, full-size frame plus the model's edit where shrunk) or `DetailTransferDepth` (3, the same with the edit weighted by depth); 2/3 run in the Optimizer FPS core's compute Unpack, SDK adapters treat them as `AdaptiveFourTap` |
 | `ConfigFlagExtendMotionAtEdge` | linearly extend motion endpoints beyond the screen instead of clamping |
 | `ConfigFlagInputConfidenceValid` | require and conservatively filter confidence |
 

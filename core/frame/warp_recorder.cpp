@@ -275,13 +275,35 @@ int WarpedBody(EvalContext &c)
             if (Ctx().showWorkOutline) outlines |= ofps::sdk::DiagnosticOutlineRawWork;
             std::string reason;
             c.stage = StageUnpackDraw;
+            // Every target (host output, temporal unpackTarget, codec answer) asks for the transfer: this
+            // frame's Pack has just run, and ComputePath declines when a source aliases the target.
+            const warp::TransferRequest transfer{c.depthConvention == ofps::sdk::DepthConvention::Reversed};
+            const warp::TransferRequest *request = DetailTransferOn(st) ? &transfer : nullptr;
             if (!st.compute->Unpack(cmd, c.packSlot, st.nrOutput, st.outputView, target,
                                     outlines, Ctx().outputGain, Ctx().outputGamma,
-                                    c.privateUsePoint.fence ? &c.privateUsePoint : nullptr, reason)) {
+                                    c.privateUsePoint.fence ? &c.privateUsePoint : nullptr, request, reason)) {
                 SetReason("compute unpack: %s", reason.c_str());
                 status = ofps::sdk::AdapterStatus::DeviceError;
+            } else {
+                // Read before RecordBaseUnpack, which unpacks again. Safety net: a temporal consumer
+                // (host temporal frame, spread stage, background pass) whose base was dropped for the
+                // transfer must not keep a residual from this plain, stretched unpack.
+                const bool applied = st.compute->TransferApplied();
+                const bool consumer = c.privateUsePoint.fence || c.temporalActive || st.activeModelStage >= 0;
+                c.transferDeclined = consumer && !KeepResidualAfterUnpack(request != nullptr, applied, TransferReplacesBase(st));
+                if (c.transferDeclined) {
+                    static bool s_reset = false;
+                    if (!s_reset) { s_reset = true; Log(true, "Optimizer FPS NGX hook: detail transfer declined where it was expected; the frame's residual is skipped and the temporal history reset"); }
+                } else if (request && !applied) {
+                    static bool s_declined = false;
+                    if (!s_declined) { s_declined = true; Log(true, "Optimizer FPS NGX hook: detail transfer declined for this frame (in-place host, sRGB view mismatch, or the Pack was not in this evaluate); plain unpack"); }
+                }
             }
         } else {
+        if (DetailTransferOn(st)) {
+            static bool s_pixel = false;
+            if (!s_pixel) { s_pixel = true; Log(true, "Optimizer FPS NGX hook: detail transfer needs the compute path; the pixel path unpacks with the soft filter"); }
+        }
         Barrier(cmd, st.nrOutput, st.nrOutputState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         guideState = st.packedGuideState[slot];
         Barrier(cmd, packed.resources.depth.resource, guideState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -305,8 +327,10 @@ int WarpedBody(EvalContext &c)
                                                       {nullptr, DXGI_FORMAT_UNKNOWN}};
         if (!st.unpackValid[slot] || st.unpackDepthConvention[slot] != c.depthConvention) {
             // Its sources are the adapter's own packed textures and nrOutput: stable, so this is
-            // written once per slot (a rewrite while the GPU reads it would be the same race).
-            status = st.adapter->WriteSourceDescriptorsV2(c.unpackSlot, workSources, unpackInput);
+            // written once per slot (a rewrite while the GPU reads it would be the same race). The
+            // unpack sets (kPackSlots + slot) are descriptor sets only; the adapter owns packed
+            // textures for the pack slots alone, so they are addressed by set, not by frame slot.
+            status = st.adapter->WriteSourceSetV2(c.unpackSlot, workSources, unpackInput);
             if (status == ofps::sdk::AdapterStatus::Ok) { st.unpackValid[slot] = true; st.unpackDepthConvention[slot] = c.depthConvention; }
         }
         if (status == ofps::sdk::AdapterStatus::Ok) {
@@ -315,8 +339,8 @@ int WarpedBody(EvalContext &c)
             if (Ctx().showCenterOutline) outlines = outlines | ofps::sdk::DiagnosticOutlineCenter;
             if (Ctx().showWorkOutline) outlines = outlines | ofps::sdk::DiagnosticOutlineRawWork;
             (void) st.adapter->SetOutputColorAdjust(Ctx().outputGain, Ctx().outputGamma);
-            status = st.adapter->RecordUnpackColor(
-                cmd, c.unpackSlot, st.rtvHeap->GetCPUDescriptorHandleForHeapStart(), outlines);
+            status = st.adapter->RecordUnpackColorFromSet(
+                cmd, c.packSlot, c.unpackSlot, st.rtvHeap->GetCPUDescriptorHandleForHeapStart(), outlines);
         }
         }
         if (status == ofps::sdk::AdapterStatus::Ok && c.wantBase) {
@@ -345,14 +369,14 @@ int WarpedBody(EvalContext &c)
                 c.stage = StageTemporalReproject;
                 st.temporal->RecordReproject(cmd, tinB, c.output, c.outputResource.restState, c.outputRect.x, c.outputRect.y, c.outputResource.subresource);
             } else {
-                if (c.temporalActive) {
+                if (c.temporalActive && !c.transferDeclined) {
                     c.stage = StageTemporalResidual;
                     ofps::core::temporal::FrameInputs tinR = tinB;
                     tinR.residualBlend = Ctx().temporal.debugSingleFrameMotion ? 0.0f : kResidualBlend; // the machine's chain moves the previous residual
                     st.temporal->RecordResidual(cmd, tinR, st.unpackTarget, st.unpackState);
                 }
                 c.stage = StageCopyOut;
-                if (c.temporalActive && st.temporal->PhaseInActive()) {
+                if (c.temporalActive && !c.transferDeclined && st.temporal->PhaseInActive()) {
                     // 26.28: while a pass is being phased in, the full frame is shown as "colour + the
                     // residual mix" too; otherwise it would still snap to the model's new version once
                     // per cadence while only the carried frames faded.
@@ -371,8 +395,10 @@ int WarpedBody(EvalContext &c)
             }
             }
             ++Ctx().status.evaluations;
-            if (c.temporalActive)
-                st.temporal->RecordFlowCapture(cmd, TemporalInputsWithBase(c), st.realDevice, c.temporalFull);
+            if (c.temporalActive && c.transferDeclined)
+                st.temporal->Invalidate(); // after this frame's (skipped) residual: nothing from it survives
+            else if (c.temporalActive)
+                st.temporal->RecordFlowCapture(cmd, TemporalInputsWithBase(c), st.realDevice, st.device, c.temporalFull);
             Ctx().status.active = true;
             Ctx().status.reason[0] = 0;
             if (Ctx().status.evaluations == 1)
@@ -424,7 +450,7 @@ int InterpolateBody(EvalContext &c)
     c.stage = StageTemporalReproject;
     st.temporal->RecordReproject(c.cmd, TemporalInputsWithBase(c), KeepOutputOnInterpolation() ? nullptr : c.output, c.outputResource.restState,
                                  c.outputRect.x, c.outputRect.y, c.outputResource.subresource);
-    st.temporal->RecordFlowCapture(c.cmd, TemporalInputsWithBase(c), st.realDevice, false);
+    st.temporal->RecordFlowCapture(c.cmd, TemporalInputsWithBase(c), st.realDevice, st.device, false);
     c.stage = StageDone;
     return OFPS_OK;
 }

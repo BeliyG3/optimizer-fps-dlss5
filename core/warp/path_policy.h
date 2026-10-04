@@ -65,6 +65,10 @@ struct ModelListSupport {
 
 [[nodiscard]] PackDecision DecidePack(RequestedPath request, const PackSupport& support) noexcept;
 [[nodiscard]] UnpackDecision DecideUnpack(const UnpackSupport& support) noexcept;
+// The target's half of DecideUnpack, judged when the warp's textures are prepared: true when an Unpack
+// into this target takes CopyFromUav and so needs the native intermediate. The answer and the region
+// are per frame and assumed valid here; a region that does not fit refuses both paths alike.
+[[nodiscard]] bool NeedsCopyFallback(UnpackSupport target) noexcept;
 [[nodiscard]] ModelListPath DecideModelList(const ModelListSupport& support) noexcept;
 [[nodiscard]] const char* ReasonText(PathReason reason) noexcept;
 

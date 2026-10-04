@@ -1,6 +1,8 @@
 #pragma once
 #include "hosts/reshade/ngx_params.h"
 #include "core/api/ofps_core.h"
+#include "core/flow/motion_source.h"
+#include "core/gpu/nonblocking_descriptors.h"
 namespace ofps::reshade {
 struct ShellStatus {
     ShellFrameInfo frame;
@@ -19,4 +21,6 @@ int CoreAttach();
 const char *CoreLoadError();
 bool CoreDetach(bool serialize = true);
 bool ShellDeviceRemoved();
+ofps::core::flow::SetTemporalMotionSourceV1 CoreMotionSourceSetter(); // null: the core has no optical flow export
+ofps::core::gpu::NonBlockingDescriptorsV1 CoreNonBlockingDescriptors(); // null: the core has no such export (menu mode)
 } // namespace ofps::reshade

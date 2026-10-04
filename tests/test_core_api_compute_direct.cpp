@@ -82,13 +82,6 @@ Image SubrectReference(const ofps::sdk::LayoutV2 &layout, std::uint32_t ox, std:
     return output;
 }
 
-void CaptureTarget(WarpDevice &w, ID3D12Resource *target, D3D12_RESOURCE_STATES rest,
-                   const ReadbackCapture &readback) {
-    Transition(w.list.Get(), target, rest, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    RecordReadback(w.list.Get(), target, readback);
-    Transition(w.list.Get(), target, D3D12_RESOURCE_STATE_COPY_SOURCE, rest);
-}
-
 ComPtr<ID3D12Resource> ArrayAnswer(ID3D12Device *device) {
     D3D12_HEAP_PROPERTIES heap{};
     heap.Type = D3D12_HEAP_TYPE_DEFAULT;

@@ -52,7 +52,7 @@ float4 OfpsSamplePackedColor(float2 nativePixel, float2 workPixel)
     float2 colorPixel = OfpsColorRect.xy + nativeUv * OfpsColorRect.zw;
     float2 uv = OfpsClampColorUv(colorPixel / OfpsColorDepthSize.xy);
     float4 color = 0.0.xxxx;
-    if (OfpsOptions.y == OFPS_FILTER_ADAPTIVE_FOUR_TAP)
+    if (OfpsOptions.y >= OFPS_FILTER_ADAPTIVE_FOUR_TAP)
     {
         float2 footprint = OfpsSourceFootprint(workPixel);
         if (max(footprint.x, footprint.y) > 1.02)

@@ -99,10 +99,10 @@ struct Resources {
     Output targets[kTargetCount]{};
 
     ID3D12Resource *residual = nullptr, *depthF = nullptr, *acc[2] = {}, *interp = nullptr;
-    ID3D12Resource *residualPrev = nullptr; // the previous full pass's residual (ping-pong with `residual`)
+    ID3D12Resource *residualPrev = nullptr; // the previous full pass's residual (ping-pong with `residual`); none when Hidden
     // 26.6.X: the reprojection's addition + acceptance (RGBA16F native), smoothed by the compose pass.
     ID3D12Resource *toneAcc = nullptr;
-    ID3D12Resource *accP[2] = {}; // pending chain (background mode)
+    ID3D12Resource *accP[2] = {}; // pending chain (background mode; a Background machine only)
     ID3D12Resource *colorF = nullptr;     // snapshot of the host colour of the residual's frame (created on demand)
     ID3D12Resource *residualLow = nullptr; // box-filtered residual (hole fill); null when the shader is missing
     // 26.28 PW_T_EXPECT: the depth each texel's surface had in the residual's frame, carried along the
@@ -151,6 +151,7 @@ struct Resources {
     std::uint32_t colorFW = 0, colorFH = 0;
     std::uint32_t nativeW = 0, nativeH = 0, motionW = 0, motionH = 0, depthW = 0, depthH = 0, lowW = 0, lowH = 0;
     std::uint32_t historyPictureDivisor = 3;
+    MachineRole role = MachineRole::Synchronous; // decides the optional textures above (machine_role.h)
     DXGI_FORMAT outputFormat = DXGI_FORMAT_UNKNOWN, outputView = DXGI_FORMAT_UNKNOWN, depthFormat = DXGI_FORMAT_UNKNOWN;
 
     ~Resources();
@@ -159,7 +160,7 @@ struct Resources {
     bool Create(ID3D12Device *device, const ofps::core::gpu::Shaders &shaders, std::uint32_t nativeWidth, std::uint32_t nativeHeight,
                 DXGI_FORMAT outputFormat, DXGI_FORMAT outputView, std::uint32_t motionWidth, std::uint32_t motionHeight,
                 DXGI_FORMAT depthFormat, std::uint32_t depthWidth, std::uint32_t depthHeight, char *error, std::size_t errorSize,
-                std::uint32_t pictureDivisor);
+                std::uint32_t pictureDivisor, MachineRole role);
 
     Output Target(int index) const { return targets[index]; }
     // A fresh table for every dispatch from a ring deep enough that the GPU has long finished with the

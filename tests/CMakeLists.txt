@@ -104,6 +104,12 @@ if(TARGET ofps_core)
     target_link_libraries(ofps_flow_tests PRIVATE ofps_core)
     target_compile_options(ofps_flow_tests PRIVATE /W4 /WX /EHsc /permissive-)
     add_test(NAME ofps_flow COMMAND ofps_flow_tests)
+    # The optical flow session on an NVIDIA GPU under the debug layer (skipped without one).
+    add_executable(ofps_flow_session_tests test_flow_session.cpp)
+    target_link_libraries(ofps_flow_session_tests PRIVATE ofps_core d3d12 dxgi)
+    target_compile_options(ofps_flow_session_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_flow_session COMMAND ofps_flow_session_tests)
+    set_tests_properties(ofps_flow_session PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_executable(ofps_warp_policy_tests test_warp_policy.cpp ../core/warp/path_policy.cpp)
@@ -186,7 +192,14 @@ add_test(NAME ofps_settings_values COMMAND ofps_settings_values_tests)
 endif()
 
 if(TARGET ofps_core)
-add_executable(ofps_gpu_pools_tests test_gpu_pools.cpp test_compute_pipeline.cpp)
+add_executable(ofps_submission_identity_tests test_submission_identity.cpp)
+target_link_libraries(ofps_submission_identity_tests PRIVATE ofps_core d3d12 dxgi)
+target_include_directories(ofps_submission_identity_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+target_compile_features(ofps_submission_identity_tests PRIVATE cxx_std_20)
+target_compile_options(ofps_submission_identity_tests PRIVATE /W4 /WX /EHsc /permissive-)
+add_test(NAME ofps_submission_identity COMMAND ofps_submission_identity_tests)
+add_executable(ofps_gpu_pools_tests test_gpu_pools.cpp test_compute_pipeline.cpp test_gpu_queue_waits.cpp
+    test_temporal_roles.cpp)
 target_link_libraries(ofps_gpu_pools_tests PRIVATE ofps_core d3d12 dxgi d3dcompiler)
 target_compile_options(ofps_gpu_pools_tests PRIVATE /W4 /WX)
 if(TARGET ofps_shaders)
@@ -198,7 +211,8 @@ endif()
 endif()
 
 if(TARGET ofps_core)
-add_executable(ofps_model_host_ngx_tests test_model_host_ngx.cpp ../hosts/reshade/model_host_ngx.cpp ../hosts/reshade/ngx_params.cpp)
+add_executable(ofps_model_host_ngx_tests test_model_host_ngx.cpp ../hosts/reshade/model_host_ngx.cpp ../hosts/reshade/ngx_params.cpp
+    ../hosts/reshade/ngx_param_shim.cpp)
 target_link_libraries(ofps_model_host_ngx_tests PRIVATE ofps_core d3d12 dxgi)
 target_compile_options(ofps_model_host_ngx_tests PRIVATE /W4 /WX)
 add_test(NAME ofps_model_host_ngx COMMAND ofps_model_host_ngx_tests)
@@ -213,6 +227,15 @@ target_compile_definitions(ofps_readable_guides_tests PRIVATE WIN32_LEAN_AND_MEA
 target_compile_options(ofps_readable_guides_tests PRIVATE /W4 /WX /EHsc /permissive-)
 target_link_libraries(ofps_readable_guides_tests PRIVATE ofps_core d3d12 dxgi d3dcompiler)
 add_test(NAME ofps_readable_guides COMMAND ofps_readable_guides_tests)
+# Queue-hook fix round 1: the core's RetireResource is called without the guides' mutex held.
+add_executable(ofps_readable_guides_retire_tests test_readable_guides_retire.cpp
+    ../hosts/reshade/readable_guides.cpp ../hosts/reshade/ngx_params.cpp)
+target_include_directories(ofps_readable_guides_retire_tests PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/sdk/include")
+target_compile_features(ofps_readable_guides_retire_tests PRIVATE cxx_std_20)
+target_compile_definitions(ofps_readable_guides_retire_tests PRIVATE WIN32_LEAN_AND_MEAN= NOMINMAX=)
+target_compile_options(ofps_readable_guides_retire_tests PRIVATE /W4 /WX /EHsc /permissive-)
+target_link_libraries(ofps_readable_guides_retire_tests PRIVATE ofps_core d3d12 dxgi d3dcompiler)
+add_test(NAME ofps_readable_guides_retire COMMAND ofps_readable_guides_retire_tests)
 endif()
 
 if(TARGET ofps_core)
@@ -220,6 +243,75 @@ if(TARGET ofps_core)
     target_link_libraries(ofps_ngx_params_tests PRIVATE ofps_core d3d12 dxgi)
     target_compile_options(ofps_ngx_params_tests PRIVATE /W4 /WX)
     add_test(NAME ofps_ngx_params COMMAND ofps_ngx_params_tests)
+    # Menu mode's own NGX parameter objects, called through raw vtable slots like the runtime.
+    add_executable(ofps_ngx_param_shim_tests test_ngx_param_shim.cpp
+        ../hosts/reshade/ngx_param_shim.cpp ../hosts/reshade/ngx_params.cpp)
+    target_include_directories(ofps_ngx_param_shim_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_ngx_param_shim_tests PRIVATE cxx_std_20)
+    target_link_libraries(ofps_ngx_param_shim_tests PRIVATE ofps_core d3d12 dxgi)
+    target_compile_options(ofps_ngx_param_shim_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_ngx_param_shim COMMAND ofps_ngx_param_shim_tests)
+    # Menu mode's parameter book: generations, union keys, exact codes, aux refusal, tags, shape check.
+    add_executable(ofps_menu_param_book_tests test_menu_param_book.cpp
+        ../hosts/reshade/menu_param_book.cpp ../hosts/reshade/ngx_param_shim.cpp)
+    target_include_directories(ofps_menu_param_book_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_menu_param_book_tests PRIVATE cxx_std_20)
+    target_link_libraries(ofps_menu_param_book_tests PRIVATE d3d12 dxgi)
+    target_compile_options(ofps_menu_param_book_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_menu_param_book COMMAND ofps_menu_param_book_tests)
+    # Menu mode's entry/exit state machine and the tab's status line (pure logic).
+    add_executable(ofps_menu_state_tests test_menu_state.cpp ../hosts/reshade/menu_state.cpp)
+    target_include_directories(ofps_menu_state_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_menu_state_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_menu_state_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_menu_state COMMAND ofps_menu_state_tests)
+    # Menu mode's optical-flow switch: a refused switch-back stays owed and withholds the game's evaluates (pure logic).
+    add_executable(ofps_menu_flow_switch_tests test_menu_flow_switch.cpp ../hosts/reshade/menu_flow_switch.cpp)
+    target_include_directories(ofps_menu_flow_switch_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_menu_flow_switch_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_menu_flow_switch_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_menu_flow_switch COMMAND ofps_menu_flow_switch_tests)
+    # Menu mode's GPU fences against a host NR queue other than the present queue, and the exit CPU fallback, on WARP.
+    add_executable(ofps_menu_host_queue_tests test_menu_host_queue.cpp test_menu_host_queue_exit.cpp
+        test_menu_host_queue_order.cpp ../hosts/reshade/menu_host_queue.cpp)
+    target_include_directories(ofps_menu_host_queue_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_menu_host_queue_tests PRIVATE cxx_std_20)
+    target_link_libraries(ofps_menu_host_queue_tests PRIVATE d3d12 dxgi)
+    target_compile_options(ofps_menu_host_queue_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_menu_host_queue COMMAND ofps_menu_host_queue_tests)
+    # The ExecuteCommandLists hook for a host device ReShade does not wrap (Fallen Order + OptiScaler): its own
+    # executable, since the hook swaps the D3D12 runtime's queue vtable entry for the whole process (64-bit, as the add-on).
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        add_executable(ofps_queue_submit_hook_tests test_queue_submit_hook.cpp
+            ../hosts/reshade/queue_submit_hook.cpp ../hosts/reshade/menu_host_queue.cpp)
+        target_include_directories(ofps_queue_submit_hook_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+        target_compile_features(ofps_queue_submit_hook_tests PRIVATE cxx_std_20)
+        target_link_libraries(ofps_queue_submit_hook_tests PRIVATE d3d12 dxgi)
+        target_compile_options(ofps_queue_submit_hook_tests PRIVATE /W4 /WX /EHsc /permissive-)
+        add_test(NAME ofps_queue_submit_hook COMMAND ofps_queue_submit_hook_tests)
+        add_test(NAME ofps_queue_submit_hook_runtime COMMAND ofps_queue_submit_hook_tests --no-debug-layer)
+    endif()
+    add_executable(ofps_menu_outstanding_tests test_menu_outstanding.cpp ../hosts/reshade/menu_outstanding.cpp)
+    target_include_directories(ofps_menu_outstanding_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_menu_outstanding_tests PRIVATE cxx_std_20)
+    target_link_libraries(ofps_menu_outstanding_tests PRIVATE d3d12 dxgi)
+    target_compile_options(ofps_menu_outstanding_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_test(NAME ofps_menu_outstanding COMMAND ofps_menu_outstanding_tests)
+    # Menu mode's colour check and CSConvert copies on WARP.
+    if(TARGET ofps_shaders)
+        add_executable(ofps_menu_colour_tests test_menu_colour.cpp ../hosts/reshade/menu_colour.cpp)
+        target_include_directories(ofps_menu_colour_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+        target_compile_features(ofps_menu_colour_tests PRIVATE cxx_std_20)
+        target_link_libraries(ofps_menu_colour_tests PRIVATE d3d12 dxgi)
+        target_compile_options(ofps_menu_colour_tests PRIVATE /W4 /WX /EHsc /permissive-)
+        add_dependencies(ofps_menu_colour_tests ofps_shaders)
+        add_test(NAME ofps_menu_colour COMMAND ofps_menu_colour_tests "${OFPS_SHADER_OUTPUT_DIR}")
+    endif()
+    # Which optional textures a configuration gets (VRAM step 1): pure decisions, no device.
+    add_executable(ofps_vram_plan_tests test_vram_plan.cpp)
+    target_link_libraries(ofps_vram_plan_tests PRIVATE ofps_core d3d12 dxgi)
+    target_compile_options(ofps_vram_plan_tests PRIVATE /W4 /WX)
+    add_test(NAME ofps_vram_plan COMMAND ofps_vram_plan_tests)
     add_executable(ofps_host_shape_tests test_host_shape.cpp)
     target_link_libraries(ofps_host_shape_tests PRIVATE ofps_core d3d12 dxgi)
     target_compile_options(ofps_host_shape_tests PRIVATE /W4 /WX)
@@ -240,11 +332,13 @@ endif()
 if(TARGET ofps_core)
 set(OFPS_CORE_API_TEST_SOURCES
     test_core_api.cpp test_core_api_scenarios.cpp test_core_api_compute.cpp test_core_api_half_ulp.cpp
+    test_core_api_transfer_core.cpp test_core_api_menu_queue.cpp test_core_api_menu_rebuild.cpp test_core_api_plan_defer.cpp
     test_core_api_entry.h
     test_core_api_checks.h test_core_api_codec.h test_core_api_fakes.h
     test_core_api_frame.h test_core_api_gpu.h test_core_api_pattern.h test_core_api_reference.h test_core_api_scenarios.h)
 add_executable(ofps_core_api_tests ${OFPS_CORE_API_TEST_SOURCES})
-target_sources(ofps_core_api_tests PRIVATE test_core_api_compute_direct.cpp)
+target_sources(ofps_core_api_tests PRIVATE test_core_api_compute_direct.cpp test_core_api_compute_transfer.cpp
+    test_core_api_transfer_scene.h)
 target_link_libraries(ofps_core_api_tests PRIVATE ofps_core OptimizerFps::SdkCore d3d12 dxgi d3dcompiler)
 target_include_directories(ofps_core_api_tests PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/generated")
 target_compile_features(ofps_core_api_tests PRIVATE cxx_std_20)

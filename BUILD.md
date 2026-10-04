@@ -32,7 +32,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Lint-PowerShell51.
 
 The x64 runtime payload is `out/build/x64/hosts/reshade/Release/optimizer-fps-dlss5.addon64`,
 `out/build/x64/hosts/reshade/ngx_forwarder/Release/nvngx.dll_optimizerfps.dll`,
-`out/build/x64/core/Release/optimizer-fps-dlss5-core.dll`, and the 23 DXBC files
+`out/build/x64/core/Release/optimizer-fps-dlss5-core.dll`, and the 26 DXBC files
 under `out/build/x64/shaders/`. Stage the DXBC in `optimizer-fps-dlss5/`
 beside the core DLL. This count describes the current build; packaging takes
 its file list from the build outputs and writes it to `payload/files.sha256`.

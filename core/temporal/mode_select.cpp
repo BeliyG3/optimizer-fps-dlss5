@@ -31,6 +31,11 @@ bool BackgroundModeUsable(FeatureState &st)
     return ok;
 }
 
+bool BackgroundCapable(const FeatureState &st)
+{
+    return Ctx().temporal.mode == 3 && !st.modelResolution && !st.hostListCompute;
+}
+
 int EffectiveTemporalMode(FeatureState &st) {
     // The model grid host still carries frames on the feature grid. Its background
     // codec resources need a separate private-list protocol; run mode 3 synchronously.

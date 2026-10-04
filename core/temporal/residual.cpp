@@ -20,13 +20,20 @@ void Machine::RecordResidual(ID3D12GraphicsCommandList *cmd, const FrameInputs &
     const bool sharedColor = fresh == in.color &&
         (freshSubresource == in.colorSubresource || freshSubresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES ||
          in.colorSubresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
+    // A Hidden machine (machine_role.h) keeps a single residual: it never blends, so nothing reads the
+    // previous one, and the dispatch below writes the whole residual. Its t2 is then a null SRV, never
+    // the destination itself.
+    const bool single = m.residualPrev == nullptr;
     // Cross-pass blend: the previous residual moved to this pass's frame along the chain (or the kick's
     // chain copy in `motion`), where the depth still matches.
-    const bool blend = in.residualBlend > 0.0f && m.residualEverWritten && (in.blendFromMotion ? in.motion != nullptr : accValid_);
+    const bool blend = !single && in.residualBlend > 0.0f && m.residualEverWritten &&
+                       (in.blendFromMotion ? in.motion != nullptr : accValid_);
     // Ping-pong: what was the residual becomes the previous one (read), the other texture is written.
-    std::swap(m.residual, m.residualPrev);
-    std::swap(m.residualState, m.residualPrevState);
-    std::swap(m.residualTarget, m.residualPrevTarget);
+    if (!single) {
+        std::swap(m.residual, m.residualPrev);
+        std::swap(m.residualState, m.residualPrevState);
+        std::swap(m.residualTarget, m.residualPrevTarget);
+    }
     BarrierExternal(cmd, in.color, in.colorState, kReadable, in.colorSubresource);
     if (!sharedColor) BarrierExternal(cmd, fresh, freshState, kReadable, freshSubresource);
     if (blend && in.blendFromMotion) BarrierExternal(cmd, in.motion, in.motionState, kReadable, in.motionSubresource);

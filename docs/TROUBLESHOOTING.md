@@ -70,9 +70,9 @@ Three ways out, in order of convenience:
 
 A session that ran for more than 20 s after its first warped frame is not counted as a crash. That is
 why Feeder's `host64`, which is killed at game exit and never unloaded cleanly, does not trip it. Since
-2026.10 a `host64` that the game stops on purpose (settings applied, the host restarted, the game closed)
+2026.9.1 a `host64` that the game stops on purpose (settings applied, the host restarted, the game closed)
 does not trip it either, however soon that happens: the game's tab sees the host end with exit code 0
-and removes the marker. That needs the 2026.10 tab (`optimizer-fps-dlss5-remote.addon32`) in the game.
+and removes the marker. That needs the tab (`optimizer-fps-dlss5-remote.addon32`) of 2026.9.1 or newer in the game.
 
 ### `nvngx_dlssnr.dll is not loaded in this process`
 

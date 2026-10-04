@@ -53,7 +53,9 @@ tab.
 **Spatial.** The middle of the frame (80 % of each axis by default) stays at native 1:1 density.
 The periphery is compressed non-linearly into a smaller work frame before the model runs and
 unpacked afterwards. At 3840×2160 the model processes 81 % of the pixels (3456×1944 instead of
-3840×2160), for roughly 0.3–0.5 ms of Pack/Unpack overhead.
+3840×2160), for roughly 0.3–0.5 ms of Pack/Unpack overhead. With **Detail transfer** (on by default)
+the compressed parts are rebuilt as the full-size color plus the model's edit, so textures and edges
+keep full resolution there.
 
 **Temporal.** The model does not have to run on every frame.
 
@@ -98,11 +100,14 @@ temporal cadence, and a Diagnostics tree. In a 32-bit game the same tab is drawn
 an existing `[PeripheralWarp]` section is copied once when no new section exists. The
 full list of controls and keys is in [docs/RESHADE_ADDON.md](docs/RESHADE_ADDON.md).
 
+**Menu mode** (off by default) runs Neural Rendering on menu frames in games that switch it off in their menus; see
+[docs/MENU_MODE.md](docs/MENU_MODE.md).
+
 ## Performance and quality
 
 The numbers below come from the project's own offline bench (procedural scene, 3840×2160, RTX 4080
-SUPER, `nvngx_dlssnr.dll` 310.8), **not** from a game. Before/after captures from a real game will
-follow with the first release.
+SUPER, `nvngx_dlssnr.dll` 310.8), **not** from a game. No before/after captures from a real game
+are published yet.
 
 | Bench run | Frame time | Frame rate |
 |---|---:|---:|
@@ -128,6 +133,9 @@ tone lags by one frame. The model's own tonal response on a compressed frame is 
 brighter; the Brightness and Gamma sliders compensate by eye, though because the host decodes the
 model's output afterwards, the effect on the final picture is not 1:1 with the number. Start at
 Peripheral 80/90 with Interpolate N=2 and go from there.
+
+Video memory: at 3840×2160 with the default settings the add-on costs about 358 MiB of video memory
+(bench); a temporal mode, the pixel path or extra model passes add to that.
 
 ## Troubleshooting
 
@@ -157,7 +165,7 @@ retry, and resources remain pending until completion can be confirmed.
 One pinned core DLL is shared per process; the shell loads it through the public ABI.
 The runtime payload contains the x64 add-on, `optimizer-fps-dlss5-core.dll`,
 `nvngx.dll_optimizerfps.dll`, and the built DXBC set in `optimizer-fps-dlss5/`
-beside the core. The current build has 25 DXBC; the package manifest lists the
+beside the core. The current build has 26 DXBC; the package manifest lists the
 exact files.
 The x86 remote overlay stays beside the 32-bit game; its core runs in `host64`.
 The installer migrates older ReShade settings; the verifier checks the core.
@@ -169,7 +177,7 @@ The temporal machine, crash guard, direct-host ownership, and remote overlay are
 ## Building and the SDK
 
 Optimizer FPS for DLSS5 also ships its spatial building blocks as a standalone, API-neutral SDK
-(`find_package(OptimizerFpsSdk 0.6)` → `OptimizerFps::SdkCore`): the layout math, the D3D11 and D3D12
+(`find_package(OptimizerFpsSdk 0.7)` → `OptimizerFps::SdkCore`): the layout math, the D3D11 and D3D12
 adapters, and the HLSL sources, with no NGX and no ReShade in them. A consumer that applies the
 warp itself integrates once per DLSS/NR loader, not once per game.
 
@@ -182,9 +190,9 @@ warp itself integrates once per DLSS/NR loader, not once per game.
 
 The SDK lives in `sdk/`, with public headers under `sdk/include/optimizer_fps/`,
 namespace `ofps::sdk` and CMake targets `OptimizerFps::SdkCore`, `OptimizerFps::SdkD3D11`
-and `OptimizerFps::SdkD3D12`. SDK version 0.6.0 installs headers to `include/optimizer_fps/`,
+and `OptimizerFps::SdkD3D12`. SDK version 0.7.0 installs headers to `include/optimizer_fps/`,
 adapter headers below `include/optimizer_fps/adapters/`, and shader sources to
-`share/optimizer-fps-sdk/shaders/`. Consumers use `find_package(OptimizerFpsSdk 0.6 CONFIG REQUIRED)`.
+`share/optimizer-fps-sdk/shaders/`. Consumers use `find_package(OptimizerFpsSdk 0.7 CONFIG REQUIRED)`.
 `OptimizerFps::Core` is a separate Windows x64 build-tree target, not an installed SDK target.
 Compatibility exports retain their `PeripheralWarp*` names. The two version numbers,
 and why the name exported to ReShade carries none, are explained in

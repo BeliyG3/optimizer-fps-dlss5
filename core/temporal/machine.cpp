@@ -26,7 +26,7 @@ Machine::~Machine()
 bool Machine::Initialize(ID3D12Device *device, const ofps::core::gpu::Shaders &shaders, std::uint32_t nativeWidth, std::uint32_t nativeHeight,
                          DXGI_FORMAT outputFormat, DXGI_FORMAT outputView, std::uint32_t motionWidth, std::uint32_t motionHeight,
                          DXGI_FORMAT depthFormat, std::uint32_t depthWidth, std::uint32_t depthHeight, char *error, std::size_t errorSize,
-                         std::uint32_t pictureDivisor)
+                         std::uint32_t pictureDivisor, MachineRole role)
 {
     delete res_;
     res_ = nullptr;
@@ -38,7 +38,7 @@ bool Machine::Initialize(ID3D12Device *device, const ofps::core::gpu::Shaders &s
     }
     auto resources = new Resources;
     if (!resources->Create(device, shaders, nativeWidth, nativeHeight, outputFormat, outputView, motionWidth, motionHeight,
-                           depthFormat, depthWidth, depthHeight, error, errorSize, pictureDivisor)) {
+                           depthFormat, depthWidth, depthHeight, error, errorSize, pictureDivisor, role)) {
         delete resources;
         return false;
     }
@@ -49,12 +49,15 @@ bool Machine::Initialize(ID3D12Device *device, const ofps::core::gpu::Shaders &s
 
 bool Machine::Matches(std::uint32_t nativeWidth, std::uint32_t nativeHeight, DXGI_FORMAT outputFormat, std::uint32_t motionWidth,
                       std::uint32_t motionHeight, DXGI_FORMAT depthFormat, std::uint32_t depthWidth, std::uint32_t depthHeight,
-                      std::uint32_t pictureDivisor) const
+                      std::uint32_t pictureDivisor, MachineRole role) const
 {
     return res_ != nullptr && res_->nativeW == nativeWidth && res_->nativeH == nativeHeight && res_->outputFormat == outputFormat &&
            res_->motionW == motionWidth && res_->motionH == motionHeight && res_->depthFormat == depthFormat &&
-           res_->depthW == depthWidth && res_->depthH == depthHeight && res_->historyPictureDivisor == pictureDivisor;
+           res_->depthW == depthWidth && res_->depthH == depthHeight && res_->historyPictureDivisor == pictureDivisor &&
+           res_->role == role;
 }
+
+MachineRole Machine::Role() const { return res_ ? res_->role : MachineRole::Synchronous; }
 
 void Machine::SetUsePoint(const OfpsFencePoint &point, std::uint64_t evalNow, bool timing)
 {

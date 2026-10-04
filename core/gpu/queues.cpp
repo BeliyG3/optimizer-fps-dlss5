@@ -244,6 +244,40 @@ bool WaitRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D1
     return any;
 }
 
+bool WaitEveryRegisteredQueue(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D12Fence *fence, UINT64 value)
+{
+    if (fence == nullptr) return false;
+    std::lock_guard<std::mutex> lock(g_queueMutex);
+    auto onDevice = [&](const QueueEntry &e) {
+        return (device != nullptr && e.device == device) || (proxyDevice != nullptr && e.device == proxyDevice);
+    };
+    // As WaitForGpu: ReShade hands the core its queues under the native device while the resources answer with the
+    // proxy, so no key matches. Then the queues of the same device identity wait: the same adapter (a native device and
+    // its proxy share it; D3D12 has one device per adapter), never a queue of another device (final review M5: a Wait
+    // on a fence that device cannot see would hold that queue for good).
+    bool matched = false;
+    for (const QueueEntry &e : g_queues) matched |= onDevice(e);
+    const auto sameAdapter = [&](const QueueEntry &e) {
+        const LUID q = e.device->GetAdapterLuid();
+        for (ID3D12Device *d : {device, proxyDevice}) {
+            if (d == nullptr) continue;
+            const LUID k = d->GetAdapterLuid();
+            if (k.LowPart == q.LowPart && k.HighPart == q.HighPart) return true;
+        }
+        return false;
+    };
+    // Fix round 2 (Codex): true only when every selected queue accepted its Wait. The capture may be submitted on any of
+    // them, so one failed Wait lets it race the registration: the caller then gets no session (its flow-failure path).
+    // A Wait that did land is harmless: the registration's fence completes by itself.
+    bool any = false, all = true;
+    for (const QueueEntry &e : g_queues) {
+        if (!(matched ? onDevice(e) : sameAdapter(e))) continue;
+        any = true;
+        all = SUCCEEDED(e.queue->Wait(fence, value)) && all;
+    }
+    return any && all;
+}
+
 std::size_t CountQueues(ID3D12Device *device, ID3D12Device *proxyDevice, std::size_t *total)
 {
     std::lock_guard<std::mutex> lock(g_queueMutex);

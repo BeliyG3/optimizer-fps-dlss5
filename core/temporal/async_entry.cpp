@@ -40,7 +40,15 @@ bool EnsureAsync(FeatureState &st, const D3D12_RESOURCE_DESC &colorDesc, const D
             x.DepthOrArraySize == y.DepthOrArraySize && x.MipLevels == y.MipLevels && x.Format == y.Format &&
             x.SampleDesc.Count == y.SampleDesc.Count && x.SampleDesc.Quality == y.SampleDesc.Quality;
     }
-    if (st.async && extrasMatch && st.async->Matches(colorDesc, depthDesc, motionDesc, outputDesc) && !st.async->wantDirect) return true;
+    // The warped pass records the base into baseBg only where the host frame would (c.useBase below, which
+    // also needs the warp set's unpackBase). A job is built with baseBg exactly then; one that lacks them
+    // when they are wanted is rebuilt, while unused ones stay until the job is (EnsureGpu retires it with
+    // the set, after its pass, when the base is dropped): rebuilding here would settle a running pass.
+    const bool wantBase = st.warped && st.outputView != DXGI_FORMAT_UNKNOWN && Ctx().temporal.warpBase && st.unpackBase &&
+                          !TransferReplacesBase(st);
+    if (st.async && extrasMatch && st.async->Matches(colorDesc, depthDesc, motionDesc, outputDesc) && !st.async->wantDirect &&
+        (st.async->baseBg[0] != nullptr || !wantBase))
+        return true;
     // Direct by default: on the bench a compute queue was starved by the saturated host queue (the pass
     // only finished when the host stalled); DebugAsyncCompute=1 tries the compute queue instead.
     const bool direct = (st.async && st.async->wantDirect) || !Ctx().diag.asyncCompute ||
@@ -50,6 +58,16 @@ bool EnsureAsync(FeatureState &st, const D3D12_RESOURCE_DESC &colorDesc, const D
         BuryAsync(st, &gate);
     }
     if (st.realDevice == nullptr) { TemporalReason(st, "background mode: no device"); return false; }
+    // The warped pass packs into slot 4, which EnsureGpu prepares only for a background-capable set; the
+    // pending chains are a Background machine's (EnsureTemporal, called just before, builds it so).
+    if (st.warped && st.texturePlan.packSlots <= FeatureState::kBgPackSlot) {
+        TemporalReason(st, "background mode: the warp's background pack slot is not prepared");
+        return false;
+    }
+    if (!st.temporal || st.temporal->Role() != ofps::core::temporal::MachineRole::Background) {
+        TemporalReason(st, "background mode: the temporal machine has no background chains");
+        return false;
+    }
     auto job = std::make_unique<AsyncJob>();
     AsyncJob &a = *job;
     a.device = st.realDevice; a.device->AddRef();
@@ -112,7 +130,7 @@ bool EnsureAsync(FeatureState &st, const D3D12_RESOURCE_DESC &colorDesc, const D
                 D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&a.extraBg[i]))))
             return fail("private copies could not be allocated");
     }
-    if (st.warped && st.outputView != DXGI_FORMAT_UNKNOWN) {
+    if (wantBase) {
         const DXGI_FORMAT view = st.outputView;
         const auto flags = st.warpPath == warp::PackPath::Compute ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS :
             D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -168,7 +186,8 @@ int AsyncTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, cons
     c.st = &st; c.cmd = cmd; c.inputs = inputs;
     c.frame = frame;
     c.host = host;
-    c.useBase = st.warped && st.async->codecIdentity && Ctx().temporal.warpBase && st.unpackBase != nullptr;
+    c.useBase = st.warped && st.async->codecIdentity && Ctx().temporal.warpBase && st.unpackBase != nullptr &&
+                !TransferReplacesBase(st);
     c.color = color; c.depth = depth; c.motion = motion; c.output = output;
     c.depthState = HostDepthState(inputs.depth);
     c.depthSub = inputs.depth.subresource;

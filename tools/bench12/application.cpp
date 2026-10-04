@@ -86,6 +86,15 @@ int RunApplication(int argc, char **argv)
             }
             dump|=action.dump; device.SetVsync(o.vsync);
         }
+        if(frame==o.resizeAt) { // a game's resize (a pause menu's resolution change, a fullscreen toggle)
+            const unsigned w=o.resizeWidth ? unsigned(o.resizeWidth) : device.width, h=o.resizeHeight ? unsigned(o.resizeHeight) : device.height;
+            std::printf("[info] frame %d: swap chain resized %ux%u -> %ux%u\n",frame,device.width,device.height,w,h);
+            device.Resize(w,h,true);
+        }
+        if(frame==o.recreateSwapChainAt) { // a game's display-mode switch: ReShade's destroy_swapchain (not a resize)
+            std::printf("[info] frame %d: swap chain recreated %ux%u\n",frame,device.width,device.height);
+            device.RecreateSwapChain();
+        }
         float previousTime=animationClock.Current();
         if(scene.animationSeek) {
             animationClock.Seek(scene.animationTime); previousTime=animationClock.Current(); trace.Reset(); follow.Reset();

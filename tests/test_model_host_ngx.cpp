@@ -1,4 +1,5 @@
 #include "hosts/reshade/model_host_ngx.h"
+#include "hosts/reshade/ngx_param_shim.h"
 #include "hosts/reshade/ngx_params.h"
 #include "core/gpu/barriers.h"
 #include <cstdio>
@@ -121,8 +122,18 @@ int FakeCreate(ID3D12GraphicsCommandList *, int featureId, void *params, void **
     *handle = kHandle;
     return kNgxSuccess;
 }
+// Menu mode's exit evaluate hands the model a ResetParams around the fake block (see ExitReset below).
+NVSDK_NGX_Parameter *g_wrapper = nullptr;
+FakeBlock *g_wrapped = nullptr;
+unsigned g_seenReset = ~0u;
 int FakeEvaluate(ID3D12GraphicsCommandList *, void *handle, void *params, void *callback)
 {
+    if (g_wrapper && params == g_wrapper)
+    {
+        g_seenReset = ~0u;
+        GetUInt(params, "DLSSNR.Reset", &g_seenReset);
+        params = g_wrapped;
+    }
     g_seen.keys = Keys(Self(params));
     g_seen.handle = handle;
     Check(callback == kCallback, "the frame's callback reaches the evaluate");
@@ -367,6 +378,35 @@ int main()
               std::strstr(unread, probeLine.c_str()) != nullptr,
           "unread motion scale supplies the exact legacy getter probe line");
     Check(host.LastNgxResult() == kNgxSuccess, "native success stays distinct from OFPS_OK");
+    // Menu mode's exit evaluate (C8, Task 7 fix round 1): the shell hands the core's frame reading and the model host a
+    // ResetParams around a host block without a Reset key. The core's frame and the model read Reset=1; the block keeps
+    // no Reset key, whether the evaluate passes the host's inputs through or warps them.
+    block.keys = before;
+    block.keys.erase("DLSSNR.Reset");
+    const auto noReset = Keys(block);
+    ResetParams wrapper(reinterpret_cast<NVSDK_NGX_Parameter *>(&block));
+    g_wrapper = &wrapper;
+    g_wrapped = &block;
+    host.BeginFrame(&wrapper, kCallback);
+    OfpsFrameInputs exitFrame{};
+    ReadFrameInputs(&wrapper, &exitFrame, nullptr);
+    Check(exitFrame.hostReset == 1, "exit evaluate: the core's frame sees hostReset=1");
+    OfpsModelInputs exitIn = TestModelInputs(&wrapper);
+    exitIn.width = 64;
+    exitIn.height = 32;
+    Check(host.RunModel(nullptr, kHandle, &exitIn) == OFPS_OK && g_seenReset == 1, "exit evaluate: the model reads Reset=1");
+    host.EndFrame(nullptr, nullptr, nullptr);
+    host.KeepBlock(&block);
+    Check(Keys(block) == noReset, "exit evaluate: the host's block has no Reset key afterwards (pass-through)");
+    host.BeginFrame(&wrapper, kCallback);
+    packed.reset = 1;
+    Check(host.RunModel(nullptr, kHandle, &packed) == OFPS_OK && g_seenReset == 1 && Seen("DLSSNR.Color") == Ptr(pColor),
+          "exit evaluate, warped: the model reads Reset=1 and the packed inputs");
+    host.EndFrame(nullptr, nullptr, nullptr);
+    host.KeepBlock(&block);
+    Check(Keys(block) == noReset, "exit evaluate, warped: the host's block is restored and has no Reset key");
+    g_wrapper = nullptr;
+    g_wrapped = nullptr;
     for (ID3D12Resource *r : {color, depth, motion, output, ui, pColor, pDepth, pMotion, nrOutput})
         r->Release();
     std::printf("%s\n", g_failures ? "FAILED" : "model host ngx: all checks passed");

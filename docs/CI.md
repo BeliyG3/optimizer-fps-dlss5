@@ -12,7 +12,7 @@ cancels the previous one.
 | 1 | ABI, core include, file-size and PowerShell 5.1 guards | `python tools/check-abi-freeze.py`, `python tools/check-core-includes.py`, `python tools/check-file-size.py --changed`, explicit installer paths plus base/HEAD diff, `tools\Lint-PowerShell51.ps1 -Path tools` |
 | 2 | Restore `external\` from the actions cache | `actions/cache@v4` |
 | 3 | Configure + build five presets | `cmake --preset <preset>` / `cmake --build --preset <preset>-release --parallel`; presets: `windows-x64`, `windows-x64-mt`, `windows-x86`, `windows-x86-remote`, `sdk-only-x64` |
-| 4 | Inventory + run three CTest suites | `ctest --preset <preset>-release -N` / `ctest --preset <preset>-release --output-on-failure`; x64/x86/SDK-only x64: 26/13/10 tests |
+| 4 | Inventory + run three CTest suites | `ctest --preset <preset>-release -N` / `ctest --preset <preset>-release --output-on-failure`; x64/x86/SDK-only x64: 42/14/10 tests |
 | 5 | Verify fetched dependencies | `tools\Verify-Dependencies.ps1` |
 | 6 | Package and validate isolated zip | `tools\Package-Release.ps1 -Out <temp> -Force` / `tools\Test-ReleasePackage.ps1 -Zip <temp>.zip` |
 | 7 | Run installer self-tests with x64/x86 PE fixtures | `tools\installer-tests\Run-InstallerTests.ps1 -Payload <stage>\payload -Zip <zip> -ReShade64 <x64 stub> -ReShade32 <x86 stub> -OldAddon64 <x64 add-on>` |
@@ -55,13 +55,13 @@ ctest --preset windows-x64-release --output-on-failure -E "d3d1[12]_smoke"
 
 and open an issue, so the remaining tests keep failing loudly.
 
-The 26-test x64 suite includes `ofps_core_api` and `ofps_core_api_dll`,
+The 42-test x64 suite includes `ofps_core_api` and `ofps_core_api_dll`,
 `ofps_core_loader` (no WARP required), and `ofps_direct_host` (event priority and latch).
 It also exercises resource pools, model-host translation and host
 shapes with WARP and fake model hosts. No registered test is currently excluded by the
 workflow. These tests do not run NVIDIA NR, optical flow, real host codecs, background
 NR scheduling or game integration. Those hardware/runtime scenarios are outside WARP
-coverage and require the local benches; 26 passing tests are not a substitute for them.
+coverage and require the local benches; 42 passing tests are not a substitute for them.
 
 ## Caching
 
@@ -85,7 +85,7 @@ renamed output breaks the build instead of silently shipping nothing):
 - `out/artifact/x64/optimizer-fps-dlss5.addon64` - the 64-bit shell, static CRT
 - `out/artifact/x64/optimizer-fps-dlss5-core.dll` - shared core, static CRT
 - `out/artifact/x64/nvngx.dll_optimizerfps.dll` - the NGX forwarder
-- `out/artifact/x64/optimizer-fps-dlss5/*.dxbc` - all built shaders beside the core (23 in the current build)
+- `out/artifact/x64/optimizer-fps-dlss5/*.dxbc` - all built shaders beside the core (26 in the current build)
 - `out/artifact/x86/optimizer-fps-dlss5-remote.addon32` - the 32-bit remote overlay
 
 `ofps_shaders` builds the DXBC delivery names from `sdk/shaders/` and

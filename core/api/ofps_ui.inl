@@ -41,6 +41,40 @@ inline bool DrawEnum(const OfpsSettingDesc &desc, const char *label,
     return true;
 }
 
+// Color filter as checkboxes: "Detail transfer" (2) with "by depth" (3) under it; off shows the plain
+// choice between the stretching filters (0 bilinear, 1 soft). Turning the transfer off returns to soft.
+inline bool DrawColorFilter(const OfpsSettingDesc &desc, const char *label, OfpsSettingValue &value) {
+    bool transfer = value.i >= 2;
+    bool changed = false;
+    if (ImGui::Checkbox("Detail transfer (full-size detail + model edit)", &transfer)) {
+        value.i = transfer ? 2 : 1;
+        changed = true;
+    }
+    ShowHelp("Where the frame was shrunk for the model, keep the full-size frame and add only what the "
+             "model changed, instead of stretching the model's smaller picture. Needs the compute path; "
+             "otherwise it acts as the soft filter.");
+    if (transfer) {
+        ImGui::Indent();
+        bool byDepth = value.i == 3;
+        if (ImGui::Checkbox("by depth", &byDepth)) {
+            value.i = byDepth ? 3 : 2;
+            changed = true;
+        }
+        ShowHelp("Weights the model's change by depth so it stays on the object it belongs to. "
+                 "About 0.1 ms more.");
+        ImGui::Unindent();
+        return changed;
+    }
+    const EnumChoices choices = ChoicesFor(desc);
+    int selected = value.i == 0 ? 0 : 1;
+    if (choices.count >= 2 && ImGui::Combo(label, &selected, choices.labels.data(), 2)) {
+        value.i = choices.values[selected];
+        changed = true;
+    }
+    ShowHelp(desc.help);
+    return changed;
+}
+
 template <class Source, class Hooks>
 bool DrawSetting(Source &source, Hooks &hooks, const OfpsSettingDesc &desc,
                  const UiSnapshot &snapshot) {
@@ -103,11 +137,14 @@ bool DrawSetting(Source &source, Hooks &hooks, const OfpsSettingDesc &desc,
         active = row.active;
         break;
     }
-    case OFPS_TYPE_ENUM: changed = DrawEnum(desc, label, edited); break;
+    case OFPS_TYPE_ENUM:
+        changed = desc.id == OFPS_SET_COLOR_FILTER ? DrawColorFilter(desc, label, edited)
+                                                   : DrawEnum(desc, label, edited);
+        break;
     default: break;
     }
     if (snapshot.readOnly) ImGui::EndDisabled();
-    ShowHelp(desc.help);
+    if (desc.id != OFPS_SET_COLOR_FILTER) ShowHelp(desc.help); // the filter's rows carry their own
     ImGui::PopID();
     if (snapshot.readOnly) {
         hooks.ClearPending(desc.id);

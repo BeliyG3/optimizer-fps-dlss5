@@ -70,6 +70,8 @@ int CoreLoader::Attach(const std::filesystem::path &hostFile,
         GetProcAddress(module, "OfpsSetTemporalDiagnosticsV1"));
     const auto motionSourceFn = reinterpret_cast<ofps::core::flow::SetTemporalMotionSourceV1>(
         GetProcAddress(module, "OfpsSetTemporalMotionSourceV1"));
+    const auto nonBlockingFn = reinterpret_cast<ofps::core::gpu::NonBlockingDescriptorsV1>(
+        GetProcAddress(module, "OfpsNonBlockingDescriptorsV1"));
     if (!versionFn || !createFn) {
         error_ = "core DLL next to the add-on has no core exports";
         if (loadedHere) FreeLibrary(module);
@@ -119,6 +121,7 @@ int CoreLoader::Attach(const std::filesystem::path &hostFile,
     host_ = host;
     temporalDiagnostics_ = diagnosticsFn;
     temporalMotionSource_ = motionSourceFn;
+    nonBlockingDescriptors_ = nonBlockingFn;
     if (!diagnosticsFn) error_ = "core DLL has no OfpsSetTemporalDiagnosticsV1 export; default temporal profile remains active";
     core_ = core;
     return result;
@@ -132,6 +135,7 @@ bool CoreLoader::Detach(bool serialize) {
         host_ = nullptr;
         temporalDiagnostics_ = nullptr;
         temporalMotionSource_ = nullptr;
+        nonBlockingDescriptors_ = nullptr;
         return true;
     }
     LoadLock lock;
@@ -145,6 +149,7 @@ bool CoreLoader::Detach(bool serialize) {
     host_ = nullptr;
     temporalDiagnostics_ = nullptr;
     temporalMotionSource_ = nullptr;
+    nonBlockingDescriptors_ = nullptr;
     return true;
 }
 } // namespace ofps

@@ -96,6 +96,12 @@ void CoreSession::Open(const std::filesystem::path &exe, ID3D12Device *device,
     device_ = device; mode_ = mode; temporal_ = temporal; warpPath_ = warpPath;
     reportedWarpPath_ = false;
 }
+void CoreSession::UseOpticalFlow() {
+    const auto set = loader.TemporalMotionSource();
+    if (!set) throw std::runtime_error("core DLL has no OfpsSetTemporalMotionSourceV1");
+    if (set(loader.Get(), 1) != OFPS_OK) throw std::runtime_error("core refused the optical flow motion source");
+    std::puts("[core host] temporal motion source: optical flow");
+}
 int CoreSession::Create(ID3D12GraphicsCommandList *cmd, ID3D12Device *device, unsigned w, unsigned h) {
     OfpsFeatureDesc desc{sizeof(OfpsFeatureDesc), w, h, device, device->GetAdapterLuid()};
     featureReleased = false;

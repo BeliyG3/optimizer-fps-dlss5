@@ -32,8 +32,19 @@ public:
     int LastNgxResult() const { return lastNgxResult_; }
     bool ModelWasCalled() const { return modelCalled_; }
     void SetHostHandle(void *handle) { hostHandle_ = handle; }
+    // Menu mode's traced evaluate (menu_params.h MenuTracedEvaluate): the model evaluate goes through `evaluate` instead of CallEvaluate.
+    void SetEvaluate(int (*evaluate)(ID3D12GraphicsCommandList *, void *, void *, void *)) { calls_.evaluate = evaluate; }
     void *HostHandle() const { return hostHandle_; }
     void BeginFrame(void *params, void *callback);
+    // After an evaluate that ran on a temporary block (menu mode's exit reset wraps the host's block, menu_params.h):
+    // the host's own block is what this host keeps after the evaluate, never the gone wrapper. (After a menu call, menu
+    // mode's own block, which is never freed, stays until the next host evaluate's BeginFrame; params_ is read only
+    // inside an evaluate or a creation.)
+    void KeepBlock(void *params) { params_ = params; }
+    // Menu mode, stage 3: while the core evaluates a menu frame, no model is created from menu mode's block (a model the
+    // game would keep); the core's creation fails and the game's next evaluate creates it from the game's block.
+    void RefuseCreate(bool refuse) { refuseCreate_ = refuse; createRefused_ = false; }
+    bool CreateRefused() const { return createRefused_; }
     const NgxBlockSnapshot &Snapshot() const { return snapshot_; }
     int CreateModel(ID3D12GraphicsCommandList *cmd, uint32_t w, uint32_t h, uint32_t withholdUi,
                     void **handle) override;
@@ -70,6 +81,7 @@ private:
     void Restore();
     int lastNgxResult_ = kNgxSuccess;
     bool modelCalled_ = false;
+    bool refuseCreate_ = false, createRefused_ = false;
     void *hostHandle_ = nullptr;
     NgxModelCalls calls_;
     void *params_ = nullptr;

@@ -1,5 +1,6 @@
 #include "hosts/reshade/shell_host.h"
 #include "hosts/reshade/direct_host.h"
+#include "hosts/reshade/menu_settings.h"
 #include "core/api/ofps_core_loader.h"
 #include "ofps_version.h"
 #include "hosts/reshade/addon/addon_context.h"
@@ -24,6 +25,8 @@ ShellHost &Host() {
 IOfpsCore *Core() { return loader.Get(); }
 const char *CoreLoadError() { return loader.Error().c_str(); }
 bool ShellDeviceRemoved() { return deviceRemoved; }
+ofps::core::flow::SetTemporalMotionSourceV1 CoreMotionSourceSetter() { return loader.TemporalMotionSource(); }
+ofps::core::gpu::NonBlockingDescriptorsV1 CoreNonBlockingDescriptors() { return loader.NonBlockingDescriptors(); }
 int CoreAttach() {
     wchar_t path[MAX_PATH * 4]{};
     const DWORD length = GetModuleFileNameW(State().module, path, static_cast<DWORD>(std::size(path)));
@@ -64,6 +67,7 @@ void ShellHost::OnEvent(OfpsEvent kind, const OfpsEventData *data) {
         CrashMarkerOnFirstWarped();
         break;
     case OFPS_EVENT_SETTINGS_CHANGED:
+        if (data->payload) MenuSettingsChanged(*static_cast<const OfpsSettingsValues *>(data->payload));
         if (!DirectHostActive() && !IniSaveSuppressed() && data->payload &&
             CurrentIniSelection() == IniSelection::New) {
             const auto &values = *static_cast<const OfpsSettingsValues *>(data->payload);

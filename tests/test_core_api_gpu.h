@@ -181,6 +181,13 @@ inline void RecordReadback(ID3D12GraphicsCommandList *list, ID3D12Resource *sour
     sourceLocation.SubresourceIndex = 0;
     list->CopyTextureRegion(&destination, 0, 0, 0, &sourceLocation, nullptr);
 }
+inline void CaptureTarget(WarpDevice &w, ID3D12Resource *target, D3D12_RESOURCE_STATES rest,
+                          const ReadbackCapture &readback) {
+    // Qualified: bench12 includes this header beside its own global Transition (ADL ambiguity).
+    coretest::Transition(w.list.Get(), target, rest, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    RecordReadback(w.list.Get(), target, readback);
+    coretest::Transition(w.list.Get(), target, D3D12_RESOURCE_STATE_COPY_SOURCE, rest);
+}
 inline bool ReadPixelBytes(const ReadbackCapture &capture, std::uint32_t x, std::uint32_t y, void *output,
                            std::size_t byteCount) {
     if (!capture.buffer || output == nullptr || x >= capture.footprint.Footprint.Width ||

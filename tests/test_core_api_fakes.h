@@ -91,6 +91,8 @@ struct FakeModelHost : IOfpsModelHost {
     int runResult = OFPS_OK;
     int prepareResult = OFPS_S_IDENTITY;
     std::uint32_t ready = 1;
+    bool refuseCreate = false; // as ModelHostNgx inside a menu call: OFPS_E_STATE, no handle, NGX not called
+    std::uint32_t refusedCreates = 0;
     std::uint32_t createCalls = 0, releaseCalls = 0, runCalls = 0, readyCalls = 0, endFrameCalls = 0, describeCalls = 0, prepareCalls = 0;
     ModelCreate lastCreate;
     void *lastHandle = nullptr;
@@ -101,6 +103,12 @@ struct FakeModelHost : IOfpsModelHost {
     int CreateModel(ID3D12GraphicsCommandList *cmd, std::uint32_t w, std::uint32_t h, std::uint32_t withholdUi,
                     void **handle) override {
         (void)cmd;
+        if (refuseCreate) {
+            ++refusedCreates;
+            if (handle != nullptr)
+                *handle = nullptr;
+            return OFPS_E_STATE;
+        }
         ++createCalls;
         lastCreate = ModelCreate{w, h, withholdUi};
         if (handle == nullptr)

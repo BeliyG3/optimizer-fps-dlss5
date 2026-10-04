@@ -23,6 +23,7 @@ void OptionChecks()
     Require(defaults.host=="ngx" && defaults.coreMode==2 && defaults.coreTemporal==0 && defaults.coreWarpPath==0,"Core defaults");
     Require(!defaults.coreStateRebind && Parse({"bench","--core-state-rebind"}).coreStateRebind,
             "explicit state rebind option");
+    Require(!defaults.coreFlow && Parse({"bench","--core-flow"}).coreFlow,"core optical flow option");
     for (int mode=0; mode<=2; ++mode) for (int temporal=0; temporal<=1; ++temporal) {
         const auto core=Parse({"bench","--host","core","--nr","native","--upscaler","sr",
             "--core-mode",std::to_string(mode),"--core-temporal",std::to_string(temporal)});
@@ -44,6 +45,19 @@ void OptionChecks()
     Require(Parse({"bench"}).nrList=="direct","NR list defaults to direct");
     Require(Parse({"bench","--nr","native","--nr-list","compute"}).nrList=="compute","NR on a compute list");
     Require(Parse({"bench","--switch","60"}).switchEvery==60 && Parse({"bench"}).switchEvery==0,"layout switch interval");
+    const auto pause=Parse({"bench","--nr","native","--nr-pause","150,330"});
+    Require(pause.NrPaused(150) && pause.NrPaused(329) && !pause.NrPaused(330) && defaults.nrPause.empty(),"NR pause window");
+    {
+        const auto ranges=Parse({"bench","--nr","native","--upscaler","sr","--nr-pause","100,130,160,190"});
+        Require(ranges.NrPaused(100) && ranges.NrPaused(129) && !ranges.NrPaused(130) && ranges.NrPaused(160) && !ranges.NrPaused(190),"NR pause ranges");
+    }
+    for (auto bad : {std::vector<const char*>{"bench","--nr","native","--upscaler","sr","--nr-pause","100,130,120,150"},
+                     std::vector<const char*>{"bench","--nr","native","--upscaler","sr","--nr-pause","100,130,160"},
+                     std::vector<const char*>{"bench","--nr","native","--upscaler","sr","--nr-pause","130,100"}})
+        Require(Rejected({bad.begin(),bad.end()}),"invalid --nr-pause");
+    Require(defaults.nrPauseShow=="frozen" && Parse({"bench","--nr","native","--nr-pause-show","input"}).nrPauseShow=="input","NR pause shows");
+    Require(Rejected({"bench","--nr-pause-show","raw"}),"invalid --nr-pause-show");
+    Require(Parse({"bench","--nr","native","--nr-colour","linear","--nr-pause-show","input"}).nrPauseShow=="input","NR pause shows linear input");
     const std::vector<std::vector<std::string>> invalid{
         {"bench","--host","invalid"},{"bench","--host","core"},
         {"bench","--core-mode","-1"},{"bench","--core-mode","3"},
@@ -55,7 +69,8 @@ void OptionChecks()
         {"bench","--nr","on"},{"bench","--nr","upscale","--upscaler","sr"},{"bench","--nr","upscale","--upscaler","rr"},
         {"bench","--mv-format","rg32f"},{"bench","--nr-log","3"},{"bench","--nr-colour","pq"},{"bench","--nr-output-pad","64"},
         {"bench","--nr-output-pad","64,32,65,0"},{"bench","--nr-output-pad","-1,0"},{"bench","--nr-output-pad","1,2,3"},
-        {"bench","--nr-list","copy"},{"bench","--nr-list","compute"},{"bench","--nr","upscale","--nr-list","compute"},{"bench","--switch","-1"},{"bench","--nr-proxy-format","rgb10"},{"bench","--nr-colour","linear","--nr-proxy-format","r10g10b10a2"}};
+        {"bench","--nr-list","copy"},{"bench","--nr-list","compute"},{"bench","--nr","upscale","--nr-list","compute"},{"bench","--switch","-1"},{"bench","--nr-proxy-format","rgb10"},{"bench","--nr-colour","linear","--nr-proxy-format","r10g10b10a2"},
+        {"bench","--nr-pause","150,330"},{"bench","--nr","native","--nr-pause","330,150"},{"bench","--nr","native","--nr-pause","150"}};
     Require(std::all_of(invalid.begin(),invalid.end(),[](const auto &args) { return Rejected(args); }),"Invalid NR option accepted");
 }
 void ParameterMapChecks()

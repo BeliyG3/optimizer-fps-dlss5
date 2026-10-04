@@ -2,6 +2,7 @@
 #include "core/frame/model_grid.h"
 #include "core/frame/codec_frame.h"
 #include "core/frame/feature_state.h"
+#include "core/frame/frame_inputs.h"
 #include "core/frame/lifecycle.h"
 #include "core/frame/model_protocol.h"
 #include "core/frame/model_ui.h"
@@ -26,6 +27,8 @@ void BuryWarpGpu(FeatureState &st)
     }
     if (st.rtvHeap) grave.objects.push_back(st.rtvHeap);
     st.rtvHeap = nullptr;
+    st.texturePlan = {};
+    st.texturePlanDeferred = false;
     if (grave.adapter12 || !grave.disposables.empty() || !grave.objects.empty())
         Ctx().graveyard.Add(std::move(grave), Ctx().evalCounter);
     st.nrOutputState = st.unpackState = st.unpackBaseState = st.passStagingState = D3D12_RESOURCE_STATE_COMMON;
@@ -128,7 +131,9 @@ int ConfigureModelGrid(FeatureState &st, ID3D12GraphicsCommandList *cmd, const C
         st.passReset[i] = true;
         st.forcedReset = true;
     }
-    if (warped && !EnsureGpu(st, cmd, codec.modelColor.res, codec.answer.res, codec.modelColor.view, codec.answer.view)) return OFPS_E_DEVICE;
+    if (warped && !EnsureGpu(st, cmd, codec.modelColor.res, codec.answer.res, codec.modelColor.view, codec.answer.view,
+                             CopySubresource(codec.answer)))
+        return OFPS_E_DEVICE;
     return OFPS_OK;
 }
 int PrepareModelGridFrame(FeatureState &st, ID3D12GraphicsCommandList *cmd,

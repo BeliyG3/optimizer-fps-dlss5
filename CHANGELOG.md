@@ -1,5 +1,88 @@
 # Changelog
 
+## 2026.10
+
+Three changes. Menu mode runs Neural Rendering in the menus of games that switch it off there. Detail transfer is
+on by default: the color filter in the tab is now a "Detail transfer" checkbox (on) with "by depth" under it (off),
+and unticking it brings back the Bilinear / Auto choice. And the add-on uses much less video memory, with the image
+unchanged.
+
+**Added**
+
+* **Menu mode** (`MenuMode`, a checkbox under Mode, off by default). When the game stops calling Neural Rendering
+  (a pause menu, a map, a workbench), the add-on runs the NR model on the menu frame itself, so the background keeps
+  the NR look. It starts 150 ms after the game's last NR frame and ends at the next one, which restarts NR's history.
+  It works with Mode Off, Uniform and Peripheral, in native D3D12 games and in D3D11 games whose NR runs through a
+  D3D11-to-D3D12 bridge. It works in Star Wars Jedi: Fallen Order (OptiScaler's D3D11 path, Luma's scRGB HDR) and on
+  our test benches (D3D12, and D3D11 with dlss5-dx11-bridge); the menus of Baldur's Gate 3 are not checked yet. A
+  line under the checkbox says whether it is waiting, running, or why it cannot run here.
+* **Menu mode follows your temporal setting.** With Interpolate (sync) the model runs every N-th menu frame, and the
+  frames in between carry its edit, moved by NVIDIA's optical flow (menus have no game motion). Uniform and
+  Peripheral compress the menu frame like a game frame. This works on D3D12 and on D3D11 through a bridge. On the
+  bench the sync cadence costs about half the GPU time of running the model every frame.
+* **Detail transfer** (`ColorFilter=2`, depth-guided `ColorFilter=3`). Where the frame was shrunk for the model
+  (Uniform, the periphery in Peripheral, and the center band too below `GlobalScale` 100), the frame is rebuilt from
+  the full-size color plus the model's upscaled edit, so textures and edges keep full resolution. The depth-guided
+  variant weights the upscale by depth, so it favors the pixel's own object and fades a mismatched neighbor's
+  contribution. Compute path only. It behaves the same with every NR host except one that writes the model's result
+  back into its own color texture: there, `TemporalMode` 0 uses the plain unpack (the log says "detail transfer
+  declined"), while the temporal modes still use detail transfer.
+* **SDK 0.7.0:** `ColorFilter::DetailTransfer` and `ColorFilter::DetailTransferDepth`.
+* Bench diagnostics `DebugMenuPass`, `DebugMenuDump`, `DebugMenuEntryMs`, `DebugMenuOwnBlock`, `DebugMenuNoFlow`,
+  `DebugMenuBridgeCanary` (read-only keys).
+
+**Changed**
+
+* **The add-on uses much less video memory, with the image unchanged** (byte-identical frames on the benches). At 4K
+  with the default settings, its cost drops from about 912 MiB to about 358 MiB. Other setups save more: about
+  670 MiB with Interpolate (sync), about 710 MiB on the pixel path, and about 1175 MiB with two model passes spread
+  over frames. Textures for features you have switched off are no longer created. Checked in Fallen Order and
+  Baldur's Gate 3.
+* `ColorFilter` defaults to 2 (detail transfer) instead of 1 (soft). If you picked a filter yourself in an earlier
+  release, your saved `ColorFilter` value is kept: tick **Detail transfer** in the tab to switch it on.
+* Switching the temporal mode now rebuilds the add-on's textures once, which causes a short hitch at the moment of the
+  switch.
+
+**Fixed**
+
+* Menu mode stayed at "unavailable: waiting for the host's NR queue" for good when NR runs on a D3D12 device that
+  ReShade never wraps (OptiScaler's own device in D3D11 games, such as Fallen Order), because ReShade never reports
+  that queue. After 8 menu-mode presents without a report, the add-on now hooks the D3D12 runtime's
+  `ExecuteCommandLists` once (a queue vtable entry; the add-on then stays loaded for the session) and observes the
+  host's NR lists itself. It writes one log line when hooked and one for each new queue it hands to the core. This
+  happens only while MenuMode is on, and it is what makes menu mode work in Fallen Order.
+* The core's optical flow session could let the first frame after the session started use its flow textures before
+  NVIDIA had finished registering them (a rare corruption risk on the first optical-flow frame, in games and in
+  menus). Fences now enforce the order, on the game's queues of the same GPU only.
+
+**Limits**
+
+* The background temporal mode (3) is not used in menus. With Mode Off the model runs on every menu frame; with
+  Uniform or Peripheral, menu mode says so and is unavailable.
+* Without optical flow (no optical flow engine, or it fails in a menu), nothing is carried: Mode Off runs the model
+  on every menu frame, and Uniform and Peripheral show "unavailable: optical flow is not available".
+* The first menu of a game session can hitch once (about 60 ms) while the optical flow session is created.
+* Menus have no motion vectors, so a moving menu background may smear.
+* The first few frames after leaving a menu can look soft, because NR's history is reset (up to about 7 dB on the
+  bench in the first frames with a temporal mode, and more in Uniform).
+* Supported swap chains are SDR and scRGB (FP16, such as Luma's HDR in Fallen Order). scRGB goes to NR as it is, so
+  the menu tone may differ from the game's NR frames. With HDR10, the tab says so, and menu mode retries when the
+  game switches back.
+* A setting changed inside a menu takes effect from the game's next frame.
+* If you turn menu mode on while a menu is already open, it starts with the next menu.
+* A GPU that needs more than 100 ms per menu frame can drop a few of the game's NR frames right after a menu closes
+  (they wait for the last menu frame); menu mode stays on.
+* Menu mode works with one swap chain at a time: in a game with a second swap chain (a launcher or video window), it
+  stays on the first one it is used for until that one is closed.
+* OptiScaler's own menu shows the checkbox as unavailable.
+
+**Known issues**
+
+* 007 First Light: since the game's Steam patch of October 1, 2026, it crashes or hangs with any `dxgi.dll` or
+  `winmm.dll` proxy, including plain ReShade without this add-on
+  ([DLSS5-Swapper issue #413](https://github.com/rakanki911/DLSS5-Swapper/issues/413)). The add-on does not cause
+  it, but it cannot run there until the game or the loaders fix it.
+
 ## 2026.9.2
 
 Works with DLSS5-Reshade-AIO, which runs Neural Rendering on an asynchronous compute queue. The idea

@@ -238,6 +238,34 @@ void RunAdapterCases(const std::vector<char> &vertex, const std::vector<char> &p
                   "a pack into an out-of-range texture slot is rejected");
             Check(ringAdapter.RecordPack(ringList.Get(), 1) == ofps::sdk::AdapterStatus::Ok,
                   "the slot-addressed pack still works on a ring adapter");
+            // Unpack source sets past the packed frames (the core's pixel path: five packed frames, unpack
+            // sets 5..9): the set is written and drawn by its index; the frame only names an owned slot.
+            const auto packedWork = ringAdapter.PackedViews(0).resources;
+            const auto workInput = ofps::sdk::DefaultInputDescriptionV2(layout.workWidth, layout.workHeight);
+            const auto nativeTarget = CreateTexture(device.Get(), layout.nativeWidth, layout.nativeHeight, formats.color,
+                                                    D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+            ComPtr<ID3D12DescriptorHeap> rtvHeap;
+            D3D12_DESCRIPTOR_HEAP_DESC rtvDesc{};
+            rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+            rtvDesc.NumDescriptors = 1;
+            Check(nativeTarget && SUCCEEDED(device->CreateDescriptorHeap(&rtvDesc, IID_PPV_ARGS(&rtvHeap))),
+                  "a native unpack target and its RTV heap are created");
+            if (nativeTarget && rtvHeap) {
+                const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+                device->CreateRenderTargetView(nativeTarget.Get(), nullptr, rtv);
+                Check(ringAdapter.WriteSourceSetV2(5, packedWork, workInput) == ofps::sdk::AdapterStatus::Ok,
+                      "a work-extent unpack set past the packed frames is written by set index");
+                Check(ringAdapter.WriteSourceDescriptorsV2(5, packedWork, workInput) == ofps::sdk::AdapterStatus::InvalidArgument,
+                      "the slot-addressed write of that set is still rejected");
+                Check(ringAdapter.RecordUnpackColorFromSet(ringList.Get(), 1, 5, rtv, ofps::sdk::DiagnosticOutlineNone) ==
+                          ofps::sdk::AdapterStatus::Ok,
+                      "an unpack from a set past the packed frames records");
+                Check(ringAdapter.RecordUnpackColor(ringList.Get(), 5, rtv) == ofps::sdk::AdapterStatus::InvalidArgument,
+                      "the slot-addressed unpack still stops at the frame slot count");
+                Check(ringAdapter.RecordUnpackColorFromSet(ringList.Get(), 2, 5, rtv, ofps::sdk::DiagnosticOutlineNone) ==
+                          ofps::sdk::AdapterStatus::InvalidArgument,
+                      "an unpack naming an out-of-range packed frame is rejected");
+            }
             ringList->Close();
         }
     }

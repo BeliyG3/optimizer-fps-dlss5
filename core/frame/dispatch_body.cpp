@@ -148,7 +148,7 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
 
     // The output region is the feature's size at 0,0 (host_shape.h judged this frame); the texture may be larger.
     const D3D12_RESOURCE_DESC outputDesc = output->GetDesc();
-    if (!EnsureGpu(st, cmd, color, output, frame.color.view, frame.output.view)) {
+    if (!EnsureGpu(st, cmd, color, output, frame.color.view, frame.output.view, CopySubresource(frame.output))) {
         if (st.modelResolution) {
             st.disabled = true;
             return ModelGridFallback(st, cmd, frame, "GPU preparation failed", OFPS_E_DEVICE);
@@ -370,7 +370,8 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
     c.motionIsAcc = useAcc;
     c.modelMotion = useModelMv;
     c.tin = tin;
-    c.wantBase = codec.identity && plan.active && Ctx().temporal.warpBase && st.unpackBase != nullptr;
+    c.wantBase = codec.identity && plan.active && Ctx().temporal.warpBase && st.unpackBase != nullptr &&
+                 !TransferReplacesBase(st);
     c.baseTarget = st.unpackBase;
     c.baseTargetState = &st.unpackBaseState;
     if (st.rtvHeap) c.baseRtv = BaseRtv(st);

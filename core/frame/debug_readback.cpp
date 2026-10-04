@@ -1,6 +1,7 @@
 #include "core/frame/debug_readback.h"
 
 #include "core/context.h"
+#include "core/gpu/descriptor_pool.h"
 
 #include <cmath>
 #include <vector>
@@ -34,6 +35,9 @@ void DumpDebugLayer(ID3D12Device *device)
 void TemporalDebugReadback(FeatureState &st, ID3D12GraphicsCommandList *cmd, const ofps::core::temporal::FrameInputs &tin)
 {
     if ((!Ctx().diag.temporalReadback && !Ctx().temporal.debugLog) || !st.temporal || (Ctx().status.interpFrames % 60) != 5) return;
+    // A menu mode core call runs on the present thread (fix round 2, Codex): no WaitForGpu there; the next game frame
+    // that reaches this point reads back instead.
+    if (gpu::NonBlockingAcquire()) return;
     if (st.motionReadback == nullptr) {
         D3D12_HEAP_PROPERTIES heap{};
         heap.Type = D3D12_HEAP_TYPE_READBACK;

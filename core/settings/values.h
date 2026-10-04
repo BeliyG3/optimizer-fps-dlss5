@@ -5,7 +5,7 @@
 #include <cstdint>
 namespace ofps::core {
 struct CoreSettings {
-    ofps::sdk::ConfigV2 config = ofps::sdk::DefaultConfigV2();
+    ofps::sdk::ConfigV2 config = ProductDefaultConfig();
     TemporalSettings temporal{};
     DiagnosticsConfig diag{};
     int debugWarpPath = 0;
@@ -14,6 +14,7 @@ struct CoreSettings {
     bool showWorkOutline = false;
     float brightnessPercent = 0.0f;
     float gamma = 1.0f;
+    bool menuMode = false; // the ReShade shell's menu mode (OFPS_SET_MENU_MODE); the core only carries it
 };
 void DefaultSettingsValues(OfpsSettingsValues *out);
 void SettingsToValues(const CoreSettings &in, OfpsSettingsValues *out);

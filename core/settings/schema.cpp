@@ -21,7 +21,8 @@ constexpr OfpsVisibleIf kTemporalOn = When(OFPS_SET_TEMPORAL_MODE, OFPS_VIS_NE, 
 constexpr OfpsVisibleIf kTemporalBackground = When(OFPS_SET_TEMPORAL_MODE, OFPS_VIS_EQ, 3);
 constexpr const char *const kModeLabels[] = {"Off", "Uniform", "Peripheral", nullptr};
 constexpr const char *const kColorFilterLabels[] = {"Bilinear", "Auto (soft: wide pre-filter, cubic unpack)",
-                                                    nullptr};
+                                                    "Detail transfer (full-size detail + model edit)",
+                                                    "Detail transfer, depth-guided", nullptr};
 constexpr const char *const kTemporalModeLabels[] = {
     "Every frame", "Interpolate: full NR every N-th frame (sync)",
     "(withdrawn in 26.26: centre every frame, applied as sync)",
@@ -57,9 +58,10 @@ const OfpsSettingDesc kOfpsSettings[OFPS_SET_COUNT] = {
         "centre band, the periphery compressed.",
         OFPS_TYPE_ENUM, 0.0f, 2.0f, I(2), kPersisted | kRebuilds, kAlways, kModeLabels),
     Row(OFPS_SET_COLOR_FILTER, "ColorFilter", OFPS_GROUP_MODE, "Color filter",
-        "Unpack filter of the D3D12 path: bilinear, or the soft adaptive four-tap (wide pre-filter, cubic "
-        "unpack).",
-        OFPS_TYPE_ENUM, 0.0f, 1.0f, I(1), kPersisted, kAlways, kColorFilterLabels),
+        "How shrunk parts come back to full size. Bilinear or soft stretch the model's picture. Detail "
+        "transfer keeps the full-size frame and adds only what the model changed; depth-guided keeps that "
+        "change on the object it belongs to. Transfer needs the compute path (otherwise it acts as soft).",
+        OFPS_TYPE_ENUM, 0.0f, 3.0f, I(2), kPersisted, kAlways, kColorFilterLabels),
     Row(OFPS_SET_CENTER_X, "CenterX", OFPS_GROUP_ZONE_SIZE, "Center X (%)",
         "Width of the uncompressed 1:1 band, percent of the frame (Peripheral only). Must stay below Work X.",
         OFPS_TYPE_FLOAT, 1.0f, 99.0f, F(80.0f), kPersisted, kModePeripheral),
@@ -222,4 +224,9 @@ const OfpsSettingDesc kOfpsSettings[OFPS_SET_COUNT] = {
         "auto: compute when typed UAV stores are supported, else the pixel path; compute / pixel force one "
         "(plan 6).",
         OFPS_TYPE_ENUM, 0.0f, 2.0f, I(0), kDiagnostic, kAlways, kWarpPathLabels),
+    Row(OFPS_SET_MENU_MODE, "MenuMode", OFPS_GROUP_MODE, "Menu mode",
+        "When the game stops using Neural Rendering in a pause menu, map or workbench, the add-on runs it on the menu "
+        "frame itself. Starts on its own 150 ms after the game's last NR frame and ends when the game calls NR again. "
+        "Turn it on during gameplay: in a menu that is already open when you tick it, it starts the next time a menu opens.",
+        OFPS_TYPE_BOOL, 0.0f, 1.0f, I(0), kPersisted),
 };

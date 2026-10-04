@@ -333,6 +333,7 @@ tracked.
 | `--nr-log 0\|1\|2` | `1` | NR runtime log level echoed as `[nr log]` (each distinct line once); 0 leaves its log off. |
 | `--nr-output-pad X,Y[,BX,BY]` | none | NR output texture X/Y texels larger than the frame, region at BX,BY (default 0,0); the pad is filled with magenta before each evaluate and checked on report frames. Only the region is presented and dumped. |
 | `--nr-colour-pad X,Y[,E]` | none | NR colour (the sRGB proxy) X/Y texels larger than the frame, region at 0,0: the shape of RenoDX DLSS by ShortFuse (a render region inside a full-size texture). The pad is black, or the edge repeated with E=1; a warped run that gives the same frame both ways reads nothing past the region. Needs `--nr-colour srgb`. |
+| `--nr-pause`, `--nr-pause-show`, `--nr-recreate`, `--resize-at`, `--recreate-swapchain` | none | Menu-mode options (a "menu" without feature-18 evaluates, lifetime events inside it): [MENU_MODE.md](MENU_MODE.md). |
 | `--mv-format rg16f\|rgba16f` | `rg16f` | Motion texture handed to DLSS and NR: the RG16F guide, or an RGBA16F copy (xy motion, zw 0) as some games use. |
 | `--jitter 0\|1` | `1` | Halton(2,3) projection jitter in render pixels, positive right/down. |
 | `--depth standard\|reverse` | `standard` | Unjittered projection, near `0.1`, far `300`; miss is `1` standard or `0` reverse. |
@@ -340,7 +341,7 @@ tracked.
 | `--dump N[,N...]` | none | Zero-based frames to save as `dump_N.bmp` beside the executable. |
 | `--haze D` | `0.012` | Camera-medium extinction per metre, nonnegative; zero disables haze. Scattering albedo is 0.9. |
 | `--haze-g G` | `0.6` | Henyey-Greenstein anisotropy, strictly between -1 and 1. |
-| `--tonemap aces\|neutral` | `aces` | ACES-like filmic fit or the original Reinhard curve. |
+| `--tonemap aces\|neutral\|none` | `aces` | ACES-like filmic fit, the original Reinhard curve, or no curve (clip at 1, sRGB-encode: with `--bloom 0` the back buffer carries the NR sRGB proxy's encoding). |
 | `--bloom S` | `0.06` | Nonnegative strength of three threshold-free blurred pyramid copies. Zero disables addition. |
 | `--auto-exposure 0\|1` | `0` | Presentation-only log-average exposure adaptation, one simulated second time constant. |
 | `--debug-layer` | off | Enable D3D12 debug layer and print its messages. |
@@ -372,6 +373,7 @@ All guides use the render resolution. `colour` is RGBA16F; `depth` R32F; `motion
 - `ngx_nr_bridge.h/.cpp`, `ngx_nr_pad.h/.cpp`, `ngx_nr_log.h/.cpp`: sRGB colour bridge and region copy, `--nr-output-pad` fill/check, runtime log echo.
 - `motion_pack.h/.cpp`: `--mv-format rgba16f` copy of the motion guide (compute shader compiled at startup).
 - `deploy_nrhost.ps1`: builds the `run_nrhost\` runtime.
+- `pair_psnr.py`: PSNR of two runs' dumps file by file (menu mode: the host's own evaluates with and without menu mode's own parameter block, `pp_*` cases of `reference_dumps.ps1`); see `docs/dev/menu-mode-spikes.md`.
 - `shaders/pathtrace.hlsl`, `present.hlsl`, and `.hlsli` includes: ray queries, BRDF/light sampling, guides, accumulation, presentation.
 - `shaders/reservoir.hlsli`, `specular_guide.hlsli`: RIS estimator math and the per-channel F0 implementation of [NVIDIA's EnvBRDFApprox2](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_RR.md#421-specular-albedo-generation), shared with CPU tests.
 - `image_mips.h/.cpp`, `device_texture.cpp`: CPU colour/data/HDR mip chains and multi-subresource upload.
@@ -749,7 +751,7 @@ shaders together. This does not enable the legacy OptiScaler core integration.
 
 Core cases run in `<Out>/core-runtime/`, copied by an allowlist with no ReShade,
 local DXGI or addons. The manifest records actual argv, working directory and
-binary hashes. All 45 effective schema settings are checked against the reference
+binary hashes. All 46 effective schema settings are checked against the reference
 INI (schema defaults apply to missing keys) before image comparison. Legacy keys
 outside ABI 1's schema are not treated as active settings.
 

@@ -36,8 +36,8 @@ bool Menu::RenderControls(Options &o)
     changed|=ImGui::SliderFloat("Exposure",&o.exposure,0.001f,20,"%.4f",ImGuiSliderFlags_Logarithmic);
     changed|=ImGui::Checkbox("Auto exposure",&o.autoExposure);
     changed|=ImGui::SliderFloat("Bloom",&o.bloom,0,1);
-    const char *toneNames[]={"ACES","Neutral"}, *toneValues[]={"aces","neutral"};
-    changed|=Choice("Tone map",o.tonemap,toneNames,toneValues,2);
+    const char *toneNames[]={"ACES","Neutral","None"}, *toneValues[]={"aces","neutral","none"};
+    changed|=Choice("Tone map",o.tonemap,toneNames,toneValues,3);
     changed|=ImGui::SliderFloat("Firefly clamp",&o.firefly,0.01f,10000,"%.2f",ImGuiSliderFlags_Logarithmic);
     changed|=ImGui::SliderFloat("FOV",&o.fov,10,150);
     changed|=ImGui::Checkbox("Vsync",&o.vsync);

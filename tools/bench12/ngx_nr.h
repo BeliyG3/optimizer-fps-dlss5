@@ -2,6 +2,7 @@
 #include "ngx_nr_bridge.h"
 #include "ngx_nr_contract.h"
 #include "ngx_nr_pad.h"
+#include "ngx_nr_release_thread.h"
 #include "ngx_nr_runtime.h"
 #include "ngx_nr_switch.h"
 #include "options.h"
@@ -34,7 +35,11 @@ public:
     // Creates the feature, but only once a frame has been presented after the runtime was loaded:
     // the Optimizer FPS add-on looks for nvngx_dlssnr.dll at present time and must see the create.
     void Prepare(Device &device, int frame);
-    void Evaluate(Device &device, const NrInputs &inputs, int frame);
+    void Evaluate(Device &device, const NrInputs &inputs, int frame, const Options &options);
+    // --nr-recreate: releases feature 18 (after the bench's queue is idle); the next Prepare creates it again. With
+    // onThread (--nr-release-thread) the release runs on a second thread during this frame's present, and Prepare
+    // creates the feature again once that thread returned (ngx_nr_release_thread.h).
+    void Recreate(Device &device, int frame, bool onThread);
     // This frame's NR image (frame-size pixel-shader resource) when its evaluate succeeded, otherwise null.
     ID3D12Resource *Presented() const { return presented ? bridge.Presented() : nullptr; }
     bool Active() const { return mode!="off"; }
@@ -50,12 +55,13 @@ private:
     NrColourBridge bridge;
     NrOutputPad pad;
     NVSDK_NGX_Handle *feature=nullptr;
+    NrReleaseThread releaser; // after runtime: joined before the runtime goes
     ComPtr<ID3D12Resource> output;
     std::string mode="off";
     bool computeList=false; // --nr-list compute
     NrLayoutSwitch layoutSwitch;
     NrRect colourRect, guideRect, outputRect;
     bool depthInverted=false, deferCreate=false, pendingReset=true, presented=false;
-    unsigned calls=0, succeeded=0, failed=0;
+    unsigned calls=0, succeeded=0, failed=0, paused=0; // paused: skipped evaluates in the current --nr-pause range
     NVSDK_NGX_Result lastResult=NVSDK_NGX_Result_Success;
 };

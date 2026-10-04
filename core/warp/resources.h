@@ -9,6 +9,8 @@
 
 namespace ofps::core::warp {
 
+constexpr std::uint32_t kWarpDescriptorsPerSet = 13; // 7 SRV, 3 UAV, 3 CBV
+
 struct TextureState {
     ID3D12Resource* resource = nullptr;
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
@@ -19,7 +21,7 @@ struct PackedSlot {
     TextureState color;
     TextureState depth;
     TextureState motion;
-    TextureState intermediate;
+    TextureState intermediate; // native copy target of UnpackPath::CopyFromUav; null when not prepared
 };
 
 struct WarpResources {
@@ -40,7 +42,7 @@ struct WarpResources {
                 std::uint32_t workHeight, std::uint32_t nativeWidth,
                 std::uint32_t nativeHeight, DXGI_FORMAT colorView,
                 DXGI_FORMAT outputView, std::uint32_t frameSlots,
-                std::uint32_t descriptorSets);
+                bool intermediates, std::uint32_t descriptorSets);
     std::uint32_t AcquireSet(const OfpsFencePoint& gate,
                              std::uint64_t evalNow);
 };

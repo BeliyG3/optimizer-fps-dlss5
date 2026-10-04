@@ -1,4 +1,5 @@
 #include "pathtrace.h"
+#include "ngx_nr_setting_at.h"
 #include <cstring>
 
 Pathtrace::Pathtrace(Device &d)
@@ -14,7 +15,10 @@ Pathtrace::Pathtrace(Device &d)
 }
 void Pathtrace::Render(Device &d, const Scene &s, Accel &a, Options &o, int frame, bool dump, const CameraState *pose, void (*overlay)(Device &),float frameDelta)
 {
-    Configure(d,o); nr.Prepare(d,frame);
+    Configure(d,o);
+    if(frame==o.nrRecreate) nr.Recreate(d,frame,o.nrReleaseThread);
+    for(const auto &set:o.setAt) if(frame==set.frame) SetAddonSettingAt(frame,std::uint32_t(set.id),set.value);
+    nr.Prepare(d,frame);
     CameraState camera=pose ? *pose : CameraAt(frame,o,s.cameraAnchor);
     if(!initialized || CameraMoved(camera,previous) || s.animationMoved) accumulated=0;
     FrameConstants c{}; c.motionNdc=o.motion=="ndc" ? 1u : 0u; c.currentVP=Mul(Perspective(o.fov,float(width)/float(height),o.reverse),LookAt(camera.eye,camera.target));
@@ -36,7 +40,7 @@ void Pathtrace::Render(Device &d, const Scene &s, Accel &a, Options &o, int fram
     c.firefly=o.firefly; c.sunCos=std::cos(o.sunAngle*0.5f*3.14159265f/180); c.lightPower=s.lightPower; c.reverse=o.linearDepth<0 ? 2u : o.linearDepth>0 ? 3u : o.reverse ? 1u : 0u;
     c.view=o.view=="albedo" ? 1u : o.view=="normal" ? 2u : o.view=="depth" ? 3u : o.view=="motion" ? 4u : o.view=="accum" ? 5u : o.view=="roughness" ? 6u : o.view=="specular" ? 7u : 0u;
     c.lightCandidates=unsigned(o.lightCandidates);
-    c.hazeDensity=o.haze; c.hazeG=o.hazeG; c.bloom=o.bloom; c.neutralTonemap=o.tonemap=="neutral" ? 1u : 0u;
+    c.hazeDensity=o.haze; c.hazeG=o.hazeG; c.bloom=o.bloom; c.neutralTonemap=o.tonemap=="neutral" ? 1u : o.tonemap=="none" ? 2u : 0u;
     void *p=nullptr; D3D12_RANGE empty{0,0}; Check(constants->Map(0,&empty,&p),"Map frame constants"); std::memcpy(p,&c,sizeof(c)); constants->Unmap(0,nullptr);
     d.Begin(); d.Timestamp(0); ID3D12DescriptorHeap *heaps[]={d.heap.Get()}; d.list->SetDescriptorHeaps(1,heaps);
     s.CopyAnimation(d); a.Update(d,unsigned(o.blasRebuild),s.animationRefitNeeded);
@@ -77,7 +81,7 @@ void Pathtrace::Render(Device &d, const Scene &s, Accel &a, Options &o, int fram
         NrInputs in;
         in.colourState=ngx.Output() ? D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE : D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         in.depth=outputs[1].Get(); in.motion=motion; in.mvScaleX=mvScaleX; in.mvScaleY=mvScaleY; in.reset=historyReset;
-        nr.Evaluate(d,in,frame);
+        nr.Evaluate(d,in,frame,o);
         d.list->SetDescriptorHeaps(1,heaps);
     }
     d.Timestamp(4);

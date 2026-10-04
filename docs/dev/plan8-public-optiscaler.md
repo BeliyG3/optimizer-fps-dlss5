@@ -33,7 +33,10 @@ model (feature 18) and warps the frame around it. No OptiScaler patch is involve
 | State sentinel (next draw/dispatch after our work) | PASS in every case | no sentinel on this stand |
 | Device removal, exceptions, crash guard | none | none |
 
-MAD values are on frames 120 / 239, RGB8.
+MAD values are on frames 120 / 239, RGB8. These runs predate commit `0727e76`: their manifests read
+the state sentinel's 12-frame logs, not the measured run's, so a log-based row above (state
+sentinel, hooked, warped) reflects the sentinel run rather than the 120/239-frame comparison; the
+MAD figures come from the dumped frames themselves and are unaffected.
 
 ## Limitation found
 

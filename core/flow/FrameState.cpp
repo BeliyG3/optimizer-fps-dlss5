@@ -6,11 +6,17 @@ namespace ofps::core::flow {
 namespace { std::atomic<std::uint64_t> nextTag{0}; }
 FrameState::FrameState(Backend* backend) : backend_(backend ? backend : &DriverBackend()) {}
 
-bool FrameState::Acquire(ID3D12Device* device, std::uint32_t width, std::uint32_t height) {
+bool FrameState::Acquire(ID3D12Device* device, ID3D12Device* proxyDevice, std::uint32_t width, std::uint32_t height) {
     if (failed_) return false;
-    if (!session_ && !failed_) {
+    if (!session_) {
         session_ = backend_->Acquire(device, width, height, problem_);
         failed_ = session_ == nullptr;
+        // This machine's first capture follows: the host's queues wait (GPU) for the textures' registration.
+        if (session_ && !backend_->OrderAfterRegistration(session_, device, proxyDevice)) {
+            problem_ = "the host's queues cannot wait for the optical flow engine's texture registration "
+                       "(device removed or no registered queue)";
+            failed_ = true;
+        }
     }
     return session_ != nullptr && !failed_;
 }

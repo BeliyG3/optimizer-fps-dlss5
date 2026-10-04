@@ -13,6 +13,7 @@ struct Backend {
     virtual ID3D12Resource* Now(void*) const = 0;
     virtual ID3D12Resource* Then(void*) const = 0;
     virtual ID3D12Resource* Field(void*) const = 0;
+    virtual bool OrderAfterRegistration(void*, ID3D12Device*, ID3D12Device*) = 0;
     virtual bool Execute(void*, ID3D12CommandQueue*) = 0;
     virtual void RetainQueue(ID3D12CommandQueue*) = 0;
     virtual void ReleaseQueue(ID3D12CommandQueue*) = 0;

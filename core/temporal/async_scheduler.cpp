@@ -115,7 +115,7 @@ int AsyncBody(AsyncCtx &c)
                 bg.motionView = DXGI_FORMAT_R16G16_FLOAT;
             }
             st.temporal->RecordResidual(cmd, bg, a.outputBg[a.outIndex], kModelOutputState);
-            st.temporal->RecordFlowCapture(cmd, bg, st.realDevice, true, true);
+            st.temporal->RecordFlowCapture(cmd, bg, st.realDevice, st.device, true, true);
             st.temporal->PromotePending();
             const std::uint32_t adoptedAge = a.age;
             a.ageSum += adoptedAge;
@@ -237,6 +237,7 @@ int AsyncBody(AsyncCtx &c)
         a.frameSnapshot.uiAlpha = privateInputs.uiAlpha;
         a.frameSnapshot.backbuffer = privateInputs.backbuffer;
         int result = OFPS_OK;
+        bool transferDeclined = false; // WarpedBody: an expected detail transfer was declined
         if (a.queryHeap) list->EndQuery(a.queryHeap, D3D12_QUERY_TYPE_TIMESTAMP, slot * 2);
         CodecFrame codec{};
         result = BeginCodecFrame(st, list, a.frameSnapshot, codec);
@@ -279,7 +280,7 @@ int AsyncBody(AsyncCtx &c)
                 st.packKeys[FeatureState::kBgPackSlot] = FeatureState::SlotKey{};
                 st.unpackValid[FeatureState::kBgPackSlot] = false;
                 const ofps::sdk::AdapterStatus ds = st.warpPath == warp::PackPath::Pixel ?
-                    st.adapter->WriteSourceDescriptorsV2(FeatureState::kBgPackSlot, sources, input) : ofps::sdk::AdapterStatus::Ok;
+                    st.adapter->WriteSourceSetV2(FeatureState::kBgPackSlot, sources, input) : ofps::sdk::AdapterStatus::Ok;
                 if (ds != ofps::sdk::AdapterStatus::Ok) {
                     a.warpFailed = true;
                     TemporalReason(st, "background mode: pack descriptors for the private copies: %s", ofps::sdk::AdapterStatusString(ds));
@@ -318,6 +319,7 @@ int AsyncBody(AsyncCtx &c)
                 if (st.warpPath == warp::PackPath::Pixel) bg.baseRtv = a.BaseRtv(next); }
             c.stage = StageModel;
             result = WarpedBody(bg);
+            transferDeclined = bg.transferDeclined;
             if (result == kPackFailed) {
                 a.warpFailed = true;
                 Log(true, "Optimizer FPS NGX hook: background mode: %s; no more background passes", Ctx().status.reason);
@@ -344,7 +346,7 @@ int AsyncBody(AsyncCtx &c)
                 Log(true, "Optimizer FPS NGX hook: background evaluate failed (%d)", result);
             }
         } else {
-            a.discard = result == OFPS_S_MODEL_NEXT_FRAME;
+            a.discard = result == OFPS_S_MODEL_NEXT_FRAME || transferDeclined; // a declined transfer: dropped like a host reset
             a.jobId = nextJob;
             a.slotJob[slot] = nextJob;
             a.outIndex = next;
@@ -426,7 +428,7 @@ int AsyncBody(AsyncCtx &c)
         FallbackOutput(st, cmd, c.frame.color, c.frame.output, &c.tin, "temporal descriptor pool exhausted");
         return OFPS_OK;
     }
-    st.temporal->RecordFlowCapture(cmd, c.tin, st.realDevice, false);
+    st.temporal->RecordFlowCapture(cmd, c.tin, st.realDevice, st.device, false);
     ++a.age;
     Ctx().status.asyncPasses = a.passes; Ctx().status.asyncForcedWaits = a.forcedWaits; Ctx().status.asyncStalls = a.stalls;
     Ctx().status.asyncPassesPerSecond = a.passesPerSecond; Ctx().status.asyncModelMs = a.lastModelMs; Ctx().status.asyncAge = a.age;

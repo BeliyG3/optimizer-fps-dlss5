@@ -17,9 +17,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 using Microsoft::WRL::ComPtr;
 using namespace ofps::core::gpu;
 int TestComputePipeline(ID3D12Device* device);
+int TestQueueWaits(ID3D12Device *warp, IDXGIFactory4 *factory); // test_gpu_queue_waits.cpp
+int TestTemporalRoles(ID3D12Device *device, ID3D12CommandQueue *queue, const char *shaderDirectory); // test_temporal_roles.cpp
 namespace
 {
 int failures = 0;
@@ -59,25 +62,6 @@ struct Marker final : Disposable
         *released = true;
     }
 };
-void TestQueueLifetime(ID3D12Device *device)
-{
-    D3D12_COMMAND_QUEUE_DESC desc{};
-    ComPtr<ID3D12CommandQueue> queue;
-    Check(SUCCEEDED(device->CreateCommandQueue(&desc, IID_PPV_ARGS(&queue))), "queue lifetime: create");
-    Check(RegisterQueue(device, queue.Get()), "queue lifetime: register");
-    auto *identity = queue.Get();
-    ComPtr<ID3D12CommandQueue> retained;
-    retained.Attach(RetainRegisteredQueue(identity));
-    Check(retained != nullptr, "queue lifetime: retain during deferred processing");
-    UnregisterQueue(identity);
-    queue.Reset();
-    Check(RetainRegisteredQueue(identity) == nullptr, "queue lifetime: stale ring entry is rejected");
-    ComPtr<ID3D12Fence> fence;
-    Check(SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))), "queue lifetime: fence");
-    Check(retained && SUCCEEDED(retained->Signal(fence.Get(), 1)) && WaitFence(fence.Get(), 1),
-          "queue lifetime: retained async queue survives unregistration");
-}
-
 void TestTemporalFallback(ID3D12Device *device, ID3D12CommandQueue *queue, const char *shaderDirectory)
 {
     using namespace ofps::core::temporal;
@@ -185,6 +169,23 @@ void TestPool(ID3D12Device *device)
     Check(fifth == DescriptorPool::kNone, "pool: the fifth acquire fails while the fence is unsignalled");
     Check(waited >= kPoolWaitMilliseconds - 16 && waited < 1000,
           "pool: the failed acquire waits about the bound (100 ms), not 3 s and not 0");
+    // Final review (Codex I1): a menu core call on the present path never waits for a slot; the miss is counted.
+    SetNonBlockingAcquire(true);
+    const ULONGLONG n0 = GetTickCount64();
+    const std::uint32_t skipped = pool.Acquire(unsignalled, 0, 5000);
+    const ULONGLONG nonBlocking = GetTickCount64() - n0;
+    const std::uint32_t misses = NonBlockingMisses();
+    const bool inScope = NonBlockingAcquire();
+    SetNonBlockingAcquire(false);
+    Check(inScope && !NonBlockingAcquire(), "pool: the scope is visible to the core's optional waits (debug readback)");
+    Check(skipped == DescriptorPool::kNone && nonBlocking < 50 && misses == 1,
+          "pool: a non-blocking acquire refuses at once when every slot is in flight, and counts the miss");
+    std::uint32_t otherThreadMisses = 99;
+    SetNonBlockingAcquire(true);
+    std::thread other([&] { otherThreadMisses = NonBlockingMisses(); });
+    other.join();
+    SetNonBlockingAcquire(false);
+    Check(otherThreadMisses == 0 && NonBlockingMisses() == 0, "pool: the non-blocking scope is per thread and cleared");
     Check(SUCCEEDED(fence->Signal(1)), "pool: the fence is signalled from the CPU");
     const std::uint32_t after = pool.Acquire(Point(fence.Get(), 2), 0, kPoolWaitMilliseconds);
     Check(after != DescriptorPool::kNone, "pool: an acquire succeeds once the fence passed");
@@ -479,8 +480,9 @@ int main(int argc, char **argv)
     TestRecordingExpiry(device.Get(), queue.Get());
     TestEmptyGateDrain(device.Get(), queue.Get());
     TestRecordingLifetime(device.Get(), queue.Get(), other.Get());
-    TestQueueLifetime(device.Get());
+    failures += TestQueueWaits(device.Get(), factory.Get());
     if (argc > 1) TestTemporalFallback(device.Get(), queue.Get(), argv[1]);
+    if (argc > 1) failures += TestTemporalRoles(device.Get(), queue.Get(), argv[1]);
     TestPool(device.Get());
     failures += TestComputePipeline(device.Get());
     TestSubmission(device.Get(), queue.Get(), other.Get());

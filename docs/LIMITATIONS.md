@@ -27,10 +27,39 @@
 - Background mode trades quality for even frame times when the GPU is saturated: the residual ages
   further the longer a pass takes.
 
+## Menu mode
+
+- Menus carry no game motion vectors: NR gets zero motion, so a menu whose background moves (a turning character, a
+  drifting camera) may smear. A still menu background is not affected.
+- The background temporal mode (3) is not used in menus. With Mode Off the model runs on every menu frame; with
+  Uniform or Peripheral menu mode is unavailable ("use Every frame or Interpolate (sync)").
+- With Interpolate (sync) the frames between model frames are carried by NVIDIA's optical flow. Without the optical flow
+  engine (or if it fails in a menu) nothing is carried: Mode Off runs the model on every menu frame, and Uniform or
+  Peripheral show "unavailable: optical flow is not available". This state lasts until the game restarts.
+- The first menu of a game session can hitch once (about 60 ms) while the optical flow session is created.
+- A few soft frames after leaving a menu: NR's history is reset. With a temporal mode the first frames can be up to
+  about 7 dB below the same frames without menu mode on the bench, and more in Uniform.
+- A setting changed inside a menu takes effect from the game's next frame.
+- The menu's own text and panels go through the model too.
+- A host-side NR toggle (OptiScaler's F6) does not switch NR off inside menus while menu mode is on. OptiScaler's own
+  menu shows the checkbox as unavailable.
+- SDR swap chains and scRGB (FP16) swap chains; scRGB goes to NR as it is, unscaled, so the menu tone may differ from the game's NR frames. HDR10 is refused (retried when the game switches back).
+- One swap chain at a time (the first one menu mode sets itself up for, until the game closes it).
+- On a GPU that needs more than 100 ms per menu frame, the game's first NR frames after a menu are dropped until the
+  last menu frame finished; menu mode stays on.
+- Turned on inside an open menu, menu mode starts with the next menu.
+- Checked in game in Star Wars Jedi: Fallen Order (OptiScaler's D3D11 path). Not yet checked in games: the menus of
+  Baldur's Gate 3, DLSS5-Reshade-AIO (its compute queue is fenced; bench only), DLSS5-Feeder, resizing or leaving the
+  game inside a menu.
+- When ReShade never reports the game's NR queue (OptiScaler's own D3D12 device in D3D11 games), menu mode hooks
+  `ExecuteCommandLists` to see it; the first menu within about 8 frames of the game's first NR frame still says
+  "waiting for the host's NR queue". Once that hook is in, the queue is also registered with the core for the session.
+
 ## The add-on
 
 - Windows and D3D12 only. The NGX interposer hooks `nvngx_dlssnr.dll` and records D3D12 work; there
-  is no D3D11, Vulkan or OpenGL path through it.
+  is no D3D11, Vulkan or OpenGL path through it, except menu mode's bridge for D3D11 swap chains whose NR runs on a
+  D3D12 device.
 - It accelerates only a renderer that goes through NGX feature 18. It cannot speed up an unrelated
   closed renderer, and it never searches private game buffers or infers missing semantics — a
   consumer must already supply valid colour, depth, motion and their metadata.

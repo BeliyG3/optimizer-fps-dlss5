@@ -17,6 +17,11 @@ enum class WarpMode : std::uint32_t {
 enum class ColorFilter : std::uint32_t {
     Bilinear = 0,
     AdaptiveFourTap = 1,
+    // The soft filter; where the frame was shrunk, the frame is rebuilt as the model's input frame
+    // plus the model's upscaled edit. Applied by the Optimizer FPS core's compute Unpack; the SDK's
+    // own D3D11/D3D12 adapters treat it as AdaptiveFourTap.
+    DetailTransfer = 2,
+    DetailTransferDepth = 3, // the same, the edit's upscale weighted by depth similarity
 };
 
 enum class Status : std::uint32_t {

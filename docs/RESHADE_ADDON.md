@@ -110,11 +110,32 @@ peripheral compression (`[DlssNr] SpatialCompression`) is on, and an orange one 
 model passes (`Passes` > 1); the add-on reads `OptiScaler.ini` every 2 s, so a change made in
 OptiScaler's menu shows once OptiScaler has saved it.
 
-**Mode** — `Off`, `Uniform`, `Peripheral`. **Color filter** — `Bilinear`, or
-`Auto (soft: wide pre-filter, cubic unpack)`. Auto adapts to the local footprint: Pack applies a
-wide tent-like pre-filter (center plus four bilinear taps at ±0.375 of the footprint), Unpack blends
-in a soft cubic B-spline reconstruction (four bilinear fetches); both fade in above a footprint of
-1.0. The 1:1 zone stays exact bilinear, so only the compressed periphery is filtered.
+**Mode** — `Off`, `Uniform`, `Peripheral`. **Color filter** — the `Detail transfer (full-size
+detail + model edit)` checkbox, on by default (`ColorFilter=2`), with `by depth` under it
+(`ColorFilter=3`); with the checkbox off the tab offers `Bilinear` or `Auto (soft: wide
+pre-filter, cubic unpack)`. Auto adapts to the local footprint: Pack applies a wide tent-like pre-filter (center
+plus four bilinear taps at ±0.375 of the footprint), Unpack blends in a soft cubic B-spline reconstruction (four bilinear fetches);
+both fade in above a footprint of 1.0. Detail transfer rebuilds the shrunk part of the frame (the
+whole frame in Uniform, the periphery in Peripheral — plus the band below `GlobalScale` 100) as the full-size colour plus the model's own
+edit at that spot, instead of stretching the model's picture; the depth-guided variant weights that
+edit by depth so it favours its own object, strongly fading — not eliminating — a foreign edit on a
+thin object the reduced grid missed. Both run on the compute path only — the pixel path (which
+draws) falls back to Auto and logs it once. When the transfer applies (compute path, matching
+colour spaces) with Brightness and Gamma neutral and the diagnostic outlines off, a model that
+changes nothing gives the frame back up to the output format's precision (alpha and HDR negatives
+kept); temporal modes measure the transfer against the raw colour, and neither filter transfers
+when only one side is an sRGB view. At `GlobalScale` 100 the 1:1 zone stays exact bilinear under
+every filter, so only the compressed region is touched; below 100 the band is shrunk as well and
+is rebuilt like the rest. The choice behaves the same behind renodx, DLSS5-Reshade-AIO,
+DLSS5-Feeder and a public OptiScaler, with one exception: a host that writes the model's result
+back into its own colour texture gets the plain unpack in `TemporalMode` 0 (the log says "detail
+transfer declined"); the temporal modes still transfer there. On bench12, detail transfer raised
+high-frequency detail from 0.18 to 0.90 of full-resolution NR at 50% uniform (0.755 to 0.973 at
+the periphery) for about +0.1 ms; see [the bench](dev/detail-transfer-bench.md).
+
+**Menu mode** — a checkbox under Mode, off by default (`MenuMode`). The line under it says what it does now: `off`,
+`waiting for the game's Neural Rendering`, `waiting for a menu`, `active (NR runs on the menu frame)`, or
+`unavailable: <reason>`; see [Menu mode](MENU_MODE.md).
 
 **Compression** is one collapsible header over the four groups below.
 
@@ -176,7 +197,8 @@ materialized by ordinary saves.
 | Key | Type | Meaning |
 |---|---|---|
 | `Mode` | 0/1/2 | Off / Uniform / Peripheral |
-| `ColorFilter` | 0/1 | Bilinear / Auto |
+| `MenuMode` | 0/1 | menu mode: NR on the menu frame while the game does not run it |
+| `ColorFilter` | 0/1/2/3 | Bilinear / Auto / Detail transfer / Detail transfer, depth-guided |
 | `CenterX`, `CenterY` | float % | width of the 1:1 band per axis (1…99) |
 | `WorkX`, `WorkY` | float % | raw work extent per axis |
 | `GlobalScale` | float % | uniform scale fused into the same Pack mapping |
@@ -230,6 +252,12 @@ The `Debug*` diagnostics of the interposer (`hosts/reshade/addon/config_store.h`
 | `DebugHookDelayMs` | delay hook installation so a host creates its model first (exercises the adoption path) |
 | `DebugKeepBackbuffer` | hand the native UI/back buffer to the warped model |
 | `DebugDepthState` | host depth resting state; `99` (the default) follows the automatic rule |
+| `DebugMenuPass` | menu mode's pass: `0` the model (default), `1` a red 64x64 marker, `2` every pass refused, `3` the first run's 10th f2 signal skipped (D3D12) — bench checks |
+| `DebugMenuDump` | `1` writes `menu_events.log` and `menu_dump_<present>.bmp` next to the exe and a log line per menu run |
+| `DebugMenuEntryMs` | the entry delay in ms after the game's last NR frame (default 150; `0` counts presents only) |
+| `DebugMenuOwnBlock` | `1` (with `MenuMode=1`) runs the game's own NR evaluates with menu mode's parameter block: a check for hosts that never pause |
+| `DebugMenuNoFlow` | menu mode's optical flow, for bench checks: `0` normal (default), `1` act as if there were no optical flow, `2` fake one optical flow failure on a carried menu frame (that frame runs the model again), `3` the same and the last output is shown again; other values are ignored with a warning |
+| `DebugMenuBridgeCanary` | `1` (bench only, with a debug layer): on a D3D11 bridge, the D3D11/D3D12 debug layers' messages in `ReShade.log` at the bridge's open, each run's entry, the first present after an exit and the release. It changes the game's D3D12 info queue for the session (every message stored, no count limit) and creates one invalid zero-width buffer as a check of that channel. Default `0`: the add-on never touches the info queues |
 
 The add-on reads no environment variables at all; every diagnostic switch is one of these keys.
 
@@ -277,120 +305,19 @@ allocates a fresh descriptor table per draw from a ring of 128.
 
 ## Temporal modes
 
-The "Temporal" group has three settings; everything else in the machine is fixed at values verified
-on the bench and in game.
+The model every N-th frame with the frames between reprojected, synchronously or in the background: see
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md).
 
-* **Temporal mode** (`TemporalMode`) — `Every frame`; `Interpolate: full NR every N-th frame (sync)`;
-  `Interpolate: model in the background (async)`.
-* **N** (`TemporalEvery`) — 2…8 sync, 1…8 background.
-* **GPU frames queued ahead** (`TemporalMaxQueue`, background only, default 2).
+## Menu mode
 
-Fixed: depth tolerance 0.05, color tolerance 0.08 (chromaticity first, luma at twice the
-tolerance), no motion limit, hole fill on, Catmull-Rom resampling on, warp base on, residual age
-limit 8 frames in background mode, guided smoothing radius 24 px, motion-vector search radius 16 px.
-
-When Mode is `Off` the interposer still drives the cadence, on the native model.
-
-### Interpolate (sync)
-
-A full pass runs every N-th frame and records the residual `R = output − color`. Frames in between
-show the current color plus `R` re-projected along the host's motion vectors, accumulated over the
-skipped frames. The residual is dropped where the current depth no longer matches the residual
-frame's depth at the re-projected position, where the color no longer matches (which catches wrong
-vectors, disocclusions the depth test misses, HUD and transparency), and at every rejected link of
-the displacement chain — the chain is validated step by step, not only at its endpoint, so a pixel an
-occluder crossed does not inherit the occluder's history.
-
-Rejected pixels are not left without the model's contribution: they take a box-filtered residual
-(native/16 per axis, refreshed on every full pass), searched around the reprojected position in two
-rings of eight points at 24 and 48 px for a depth match, scaled by the luma ratio to the current
-frame and applied along the pixel's own chroma. Without that fill they show the raw color, which in
-a tone-mapping host is 5–8 % darker than its surroundings — a dark rim along every moving silhouette.
-
-Three refinements matter for how it looks: the acceptance weight is averaged over nine taps 3 px
-apart, so the boundary between reprojected residual and fill is a ramp that does not jitter frame to
-frame; the depth test falls off smoothly from the tolerance to twice it rather than cutting, because
-thin geometry gives noisy depth; and the compose pass smooths the applied addition over 16 taps on a
-noise-rotated disc where acceptance is below 0.5, weighting each tap by the current frame's own
-color, depth and acceptance.
-
-On every full pass the new residual is blended with the previous one moved to this pass's frame,
-Catmull-Rom resampled, clamped to the 3×3 neighbourhood of the new residual and only where the depth
-still matches. The weight is adaptive: 0.6 where the pixel moved less than 2 px and its color is
-unchanged, fading out by 6 px of motion or half the color tolerance. This is what stops the teeth,
-nostrils and lips of a talking face snapping between pass-to-pass versions of the model's output.
-
-Frame times alternate long/short. Fine detail on moving objects refreshes at the full-pass rate.
-
-### Interpolate (background)
-
-The model runs on its own D3D12 queue on private copies of the host's color, depth and motion — and,
-in the warped path, Pack → model → Unpack all on that queue. One pass is in flight at a time; N sets
-how often a new one starts (1 = continuous). Every displayed frame is the current color plus the
-last finished pass's residual moved along the accumulated vectors, with the hole fill; the plain
-color until the first pass completes.
-
-Expected depth travels with both chains and is promoted with the finished pass. Expected depth and
-model-motion validation are enabled by default. Background phase-in is off: repeated measurements
-with free GPU memory favoured the mean error of the two-feature combination. An explicit
-`DebugTemporalPhaseIn=-1` enables the automatic adoption fade over `min(N-1, 3)` carried frames;
-a positive value selects its length. Synchronous phase-in remains automatic by default.
-`DebugTemporalNoModelMotion=1` disables validation in both modes; an absent key enables it.
-See [the background bench report](../tools/bench/BACKGROUND_26_28.md).
-
-Two accumulation chains run: one to the residual on screen, one to the frame of the pass in flight.
-The second becomes the first when a pass is adopted, which is what gives each new pass the
-displacement to the *previous pass's* frame rather than a one-frame vector — without it the model's
-history is misaligned by age−1 frames on every pass.
-
-Synchronization is queue-side only: the kick's host list is tagged with private data, ReShade's
-`execute_command_list` event records the queue, the signal is issued at the next evaluate so it is
-queued behind the list, and the background queue waits on it. The host queue waits for the pass only
-when the residual reaches the age limit. On a layout change, a re-created model or a released
-feature, the pass in flight is waited for on the CPU and whatever it still uses goes to the
-fence-gated graveyard.
-
-The queue asks for `GLOBAL_REALTIME` priority (`SeIncreaseBasePriorityPrivilege` is requested first,
-`HIGH` is the fallback) and logs the outcome as `background queue priority: …`.
-
-**It needs a registered host queue.** Where the consumer creates its D3D12 device before ReShade is
-in place — always the case when OptiScaler loads ReShade — no queue is ever registered, the synchronous
-interpolation runs instead, and both the tab and the log say `background mode unavailable here (no
-registered host queue)`.
-
-Where the residual's age comes from: the kick's copies sit in the host's list, which the GPU reaches
-only after the frames already queued ahead of it (5–6 in BG3), then the pass itself, then up to one
-frame until the next evaluate notices. Since the next kick starts at the adoption, the residual on
-screen ages from `a` to `2a−1`. `GPU frames queued ahead` attacks the first part: a fence per
-evaluate on the host's queue, and the CPU waits before recording a frame until at most that many are
-unfinished — the GPU stays busy, the queue stops piling up, input latency drops. An in-game frame-rate
-cap does the same job. On activation the CPU also waits once for everything the host has queued.
-
-Frame times are more even, which is the point: the synchronous mode's long/short alternation reads as
-judder even when the average is higher.
-
-### The warped base
-
-With the warp on, the model's output is the packed frame unpacked, so a residual measured against
-the host's raw color would also contain `unpack(pack(x)) − x` — the compression blur of the
-periphery, a function of screen position rather than of the scene. Re-projected along the motion
-vectors it landed on the sharp color of another position, which showed as periphery shimmer at the
-full-pass rate and trails along moving edges, only with the warp on. Every temporal frame is now
-based on the frame's own color through Pack → Unpack without the model (an extra Pack + Unpack on
-interpolated frames, ~0.5 ms), so the residual holds only the model's contribution.
-
-### Measured
-
-RTX 4080 SUPER, RenoDX NR on a 3456×1944 packed frame: a full pass costs 13–15 ms; Interpolate lifts
-53 fps (18.8 ms) to 86 (11.6 ms) at N=2, 109 (9.2 ms) at N=3 and 127 fps (7.9 ms) at N=4. Warped, at
-a 60 fps budget, an interpolated frame against every-frame scores periphery edge correlation 0.976
-(sync) and 0.974 (background), the center unchanged at 0.98.
-
-The model's own tone statistics lag when frames are skipped: a full pass after N−1 skipped frames
-comes out darker than every-frame while the scene changes (about 0.3–0.6 % at N=2, up to 2.7 % at
-N=4 right after a scene change), regardless of which vectors it is given. With the consumer's
-Intensity / LocalTone / LocalStructure at 0 the difference disappears. N=2 and Interpolate are the
-recommended starting point.
+Some games stop calling Neural Rendering in their menus, and the menu background loses the NR look. With **Menu mode**
+on (`MenuMode=1`) the add-on runs the NR model on the frame the game presents while the game does not. It follows your
+Mode (Off, Uniform, Peripheral) and your temporal setting: with Interpolate (sync) the model runs every N-th menu frame
+and NVIDIA's optical flow carries its edit to the frames between; the background mode is not used in menus. Native
+D3D12, and D3D11 through a bridge. The full description, the "unavailable" reasons and the cost are in
+[MENU_MODE.md](MENU_MODE.md); limits in [LIMITATIONS.md](LIMITATIONS.md#menu-mode); bench results and the remaining
+in-game checks in [dev/menu-mode-acceptance.md](dev/menu-mode-acceptance.md). Checked in game in Star Wars Jedi: Fallen
+Order (OptiScaler's D3D11 path); not yet in Baldur's Gate 3.
 
 ## Tone on a warped frame
 
@@ -416,7 +343,10 @@ work size and warps from then on; the rest works as with any other consumer. Che
 wilsjo2's NR before the upscaler and OptiScaler's own frame generation — see
 [the plan 8 report](dev/plan8-public-optiscaler.md). Two consequences: background mode runs
 synchronously (no host queue is visible), and a build with its own peripheral compression must have
-it off, or the frame is compressed twice.
+it off, or the frame is compressed twice. Detail transfer works the same here too: under
+OptiScaler's own `[DlssNr] WorkingScale`, it restores only what our compression lost on
+OptiScaler's model grid, not what OptiScaler's own reduction lost — that is its resolve's job; see
+[task 5b](dev/detail-transfer-bench.md#behind-a-public-optiscaler-task-5b).
 
 **Direct-host protocol.** A program that links the core itself can take NR over from the add-on: it
 declares ownership with the manual-reset event `Local\OptimizerFpsDirectHost_<pid>` and calls
@@ -523,7 +453,7 @@ The build deployed to games is the static-CRT one, `out/build/x64-mt` — see [B
 
 ### Model passes
 
-The Neural Rendering tab includes **Model passes** (1?3, default 1) and **Spread passes over frames**
+The Neural Rendering tab includes **Model passes** (1–3, default 1) and **Spread passes over frames**
 (default on). Their `[OptimizerFPS]` keys are `ModelPasses` and `SpreadPasses`. Each additional pass
 runs an independent model on the previous pass's output. With temporal mode on, spreading runs one
 stage per host frame, carries the previous completed result until the new cycle finishes, and raises
@@ -534,7 +464,8 @@ The tab shows the running/requested count and creation/allocation/evaluate warni
 are expensive: an earlier OptiScaler build measured 13–15 ms per extra evaluate at 4K on a 4080 SUPER, roughly 1 GB for
 a second model and another ~0.5 GB for spread carry buffers. Gains fade after pass 2, and each pass
 can darken the image by about 1%. A 007 First Light test with that build exceeded VRAM capacity at two passes
-and reached 0.4–0.6 seconds per frame. These observations are also in the tooltips.
+and reached 0.4–0.6 seconds per frame. These observations are also in the tooltips. Since 2026.10 the add-on's own
+textures for two spread passes take about 1175 MiB less at 4K than in 2026.9.2 (bench), on top of the second model.
 
 See [local bench report](../tools/bench/MODEL_PASSES_26_28.md); this port has not been installed into or
 tested in games.

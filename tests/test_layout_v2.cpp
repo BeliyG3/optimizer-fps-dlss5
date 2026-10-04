@@ -395,6 +395,22 @@ void TestLegacyParityAtGlobal100()
           "Global 100 v2 motion matches the legacy path well below 0.05 px");
 }
 
+void TestTransferFilters()
+{
+    auto config = ofps::sdk::DefaultConfigV2();
+    ofps::sdk::LayoutV2 layout{};
+    config.colorFilter = ofps::sdk::ColorFilter::DetailTransfer;
+    Check(ofps::sdk::BuildLayout(config, 3840, 2160, &layout) == ofps::sdk::Status::Ok &&
+              layout.colorFilter == ofps::sdk::ColorFilter::DetailTransfer,
+          "detail transfer filter builds and is kept in the layout");
+    config.colorFilter = ofps::sdk::ColorFilter::DetailTransferDepth;
+    Check(ofps::sdk::BuildLayout(config, 3840, 2160, &layout) == ofps::sdk::Status::Ok,
+          "depth-guided detail transfer filter builds");
+    config.colorFilter = static_cast<ofps::sdk::ColorFilter>(4);
+    Check(ofps::sdk::BuildLayout(config, 3840, 2160, &layout) == ofps::sdk::Status::InvalidFilter,
+          "filter 4 is rejected");
+}
+
 } // namespace
 
 int main()
@@ -403,6 +419,7 @@ int main()
     TestDefaultAndGlobalScale();
     TestAggressiveAndAsymmetricLayouts();
     TestValidation();
+    TestTransferFilters();
     TestMathRoundTrip();
     TestCenterOffset();
     TestWorkShift();

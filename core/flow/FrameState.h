@@ -8,7 +8,8 @@ class FrameState final {
 public:
     explicit FrameState(Backend* backend = nullptr);
     ~FrameState() { Reset(); }
-    bool Acquire(ID3D12Device* device, std::uint32_t width, std::uint32_t height);
+    // `device` keys the session; `device` and `proxyDevice` key the host queues that wait for its registration.
+    bool Acquire(ID3D12Device* device, ID3D12Device* proxyDevice, std::uint32_t width, std::uint32_t height);
     bool HasSession() const { return session_ && !failed_; }
     std::uint32_t Width() const { return backend_->Width(session_); }
     std::uint32_t Height() const { return backend_->Height(session_); }

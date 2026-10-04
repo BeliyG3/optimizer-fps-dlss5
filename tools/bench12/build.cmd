@@ -37,7 +37,7 @@ cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /permissive- /DWIN32_LEAN_AND_MEAN /DNOM
     pathtrace_resources.cpp pipeline.cpp display.cpp device_texture.cpp image_mips.cpp device.cpp ^
     device_dump.cpp device_timing.cpp image.cpp scene.cpp accel.cpp pathtrace.cpp ^
     pathtrace_pipeline.cpp ngx.cpp ngx_evaluate.cpp ngx_nr.cpp ngx_nr_runtime.cpp ngx_nr_params.cpp ^
-    ngx_nr_log.cpp ngx_nr_pad.cpp ngx_nr_bridge.cpp motion_pack.cpp obj\imgui.obj obj\imgui_draw.obj ^
+    ngx_nr_log.cpp ngx_nr_pad.cpp ngx_nr_release_thread.cpp ngx_nr_bridge.cpp motion_pack.cpp obj\imgui.obj obj\imgui_draw.obj ^
     obj\imgui_tables.obj obj\imgui_widgets.obj obj\imgui_impl_win32.obj obj\imgui_impl_dx12.obj /link /IMPLIB:obj\pw_bench12.lib ^
     d3dcompiler.lib dwmapi.lib d3d12.lib dxgi.lib dxguid.lib windowscodecs.lib ^
     ole32.lib user32.lib || goto :fail

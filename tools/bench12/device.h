@@ -40,6 +40,8 @@ public:
     unsigned width, height;
     void *submissionContext=nullptr;
     void (*onSubmitted)(void *, ID3D12CommandQueue *, ID3D12CommandList *)=nullptr;
+    void *presentingContext=nullptr;
+    void (*onPresenting)(void *)=nullptr; // right before a Submit's Present (--nr-release-thread)
     void Begin();
     void Submit(bool present=false);
     void Wait();
@@ -55,7 +57,11 @@ public:
     ID3D12GraphicsCommandList4 *BeginCompute();
     void EndCompute();
     void SetVsync(bool enabled) { vsyncEnabled=enabled; }
-    bool Resize(unsigned w, unsigned h);
+    // Waits for the queue and resizes the swap chain; force: ResizeBuffers even at the same size (--resize-at).
+    bool Resize(unsigned w, unsigned h, bool force=false);
+    // Waits for the queue, releases the swap chain (its last reference) and creates a new one with the same description
+    // on the same window (--recreate-swapchain).
+    void RecreateSwapChain();
     LRESULT (*messageHandler)(HWND,UINT,WPARAM,LPARAM)=nullptr;
     double lastFrameMs=0, lastTraceMs=0, lastUpscalerMs=0;
     double lastBlasMs=0;

@@ -46,6 +46,7 @@ enum OfpsSettingId {
     OFPS_SET_DEBUG_PASS_NO_HISTORY, OFPS_SET_DEBUG_TEMPORAL_NO_MODEL_MOTION, OFPS_SET_DEBUG_TEMPORAL_NO_EXPECT,
     OFPS_SET_DEBUG_TEMPORAL_NO_CELLS, OFPS_SET_DEBUG_TEMPORAL_PHASE_IN, OFPS_SET_DEBUG_LAYER,
     OFPS_SET_DEBUG_WARP_PATH,        // 0 auto, 1 compute, 2 pixel (plan 5)
+    OFPS_SET_MENU_MODE,              // appended 2026.10: the ReShade shell's menu mode (bool); the core carries it
     OFPS_SET_COUNT
 };
 

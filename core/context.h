@@ -12,6 +12,7 @@
 #include "core/frame/common.h"
 
 #include "optimizer_fps/types_v2.h"
+#include "core/settings/product_defaults.h"
 
 #include <atomic>
 #include <cstdint>
@@ -164,7 +165,7 @@ struct CoreContext {
     // ---- the real entry points of nvngx_dlssnr.dll (every call goes through the forwarder)
 
     GetConfigFn getConfig = nullptr;
-    ofps::sdk::ConfigV2 config = ofps::sdk::DefaultConfigV2();
+    ofps::sdk::ConfigV2 config = ProductDefaultConfig();
     OfpsSettingsValues values{};
     std::wstring shaderDirectory;
     // 26.26: the overlay writes these from the present/UI thread while the evaluate thread reads them.

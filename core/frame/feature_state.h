@@ -11,6 +11,7 @@
 #include "core/temporal/profile.h"
 #include "core/frame/spread_passes.h"
 #include "core/warp/compute.h"
+#include "core/warp/texture_plan.h"
 
 #include "optimizer_fps/types_v2.h"
 
@@ -86,6 +87,13 @@ struct FeatureState {
     ID3D12Resource *unpackBase = nullptr;   // native-size pixel RTV or compute UAV for the temporal base
     D3D12_RESOURCE_STATES unpackBaseState = D3D12_RESOURCE_STATE_COMMON;
     ID3D12DescriptorHeap *rtvHeap = nullptr; // pixel only: [0] unpackTarget, [1] unpackBase
+    // The optional textures the current set was built with (warp/texture_plan.h); part of EnsureGpu's key.
+    warp::TexturePlan texturePlan{};
+    // A plan change waits for the background pass in flight (EnsureGpu); logged once per change.
+    bool texturePlanDeferred = false;
+    // A host output that cannot take the compute Unpack's direct UAV write was seen: from then on the
+    // set keeps its copy intermediates. Survives rebuilds, so an alternating host never thrashes.
+    bool unpackCopySeen = false;
     // DebugTemporalReadback: centre texels copied to a readback buffer during an evaluate and
     // printed on a later one.
     ID3D12Resource *motionReadback = nullptr;
@@ -97,6 +105,7 @@ struct FeatureState {
     // is written once for a given set of inputs and reused until those inputs change.
     static constexpr std::uint32_t kPackSlots = 5;          // slots 0..3 round-robin for the host's inputs, slot 4 for the background job's copies
     static constexpr std::uint32_t kBgPackSlot = kPackSlots - 1;
+    static_assert(kBgPackSlot == warp::kHostPackSlots, "slot 4 exists only in a background-capable texture set");
     D3D12_RESOURCE_STATES packedColorState[kPackSlots] = {};
     D3D12_RESOURCE_STATES packedGuideState[kPackSlots] = {};
     struct SlotKey {
@@ -116,6 +125,7 @@ struct FeatureState {
     // would defeat a per-slot cache, so every evaluate takes a fresh set from a ring far deeper than
     // the queue; the packed textures keep their slots (their reuse is ordered by the queue).
     // Sets 0..kPackSlots*2-1 are the slot-addressed ones (background pack, unpack), the ring follows.
+    // The pixel adapter owns packed textures for the pack slots only (texturePlan.packSlots).
     static constexpr std::uint32_t kPackSetRing = 64;
     gpu::SetRing packSets;
     struct InputSignature {
@@ -176,6 +186,8 @@ struct FeatureState {
         if (unpackBase) { unpackBase->Release(); unpackBase = nullptr; }
         unpackBaseState = D3D12_RESOURCE_STATE_COMMON;
         if (rtvHeap) { rtvHeap->Release(); rtvHeap = nullptr; }
+        texturePlan = {};
+        texturePlanDeferred = false;
         if (motionReadback) { motionReadback->Release(); motionReadback = nullptr; }
         motionReadbackPending = false;
         if (device) { device->Release(); device = nullptr; }
@@ -192,8 +204,11 @@ struct FeatureState {
     }
 };
 
-// Builds (or rebuilds) the feature's GPU objects for the host's colour/output formats.
-bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *color, ID3D12Resource *output, DXGI_FORMAT colorView, DXGI_FORMAT outputView);
+// Builds (or rebuilds) the feature's GPU objects for the host's colour/output formats. `output` is the
+// target the compute Unpack writes this evaluate (`outputSubresource` its copy subresource): one that
+// cannot take a direct UAV write gets the copy intermediates prepared before anything is recorded.
+bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *color, ID3D12Resource *output, DXGI_FORMAT colorView, DXGI_FORMAT outputView,
+               UINT outputSubresource);
 // The graveyard rules: nothing the GPU may still read is released before its gate has passed.
 void BuryReal(IOfpsModelHost *modelHost, void *realHandle, const ofps::core::gpu::GateSet &gate = ofps::core::gpu::GateSet{});
 bool BuryAsync(FeatureState &st, ofps::core::gpu::GateSet *gate);

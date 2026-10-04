@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <mutex>
 #include <vector>
 #include <wrl/client.h>
@@ -37,17 +38,6 @@ ComPtr<ID3D12Resource> CreateTexture(ID3D12Device* device, DXGI_FORMAT format, s
 }
 } // namespace
 
-bool Session::Impl::Register(ID3D12Resource* resource, NvOFGPUBufferHandle* buffer)
-{
-        NV_OF_REGISTER_RESOURCE_PARAMS_D3D12 params = {};
-        params.resource = resource;
-        params.hOFGpuBuffer = buffer;
-        // Nothing pending on either side at registration: fences at their current values.
-        params.inputFencePoint = { fenceIn.Get(), 0 };
-        params.outputFencePoint = { fenceOut.Get(), 0 };
-        return api.nvOFRegisterResourceD3D12(handle, &params) == NV_OF_SUCCESS;
-}
-
 Session::Impl::~Impl()
 {
         for (NvOFGPUBufferHandle buffer : { nowBuffer, thenBuffer, fieldBuffer })
@@ -75,6 +65,7 @@ Session* Session::Acquire(ID3D12Device* device, std::uint32_t width, std::uint32
     static std::mutex mutex;
     static auto* sessions = new std::vector<std::unique_ptr<Session>>();
     std::lock_guard<std::mutex> lock(mutex);
+    Impl::Sweep();
     for (const auto& session : *sessions)
         if (session->_impl->device.Get() == device && session->Width() == (width & ~3u) && session->Height() == (height & ~3u))
             return session.get();
@@ -145,7 +136,7 @@ std::unique_ptr<Session> Session::Create(ID3D12Device* device, std::uint32_t wid
         return nullptr;
     }
 
-    if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl->fenceIn))) ||
+    if (FAILED(device->CreateFence(Impl::kInputReady, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl->fenceIn))) ||
         FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&impl->fenceOut))))
     {
         reason = "could not create the optical flow fences";
@@ -160,10 +151,19 @@ std::unique_ptr<Session> Session::Create(ID3D12Device* device, std::uint32_t wid
         reason = "could not allocate the optical flow textures";
         return nullptr;
     }
+    // From here on the engine's queue may hold work on these objects: a failure retires them (Registration.cpp).
     if (!impl->Register(impl->now.Get(), &impl->nowBuffer) || !impl->Register(impl->then.Get(), &impl->thenBuffer) ||
         !impl->Register(impl->field.Get(), &impl->fieldBuffer))
     {
         reason = "the optical flow engine refused the textures";
+        Impl::Retire(std::move(impl));
+        return nullptr;
+    }
+    // No CPU wait for the registrations here (this can run on a present thread): OrderAfterRegistration.
+    if (FAILED(device->GetDeviceRemovedReason()) || impl->fenceOut->GetCompletedValue() == UINT64_MAX)
+    {
+        reason = "the device was removed while the optical flow engine registered its textures";
+        Impl::Retire(std::move(impl));
         return nullptr;
     }
 

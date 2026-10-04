@@ -14,6 +14,9 @@ public:
     ID3D12Resource* Now(void* s) const override { return static_cast<Session*>(s)->Now(); }
     ID3D12Resource* Then(void* s) const override { return static_cast<Session*>(s)->Then(); }
     ID3D12Resource* Field(void* s) const override { return static_cast<Session*>(s)->Field(); }
+    bool OrderAfterRegistration(void* s, ID3D12Device* d, ID3D12Device* proxy) override {
+        return static_cast<Session*>(s)->OrderAfterRegistration(d, proxy);
+    }
     bool Execute(void* s, ID3D12CommandQueue* q) override { return static_cast<Session*>(s)->Execute(q); }
     void RetainQueue(ID3D12CommandQueue* q) override { q->AddRef(); }
     void ReleaseQueue(ID3D12CommandQueue* q) override { q->Release(); }

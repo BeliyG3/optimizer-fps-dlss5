@@ -6,10 +6,22 @@
 #include "overlay_zone.h"
 #include "overlay_temporal.h"
 #include "../../common/overlay_widgets.h"
+#include "../menu_pipeline.h"
 #include "core/api/ofps_ui.inl"
 
 namespace ofps::reshade {
 namespace {
+
+// Menu mode's one-line status under its checkbox: never wrapped, the full text in the tooltip when it is wider than the tab.
+void DrawMenuStatus() {
+    const MenuStatusView view = MenuStatusNow();
+    const ImVec4 colour = view.status == MenuStatus::Active        ? ImVec4(0.35f, 1.0f, 0.45f, 1.0f)
+                          : view.status == MenuStatus::Unavailable ? ImVec4(1.0f, 0.55f, 0.15f, 1.0f)
+                                                                   : ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+    ImGui::TextColored(colour, "%s", view.line.c_str());
+    if (ImGui::IsItemHovered() && ImGui::CalcTextSize(view.line.c_str()).x > ImGui::GetContentRegionAvail().x)
+        ImGui::SetTooltip("%s", view.line.c_str());
+}
 
 struct OverlayHooks : ofps::ui::PendingUiEdits {
     ofps::ui::CoreUiSource *source = nullptr;
@@ -87,6 +99,7 @@ struct OverlayHooks : ofps::ui::PendingUiEdits {
     }
 
     void AfterGroup(std::uint32_t group, const ofps::ui::UiSnapshot &snapshot) {
+        if (group == OFPS_GROUP_MODE) DrawMenuStatus();
         if (group == OFPS_GROUP_TEMPORAL || group == OFPS_GROUP_MODEL_PASSES)
             DrawTemporalStatus(snapshot.status, group, showAdvanced);
     }

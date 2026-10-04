@@ -64,9 +64,12 @@ bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Reso
     const D3D12_RESOURCE_DESC depthDesc = depth->GetDesc();
     const auto pictureDivisor = static_cast<std::uint32_t>(ofps::temporal::Value(
         Ctx().temporalDiagnostics, ofps::temporal::DiagnosticId::HistoryDiv, 3.0f));
+    // The background mode's chains exist only where that mode can run; a switch rebuilds the machine.
+    const auto role = BackgroundCapable(st) ? ofps::core::temporal::MachineRole::Background
+                                            : ofps::core::temporal::MachineRole::Synchronous;
     if (st.temporal && st.temporal->Matches(st.nativeWidth, st.nativeHeight, outputDesc.Format, (std::uint32_t) motionDesc.Width,
                                             motionDesc.Height, depthDesc.Format, (std::uint32_t) depthDesc.Width, depthDesc.Height,
-                                            pictureDivisor)) {
+                                            pictureDivisor, role)) {
         st.temporal->SetUsePoint(HostUsePoint(cmd), Ctx().evalCounter, Ctx().diag.timing);
         return true;
     }
@@ -82,7 +85,7 @@ bool EnsureTemporal(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Reso
     char error[256] = {};
     if (!machine->Initialize(st.device, Ctx().shaders, st.nativeWidth, st.nativeHeight, outputDesc.Format, TypedView(outputDesc.Format, false),
                              (std::uint32_t) motionDesc.Width, motionDesc.Height, depthDesc.Format, (std::uint32_t) depthDesc.Width,
-                             depthDesc.Height, error, sizeof(error), pictureDivisor)) {
+                             depthDesc.Height, error, sizeof(error), pictureDivisor, role)) {
         st.temporalDisabled = true;
         TemporalReason(st, "%s", error);
         return false;
@@ -314,7 +317,7 @@ int NativeTemporalBody(NativeTemporal &n)
         n.stage = StageTemporalReproject;
         st.temporal->RecordReproject(cmd, n.tin, KeepOutputOnInterpolation() ? nullptr : n.output, n.frame.output.restState,
                                      n.outputRect.x, n.outputRect.y, n.frame.output.subresource);
-        st.temporal->RecordFlowCapture(cmd, n.tin, st.realDevice, false);
+        st.temporal->RecordFlowCapture(cmd, n.tin, st.realDevice, st.device, false);
         n.stage = StageDone;
         n.result = OFPS_OK;
         return OFPS_OK;
@@ -381,7 +384,7 @@ int NativeTemporalBody(NativeTemporal &n)
     // too - otherwise the phase-in would only steady the carried frames and the full frame itself
     // would still snap to the model's new version once per cadence.
     st.temporal->RecordApply(cmd, tinR, n.output, n.frame.output.restState, n.outputRect.x, n.outputRect.y, n.frame.output.subresource);
-    st.temporal->RecordFlowCapture(cmd, tinR, st.realDevice, true);
+    st.temporal->RecordFlowCapture(cmd, tinR, st.realDevice, st.device, true);
     n.stage = StageDone;
     return result;
 }

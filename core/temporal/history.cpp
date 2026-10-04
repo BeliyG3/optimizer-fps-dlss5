@@ -33,7 +33,8 @@ bool History::Create(ID3D12Device *device, std::uint32_t width, std::uint32_t he
 void History::Store(Resources &m, ID3D12GraphicsCommandList *cmd, const FrameInputs &in,
                     const SlotKey &previous, bool connected)
 {
-    if (!connected || !m.colorF) { Reset(); return; }
+    // A machine without history textures (a Hidden one, machine_role.h) never stores a pass.
+    if (!connected || !m.colorF || !passes_[0].textures[0]) { Reset(); return; }
     const auto slot = (newest_ + 1) % 2;
     auto &pass = passes_[slot];
     for (unsigned i = 0; i < 4; ++i)

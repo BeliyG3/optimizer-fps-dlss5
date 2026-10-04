@@ -116,9 +116,9 @@ bool ComputePipeline::Create(ID3D12Device* device, const void* packCode,
         return false;
     }
     D3D12_DESCRIPTOR_RANGE ranges[3]{};
-    ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0};
-    ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 4};
-    ranges[2] = {D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 3, 0, 0, 7};
+    ranges[0] = {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 7, 0, 0, 0};
+    ranges[1] = {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 7};
+    ranges[2] = {D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 3, 0, 0, 10};
     D3D12_ROOT_PARAMETER parameters[2]{};
     parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     parameters[0].DescriptorTable = {3, ranges};

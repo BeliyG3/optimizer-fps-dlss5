@@ -10,7 +10,8 @@
 
 namespace ofps::core {
 int SpreadModel(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs, const OfpsFrameInputs &frame,
-                const ofps::core::temporal::FrameInputs &in, ID3D12Resource *input, ofps::core::temporal::Machine &stage)
+                const ofps::core::temporal::FrameInputs &in, ID3D12Resource *input, ofps::core::temporal::Machine &stage,
+                bool *transferDeclined)
 {
     OfpsFrameInputs stageFrame = frame;
     stageFrame.color = inputs.color;
@@ -102,6 +103,7 @@ int SpreadModel(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsMode
             st.adapter->WriteSourceSetV2(c.packSet, sources, description) != ofps::sdk::AdapterStatus::Ok) return kPackFailed;
         NotifyFirstWarped();
         result = WarpedGuarded(c);
+        if (transferDeclined) *transferDeclined = c.transferDeclined;
     }
     return result;
 }

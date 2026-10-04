@@ -2,6 +2,8 @@
 
 #include "core/context.h"
 #include "core/frame/model_grid.h"
+#include "core/frame/warp_recorder.h"
+#include "core/temporal/controller.h"
 #include "core/api/ofps_settings_schema.h"
 
 #include <memory>
@@ -100,7 +102,30 @@ void RetireGpu(FeatureState &st)
     BuryGpu(st, gate);
 }
 
-bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *color, ID3D12Resource *output, DXGI_FORMAT colorView, DXGI_FORMAT outputView)
+// The background job's pass is being recorded or has not finished on the GPU (no wait: the fence's
+// completed value). Retiring the job then would settle it, a CPU wait on the evaluate path.
+static bool BackgroundPassBusy(const FeatureState &st)
+{
+    if (!st.async) return false;
+    const AsyncJob &a = *st.async;
+    return a.recording || (a.inflight && a.fModel && a.fModel->GetCompletedValue() < a.jobId);
+}
+
+// The optional textures a set on `path` gets in the current configuration (warp/texture_plan.h).
+static warp::TexturePlan PlanFor(const FeatureState &st, warp::PackPath path, DXGI_FORMAT colorView, DXGI_FORMAT outputView)
+{
+    warp::TextureNeeds needs;
+    needs.path = path;
+    needs.temporal = Ctx().temporal.mode != 0;
+    needs.warpBase = Ctx().temporal.warpBase;
+    needs.transferReplacesBase = TransferReplacesBase(st.layout, path, colorView, outputView);
+    needs.background = BackgroundCapable(st);
+    needs.copyFallback = st.unpackCopySeen;
+    return warp::PlanTextures(needs);
+}
+
+bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource *color, ID3D12Resource *output, DXGI_FORMAT colorView, DXGI_FORMAT outputView,
+               UINT outputSubresource)
 {
     // Everything is created through the command list's own device. When the list is ReShade's
     // proxy, that device is the proxy too, so descriptor heaps come back as the wrapped objects the
@@ -111,16 +136,35 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
         SetReason("command list has no device");
         return false;
     }
-    (void) output;
     const D3D12_RESOURCE_DESC colorDesc = color->GetDesc();
     const D3D12_RESOURCE_DESC outputDesc = output->GetDesc();
     if (colorView == DXGI_FORMAT_UNKNOWN) colorView = TypedView(colorDesc.Format, false);
     if (outputView == DXGI_FORMAT_UNKNOWN) outputView = TypedView(outputDesc.Format, false);
+    // The compute Unpack writes this output; one that needs the copy fallback makes the set keep its
+    // intermediates from now on. The typed-store checks are ComputePath::Create's own requirement for
+    // outputView. Our own codec answer (codec_frame.cpp) is created with UAV access and is not judged:
+    // a rebuild from inside a spread stage or a background kick would bury the state they are using.
+    if (output != st.answer &&
+        warp::NeedsCopyFallback(warp::TargetUnpackSupport(outputDesc, outputView, outputView, outputSubresource, true, true)))
+        st.unpackCopySeen = true;
     const auto requested = static_cast<warp::RequestedPath>(Ctx().values.v[OFPS_SET_DEBUG_WARP_PATH].i);
-    if ((st.adapter || st.compute) && st.device == device && st.colorView == colorView && st.outputView == outputView &&
-        st.requestedWarpPath == requested &&
+    const bool sameSet = (st.adapter || st.compute) && st.device == device && st.colorView == colorView &&
+        st.outputView == outputView && st.requestedWarpPath == requested &&
         st.gpuNativeWidth == st.layout.nativeWidth && st.gpuNativeHeight == st.layout.nativeHeight &&
-        st.gpuWorkWidth == st.layout.workWidth && st.gpuWorkHeight == st.layout.workHeight) {
+        st.gpuWorkWidth == st.layout.workWidth && st.gpuWorkHeight == st.layout.workHeight;
+    bool samePlan = st.texturePlan == PlanFor(st, st.warpPath, colorView, outputView);
+    // A change of the optional textures alone waits for the background pass in flight, re-checked every
+    // evaluate: the rebuild retires the job, and settling a running pass would stall this evaluate. The
+    // current set serves meanwhile. Every reader of an optional texture checks that it exists and takes
+    // its existing fallback without it (wantBase/useBase need unpackBase; an Unpack needing a missing
+    // copy intermediate fails before recording), so nothing missing is ever read.
+    if (sameSet && !samePlan && BackgroundPassBusy(st)) {
+        if (!st.texturePlanDeferred)
+            Log(false, "Optimizer FPS NGX hook: texture set change deferred until the background pass completes");
+        st.texturePlanDeferred = true;
+        samePlan = true;
+    }
+    if (sameSet && samePlan) {
         // A compute list (the host's, or our background one) takes only the compute path; a pixel
         // path built on a direct list is rebuilt below when the host's list turns out to be COMPUTE.
         if (cmd->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT ||
@@ -170,8 +214,9 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
     }
     std::unique_ptr<warp::ComputePath> compute;
     if (decision.path == warp::PackPath::Compute) {
+        const auto plan = PlanFor(st, warp::PackPath::Compute, colorView, outputView);
         compute = warp::ComputePath::Create(device, st.layout, colorView, outputView,
-                                            FeatureState::kPackSlots, pathReason);
+                                            plan.packSlots, plan.copyIntermediates, pathReason);
         if (!compute && requested == warp::RequestedPath::Compute) {
             SetReason("compute warp unavailable: %s", pathReason.c_str());
             RetireGpu(st);
@@ -184,6 +229,7 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
         SetReason("pixel warp requires a DIRECT background list: %s", pathReason.c_str());
         return false;
     }
+    const auto plan = PlanFor(st, useCompute ? warp::PackPath::Compute : warp::PackPath::Pixel, colorView, outputView);
     if (!useCompute) {
         const ofps::sdk::ShaderSet shaders = Ctx().shaders.Set();
         const ofps::sdk::D3D12TargetFormats packFormats{colorView, DXGI_FORMAT_R32_FLOAT,
@@ -192,8 +238,10 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
             DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R16_FLOAT};
         st.packSets.Reset(FeatureState::kPackSlots * 2, FeatureState::kPackSetRing);
         st.adapter = std::make_unique<ofps::sdk::D3D12Adapter>();
+        // Packed textures for the pack slots alone; the unpack sets (kPackSlots + slot) are source sets
+        // only (warp_recorder.cpp), so the set count stays that of the full slot-addressed range + ring.
         const auto status = st.adapter->Initialize(device, st.layout, packFormats, unpackFormats, shaders,
-            FeatureState::kPackSlots * 2, false, FeatureState::kPackSlots * 2 + FeatureState::kPackSetRing);
+            plan.packSlots, false, FeatureState::kPackSlots * 2 + FeatureState::kPackSetRing);
         if (status != ofps::sdk::AdapterStatus::Ok) {
             SetReason("adapter init: %s (colour %d, output %d)", ofps::sdk::AdapterStatusString(status),
                 (int)colorView, (int)outputView);
@@ -204,10 +252,10 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
         D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     if (!CreateTexture(device, st.layout.workWidth, st.layout.workHeight, outputView,
                        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, &st.nrOutput) ||
-        !CreateTexture(device, st.layout.nativeWidth, st.layout.nativeHeight, outputView,
-                       nativeFlags, &st.unpackTarget) ||
-        !CreateTexture(device, st.layout.nativeWidth, st.layout.nativeHeight, outputView,
-                       nativeFlags, &st.unpackBase)) {
+        (plan.unpackTarget && !CreateTexture(device, st.layout.nativeWidth, st.layout.nativeHeight, outputView,
+                                             nativeFlags, &st.unpackTarget)) ||
+        (plan.unpackBase && !CreateTexture(device, st.layout.nativeWidth, st.layout.nativeHeight, outputView,
+                                           nativeFlags, &st.unpackBase))) {
         SetReason("could not allocate the work output or the unpack target (format %d)", (int)outputView);
         st.ReleaseGpu(); return false;
     }
@@ -224,9 +272,11 @@ bool EnsureGpu(FeatureState &st, ID3D12GraphicsCommandList *cmd, ID3D12Resource 
         device->CreateRenderTargetView(st.unpackTarget, &rtv, st.rtvHeap->GetCPUDescriptorHandleForHeapStart());
         D3D12_CPU_DESCRIPTOR_HANDLE h = st.rtvHeap->GetCPUDescriptorHandleForHeapStart();
         h.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-        device->CreateRenderTargetView(st.unpackBase, &rtv, h);
+        if (st.unpackBase) device->CreateRenderTargetView(st.unpackBase, &rtv, h); // read only when the base exists
     }
     st.unpackBaseState = D3D12_RESOURCE_STATE_COMMON;
+    st.texturePlan = plan;
+    st.texturePlanDeferred = false;
     st.gpuNativeWidth = st.layout.nativeWidth; st.gpuNativeHeight = st.layout.nativeHeight;
     st.gpuWorkWidth = st.layout.workWidth; st.gpuWorkHeight = st.layout.workHeight;
     st.colorView = colorView;

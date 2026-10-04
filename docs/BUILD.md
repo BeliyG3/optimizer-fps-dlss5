@@ -43,11 +43,11 @@ ctest --preset windows-x64-release
 | --- | --- | --- |
 | `windows-x64` | `out/build/x64` | static core tests, core DLL, D3D11/D3D12 adapters, shaders, `optimizer-fps-dlss5.addon64`, `nvngx.dll_optimizerfps.dll` |
 | `windows-x64-mt` | `out/build/x64-mt` | the same add-on with `OFPS_STATIC_CRT=ON` (`/MT`): the game process pulls in no `MSVCP140`/`VCRUNTIME140` |
-| `windows-x86` | `out/build/x86` | 32-bit SDK, adapters, shaders and 13 tests; no `ofps_core` |
+| `windows-x86` | `out/build/x86` | 32-bit SDK, adapters, shaders and 14 tests; no `ofps_core` |
 | `windows-x86-remote` | `out/build/x86-remote` | only `optimizer-fps-dlss5-remote.addon32` (ReShade + ImGui headers, no core, no Detours) |
 | `sdk-only-x64` | `out/build/sdk-x64` | SDK only, 10 tests; no core, add-on, D3D adapters or compiled shaders |
 
-The full x64 preset registers 26 tests; x86 registers 13, and SDK-only x64 registers 10. The shipping x64-mt and
+The full x64 preset registers 42 tests; x86 registers 14, and SDK-only x64 registers 10. The shipping x64-mt and
 x86-remote presets disable tests. All five presets belong to the acceptance matrix.
 `ofps_core` is Windows x64-only and independent of ReShade; it requires
 `OptimizerFps::SdkD3D12`. `OFPS_BUILD_CORE=OFF` makes SDK-only configuration independent
@@ -95,7 +95,7 @@ cmake --preset windows-x64 `
 A missing `fxc.exe` is a hard error; a missing `dxc.exe` only reports a status message and skips the
 SPIR-V artefacts.
 
-The current `ofps_shaders` target compiles 23 DXBC files from `sdk/shaders/`
+The current `ofps_shaders` target compiles 26 DXBC files from `sdk/shaders/`
 and `core/shaders/`. The release tools read the built shader list and package
 manifest instead of relying on this number.
 `OFPS_COMPILED_SHADER_OUTPUTS` carries the generated outputs; both compiler include paths
@@ -127,7 +127,7 @@ After `cmake --install`, consumers may use `find_package(OptimizerFpsSdk CONFIG 
 `OptimizerFps::SdkCore`, `OptimizerFps::SdkD3D11`, or `OptimizerFps::SdkD3D12` when that adapter was
 included in the installed build.
 
-For example, `cmake --install out/build/x64 --config Release` installs SDK 0.6.0 under
+For example, `cmake --install out/build/x64 --config Release` installs SDK 0.7.0 under
 `out/install/x64`: headers in `include/optimizer_fps/`, adapter headers in
 `include/optimizer_fps/adapters/{common,d3d11,d3d12}/`, libraries in `lib/`, package files
 in `lib/cmake/OptimizerFpsSdk/`, and shader sources from both source trees in

@@ -29,7 +29,7 @@ OfpsNativeOutput PSMain(PwFullscreenVertex input)
     float2 packedMotion = OfpsPackedMotion.Load(int3(guidePixel, 0));
 
     output.color = OfpsPackedColor.SampleLevel(OfpsLinearClamp, workUv, 0.0);
-    if (OfpsOptions.y == OFPS_FILTER_ADAPTIVE_FOUR_TAP)
+    if (OfpsOptions.y >= OFPS_FILTER_ADAPTIVE_FOUR_TAP)
     {
         // Soft cubic (B-spline) unpack where the packed texels are stretched: bilinear stretching
         // prints the packed texel grid as steps and diamonds; the B-spline (four bilinear fetches)

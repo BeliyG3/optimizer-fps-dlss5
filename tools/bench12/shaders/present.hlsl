@@ -38,7 +38,8 @@ float4 PS(Blit i) : SV_Target
         hdr+=bloom*(bloomSmall.SampleLevel(linearClamp,i.uv,0).rgb+
             bloomMedium.SampleLevel(linearClamp,i.uv,0).rgb+bloomLarge.SampleLevel(linearClamp,i.uv,0).rgb)/3;
         hdr=max(hdr,0)*displayExposure.Load(int3(0,0,0)).r;
-        float3 mapped=neutralTonemap!=0 ? hdr/(1+hdr) : float3(Filmic(hdr.r),Filmic(hdr.g),Filmic(hdr.b));
+        // 2 (--tonemap none): no curve, the colour is clipped at 1 and sRGB-encoded as it is.
+        float3 mapped=neutralTonemap==2 ? hdr : neutralTonemap!=0 ? hdr/(1+hdr) : float3(Filmic(hdr.r),Filmic(hdr.g),Filmic(hdr.b));
         result=Srgb(saturate(mapped));
     }
     return float4(saturate(result),1);

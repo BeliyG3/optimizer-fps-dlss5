@@ -13,6 +13,14 @@
 #include <vector>
 namespace ofps::core::gpu {
 constexpr DWORD kPoolWaitMilliseconds = 100;
+// Menu mode's core calls run on the present path (final review, Codex I1): while the calling thread's non-blocking
+// scope is on, Acquire never waits. No free slot answers kNone at once and counts a miss for that thread. Thread-local:
+// game evaluates on other threads keep their bounded wait. On clears the thread's count (OfpsNonBlockingDescriptorsV1).
+// Fix round 2 (Codex): the scope also means "no CPU wait for the GPU on this thread" for the core's optional debug
+// work: TemporalDebugReadback skips itself while NonBlockingAcquire() is true.
+void SetNonBlockingAcquire(bool on);
+bool NonBlockingAcquire();
+std::uint32_t NonBlockingMisses();
 class DescriptorPool {
 public:
     static constexpr std::uint32_t kNone = 0xffffffffu;

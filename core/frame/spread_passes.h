@@ -22,5 +22,6 @@ void RetireSpread(FeatureState &st, const ofps::core::gpu::GateSet &gate = {});
 int SpreadEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs, const OfpsFrameInputs &frame);
 // A single native or packed evaluate with the selected stage's own model motion.
 int SpreadModel(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs, const OfpsFrameInputs &frame,
-                const ofps::core::temporal::FrameInputs &in, ID3D12Resource *input, ofps::core::temporal::Machine &stage);
+                const ofps::core::temporal::FrameInputs &in, ID3D12Resource *input, ofps::core::temporal::Machine &stage,
+                bool *transferDeclined = nullptr); // set when an expected detail transfer was declined
 } // namespace ofps::core

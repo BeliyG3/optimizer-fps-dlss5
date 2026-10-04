@@ -277,9 +277,48 @@ int main()
               "copied depth plane reads as 0.375");
         readback->Unmap(0, nullptr);
     }
+    if (messages) Check(DebugErrors(messages.Get()) == 0, "debug layer clean on copy path");
+    // Menu mode's guide snapshots ride the twins' tracking (Codex C3): a texture written on a host list is held until
+    // that list was submitted and the fence after it passed; a dropped hold keeps its reference until then.
+    {
+        auto Refs = [](ID3D12Resource *r) { r->AddRef(); return r->Release(); };
+        auto dropped = Texture(device.Get(), DXGI_FORMAT_R32_FLOAT, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+        auto kept = Texture(device.Get(), DXGI_FORMAT_R32_FLOAT, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST);
+        ComPtr<ID3D12CommandAllocator> allocator2;
+        ComPtr<ID3D12GraphicsCommandList> cmd2;
+        Check(dropped && kept, "hold: textures");
+        Check(SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator2))), "hold: allocator");
+        Check(allocator2 && SUCCEEDED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator2.Get(), nullptr, IID_PPV_ARGS(&cmd2))),
+              "hold: host list");
+        if (!dropped || !kept || !cmd2) return 1;
+        const ULONG droppedBase = Refs(dropped.Get());
+        Check(!ReadableGuidesHoldBusy(dropped.Get()), "hold: nothing in flight before a write");
+        Check(ReadableGuidesHoldWrite(cmd2.Get(), dropped.Get()) && ReadableGuidesHoldWrite(cmd2.Get(), kept.Get()), "hold: writes recorded");
+        Check(ReadableGuidesHoldBusy(dropped.Get()) && !ReadableGuidesHoldWrite(cmd2.Get(), dropped.Get()),
+              "hold: a write in flight is busy and is not recorded over");
+        ReadableGuidesHoldDrop(dropped.Get());
+        Check(Refs(dropped.Get()) == droppedBase + 1, "hold: a dropped texture stays referenced while its list is unsubmitted");
+        ReadableGuidesPresented();
+        Check(Refs(dropped.Get()) == droppedBase + 1, "hold: a present before the list's submission releases nothing");
+        Check(SUCCEEDED(cmd2->Close()), "hold: close");
+        ID3D12CommandList *held[] = {cmd2.Get()};
+        queue->ExecuteCommandLists(1, held);
+        ReadableGuidesExecuted(queue.Get(), cmd2.Get());
+        Check(ReadableGuidesHoldBusy(kept.Get()), "hold: submitted but not yet fenced is still busy");
+        ReadableGuidesPresented(); // the fence goes on the queue after the list
+        ComPtr<ID3D12Fence> finish2;
+        HANDLE done = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        Check(SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&finish2))) && SUCCEEDED(queue->Signal(finish2.Get(), 1)) &&
+              done && SUCCEEDED(finish2->SetEventOnCompletion(1, done)) && WaitForSingleObject(done, 5000) == WAIT_OBJECT_0,
+              "hold: GPU completion");
+        if (done) CloseHandle(done);
+        ReadableGuidesPresented(); // drains what completed
+        Check(Refs(dropped.Get()) == droppedBase, "hold: the dropped texture's reference goes once its write passed");
+        Check(!ReadableGuidesHoldBusy(kept.Get()) && ReadableGuidesHoldWrite(cmd2.Get(), kept.Get()),
+              "hold: a completed write frees the texture for the next one");
+    }
     if (messages) {
-        Check(DebugErrors(messages.Get()) == 0, "debug layer clean on copy path");
-        // The naive typed SRV is rejected by the debug layer when the layer is installed.
+        // The naive typed SRV is rejected by the debug layer when the layer is installed (last: it removes the device).
         D3D12_DESCRIPTOR_HEAP_DESC heapDesc{}; heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         heapDesc.NumDescriptors = 1;
         ComPtr<ID3D12DescriptorHeap> heap;

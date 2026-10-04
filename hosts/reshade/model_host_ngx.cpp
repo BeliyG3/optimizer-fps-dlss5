@@ -123,6 +123,11 @@ int ModelHostNgx::CreateModel(ID3D12GraphicsCommandList *cmd, uint32_t w, uint32
                               void **handle) {
     if (params_ == nullptr || handle == nullptr || calls_.create == nullptr)
         return OFPS_E_STATE;
+    if (refuseCreate_) {
+        *handle = nullptr;
+        createRefused_ = true;
+        return OFPS_E_STATE;
+    }
     PutSizes(w, h);
     if (withholdUi != 0 && snapshot_.hadUiCorrection) {
         SetUInt(params_, "DLSSNR.UICorrection", 0);

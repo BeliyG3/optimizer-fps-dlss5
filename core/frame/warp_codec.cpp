@@ -19,7 +19,9 @@ int FinishWarpCodec(EvalContext &c)
     }
     const int resolved = ResolveCodecFrame(st, c.cmd, codec);
     if (resolved != OFPS_OK) return resolved;
-    if (c.temporalActive) {
+    // A declined transfer the base decision relied on: no residual from this frame (WarpedBody then
+    // resets the history); the resolved answer goes out as it is.
+    if (c.temporalActive && !c.transferDeclined) {
         auto tin = TemporalInputsWithBase(c);
         tin.residualBlend = Ctx().temporal.debugSingleFrameMotion ? 0.0f : kResidualBlend;
         st.temporal->RecordResidual(c.cmd, tin, codec.frame.output.res, codec.frame.output.restState, codec.frame.output.subresource);

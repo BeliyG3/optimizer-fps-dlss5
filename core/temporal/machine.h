@@ -16,6 +16,7 @@
 #include "core/temporal/stats.h"
 #include "core/temporal/pass_timing.h"
 #include "core/flow/FrameState.h"
+#include "core/temporal/machine_role.h"
 
 #include <cstdint>
 
@@ -97,15 +98,18 @@ public:
 
     // `device` is the command list's device (a ReShade proxy when present). `outputFormat` is the
     // resource format of the host's output (the interpolation target copies into it), `outputView`
-    // its typed view. Motion/depth extents come from the host's textures.
+    // its typed view. Motion/depth extents come from the host's textures. `role` decides the optional
+    // textures (machine_role.h): only a Background machine can run the background mode's records, and
+    // a Hidden one keeps a single residual and never blends.
     bool Initialize(ID3D12Device *device, const ofps::core::gpu::Shaders &shaders, std::uint32_t nativeWidth, std::uint32_t nativeHeight,
                     DXGI_FORMAT outputFormat, DXGI_FORMAT outputView, std::uint32_t motionWidth, std::uint32_t motionHeight,
                     DXGI_FORMAT depthFormat, std::uint32_t depthWidth, std::uint32_t depthHeight, char *error, std::size_t errorSize,
-                    std::uint32_t pictureDivisor = 3);
+                    std::uint32_t pictureDivisor = 3, MachineRole role = MachineRole::Synchronous);
     bool Ready() const { return device_ != nullptr; }
     bool Matches(std::uint32_t nativeWidth, std::uint32_t nativeHeight, DXGI_FORMAT outputFormat, std::uint32_t motionWidth,
                  std::uint32_t motionHeight, DXGI_FORMAT depthFormat, std::uint32_t depthWidth, std::uint32_t depthHeight,
-                 std::uint32_t pictureDivisor = 3) const;
+                 std::uint32_t pictureDivisor = 3, MachineRole role = MachineRole::Synchronous) const;
+    MachineRole Role() const;
 
     // Records the residual of a full pass: fresh (the final native output, in `freshState`) minus
     // the host colour; also snapshots the host depth. Afterwards HasResidual() is true.
@@ -168,8 +172,9 @@ public:
     // Debug: copies one 256-byte row of the host colour, the residual, the interpolation target and
     // the accumulated displacement at native pixel (x, y) into `readback` (rows at 0/256/512/768).
     void RecordDebugCopies(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *readback, std::uint32_t x, std::uint32_t y);
+    // nativeDevice keys the optical flow session; nativeDevice/proxyDevice key the host queues that wait for its setup.
     void RecordFlowCapture(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Device *nativeDevice,
-                           bool full, bool referenceOnly = false);
+                           ID3D12Device *proxyDevice, bool full, bool referenceOnly = false);
     bool RecordFlowSeed(ID3D12GraphicsCommandList *cmd, const FrameInputs &in);
     void NoteFlowSubmission(std::uint64_t tag, ID3D12CommandQueue *queue) { flow_.Submitted(tag, queue); }
     const std::string &FlowProblem() const { return flow_.Problem(); }

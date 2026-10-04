@@ -88,7 +88,7 @@ struct WireSnapshot {
     std::uint32_t appliedSettingsGeneration;
 };
 
-// Feeder OFA belongs to the shell config, outside the core's 45 setting IDs.
+// Feeder OFA belongs to the shell config, outside the core's setting IDs.
 // It shares the remote-to-host sequence with settings so one edit is coherent.
 struct WireFeederEdit {
     std::uint32_t source;

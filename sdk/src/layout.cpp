@@ -18,7 +18,7 @@ bool IsKnownMode(WarpMode mode) noexcept {
 }
 
 bool IsKnownFilter(ColorFilter filter) noexcept {
-    return filter == ColorFilter::Bilinear || filter == ColorFilter::AdaptiveFourTap;
+    return static_cast<std::uint32_t>(filter) <= static_cast<std::uint32_t>(ColorFilter::DetailTransferDepth);
 }
 
 bool AxisIsValid(const AxisConfig &axis) noexcept {
