@@ -41,6 +41,11 @@ bool LoadShaders(const std::wstring &coreDirectory, Shaders &s)
 #undef PW_TEMPORAL_PASS
     ReadWholeFile(dir + L"temporal_RefineModel_cs.dxbc", s.temporalRefineModel);
     ReadWholeFile(dir + L"temporal_FlowLumaModel_cs.dxbc", s.temporalFlowLumaModel);
+    ReadWholeFile(dir + L"temporal_ReprojectGrid_cs.dxbc", s.temporalReprojectGrid);
+    ReadWholeFile(dir + L"temporal_ComposeGrid_cs.dxbc", s.temporalComposeGrid);
+    ReadWholeFile(dir + L"temporal_CellsGrid_cs.dxbc", s.temporalCellsGrid);
+    if (!s.TemporalGridLoaded())
+        Log(true, "Optimizer FPS core: temporal_*Grid_cs.dxbc were not found in optimizer-fps-dlss5\\; carried frames keep the native reprojection");
     if (!s.loaded) Log(true, "Optimizer FPS NGX: shaders were not found in optimizer-fps-dlss5\\ beside the add-on");
     return s.loaded;
 }

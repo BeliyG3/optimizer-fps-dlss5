@@ -87,6 +87,9 @@ struct FrameInputs {
     bool opticalFlow = false;      // private OptiScaler motion source; never changes host motion grid
     bool cells = true;              // PW_T_CELLS: paint rejected pixels from cells of the accepted addition
     std::uint32_t phaseInFrames = 0; // PW_T_RAMP: carried frames a new pass is phased in over (0 = shown at once)
+    // A carried frame's reprojection on this grid (core/temporal/grid.h; 0 = native). Only the compose route takes
+    // it, and only when the grid pipelines exist and the grid fits the native size; everything else stays native.
+    std::uint32_t gridWidth = 0, gridHeight = 0;
 };
 
 class Machine final : public ofps::core::gpu::Disposable {

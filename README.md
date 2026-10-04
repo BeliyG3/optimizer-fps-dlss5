@@ -165,7 +165,7 @@ retry, and resources remain pending until completion can be confirmed.
 One pinned core DLL is shared per process; the shell loads it through the public ABI.
 The runtime payload contains the x64 add-on, `optimizer-fps-dlss5-core.dll`,
 `nvngx.dll_optimizerfps.dll`, and the built DXBC set in `optimizer-fps-dlss5/`
-beside the core. The current build has 26 DXBC; the package manifest lists the
+beside the core. The current build has 29 DXBC; the package manifest lists the
 exact files.
 The x86 remote overlay stays beside the 32-bit game; its core runs in `host64`.
 The installer migrates older ReShade settings; the verifier checks the core.

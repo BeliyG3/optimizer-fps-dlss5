@@ -141,9 +141,40 @@ if(WIN32 AND OFPS_BUILD_D3D_ADAPTERS AND OFPS_COMPILE_SHADERS)
     target_compile_options(ofps_depth_shader_tests PRIVATE /W4 /WX /EHsc /permissive-)
     target_link_libraries(ofps_depth_shader_tests PRIVATE d3d11 d3dcompiler)
     add_test(NAME ofps_depth_shader COMMAND ofps_depth_shader_tests "${OFPS_DEPTH_SHADER_TEST_BIN}")
+    # 2026.10.1: the production Compose against the same pass built without its shortcut, same flags.
+    set(OFPS_COMPOSE_REFERENCE_BIN "${CMAKE_CURRENT_BINARY_DIR}/temporal_Compose_always_smooth_cs.dxbc")
+    add_custom_command(OUTPUT "${OFPS_COMPOSE_REFERENCE_BIN}"
+        COMMAND "${OFPS_FXC_EXECUTABLE}" /nologo /Ges /WX /O3 /T cs_5_0 /E CSCompose /D PW_T_COMPOSE_ALWAYS_SMOOTH=1
+            /I "${PROJECT_SOURCE_DIR}/sdk/shaders" /I "${PROJECT_SOURCE_DIR}/core/shaders"
+            /Fo "${OFPS_COMPOSE_REFERENCE_BIN}" "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl"
+        DEPENDS "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal.hlsl"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal_mapping.hlsli"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal_residual.hlsli"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal_reproject.hlsli"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal_layout.h"
+            "${PROJECT_SOURCE_DIR}/sdk/shaders/fullscreen.hlsli"
+        VERBATIM)
+    add_custom_target(ofps_compose_reference_binary DEPENDS "${OFPS_COMPOSE_REFERENCE_BIN}")
+    add_executable(ofps_temporal_shortcuts_tests test_temporal_shortcuts.cpp)
+    add_dependencies(ofps_temporal_shortcuts_tests ofps_compose_reference_binary ofps_shaders)
+    target_compile_features(ofps_temporal_shortcuts_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_shortcuts_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    target_link_libraries(ofps_temporal_shortcuts_tests PRIVATE d3d11)
+    add_test(NAME ofps_temporal_shortcuts
+        COMMAND ofps_temporal_shortcuts_tests "${OFPS_SHADER_OUTPUT_DIR}" "${OFPS_COMPOSE_REFERENCE_BIN}")
     add_test(NAME ofps_temporal_contract
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/temporal_contract.py"
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_passes.def" "${OFPS_SHADER_OUTPUT_DIR}" "${OFPS_FXC_EXECUTABLE}")
+    # The carried-frame grid's passes (ReprojectGrid, CellsGrid, ComposeGrid) on WARP, and Reproject, Cells and
+    # Compose against the pre-step-B baseline committed in fixtures/temporal_pre_grid (byte for byte).
+    add_executable(ofps_temporal_grid_shaders_tests test_temporal_grid_shaders.cpp temporal_grid_scenes.h temporal_cs_harness.h)
+    add_dependencies(ofps_temporal_grid_shaders_tests ofps_shaders)
+    target_compile_features(ofps_temporal_grid_shaders_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_grid_shaders_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    target_link_libraries(ofps_temporal_grid_shaders_tests PRIVATE d3d11)
+    add_test(NAME ofps_temporal_grid_shaders
+        COMMAND ofps_temporal_grid_shaders_tests "${OFPS_SHADER_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_pre_grid")
     add_executable(ofps_sdk_d3d11_smoke test_d3d11.cpp
         d3d11_cases_adapter.cpp d3d11_cases_fixtures.cpp)
     target_link_libraries(ofps_sdk_d3d11_smoke PRIVATE OptimizerFps::SdkD3D11)
@@ -211,6 +242,19 @@ endif()
 endif()
 
 if(TARGET ofps_core)
+# The carried-frame grid: CarriedGridFor, SetCarriedGrid, and the machine's grid route on D3D12 WARP when the shaders
+# are built.
+add_executable(ofps_temporal_grid_tests test_temporal_grid.cpp test_temporal_grid_machine.cpp test_temporal_grid_switch.cpp
+    test_temporal_grid_frame.cpp temporal_d3d12_fixture.h)
+target_link_libraries(ofps_temporal_grid_tests PRIVATE ofps_core d3d12 dxgi)
+target_compile_features(ofps_temporal_grid_tests PRIVATE cxx_std_20)
+target_compile_options(ofps_temporal_grid_tests PRIVATE /W4 /WX /EHsc /permissive-)
+if(TARGET ofps_shaders)
+    add_dependencies(ofps_temporal_grid_tests ofps_shaders)
+    add_test(NAME ofps_temporal_grid COMMAND ofps_temporal_grid_tests "${OFPS_SHADER_OUTPUT_DIR}")
+else()
+    add_test(NAME ofps_temporal_grid COMMAND ofps_temporal_grid_tests)
+endif()
 add_executable(ofps_model_host_ngx_tests test_model_host_ngx.cpp ../hosts/reshade/model_host_ngx.cpp ../hosts/reshade/ngx_params.cpp
     ../hosts/reshade/ngx_param_shim.cpp)
 target_link_libraries(ofps_model_host_ngx_tests PRIVATE ofps_core d3d12 dxgi)
@@ -333,6 +377,7 @@ if(TARGET ofps_core)
 set(OFPS_CORE_API_TEST_SOURCES
     test_core_api.cpp test_core_api_scenarios.cpp test_core_api_compute.cpp test_core_api_half_ulp.cpp
     test_core_api_transfer_core.cpp test_core_api_menu_queue.cpp test_core_api_menu_rebuild.cpp test_core_api_plan_defer.cpp
+    test_core_api_grid.cpp test_core_api_grid_model.h
     test_core_api_entry.h
     test_core_api_checks.h test_core_api_codec.h test_core_api_fakes.h
     test_core_api_frame.h test_core_api_gpu.h test_core_api_pattern.h test_core_api_reference.h test_core_api_scenarios.h)

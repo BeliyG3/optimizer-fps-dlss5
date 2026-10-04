@@ -192,6 +192,52 @@ $extraShader = New-MutatedZip 'extra-shader' {
 $bad = Invoke-ZipValidator $extraShader
 Check 'unlisted shader is rejected' ($bad.Code -ne 0) $bad.Output
 
+# A release must carry each temporal grid shader. The manifest is rewritten to match the mutated payload, so the
+# only thing left to object is the required-shader rule (the installer itself stays manifest-driven).
+$gridShaders = @('temporal_ReprojectGrid_cs.dxbc', 'temporal_ComposeGrid_cs.dxbc', 'temporal_CellsGrid_cs.dxbc')
+foreach ($gridShader in $gridShaders) {
+    $withoutGrid = New-MutatedZip ('missing-' + $gridShader.Replace('_cs.dxbc', '')) {
+        param($dir)
+        $file = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Filter $gridShader)[0]
+        Remove-Item -LiteralPath $file.FullName -Force
+        $manifest = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Filter 'files.sha256')[0]
+        $kept = @(([IO.File]::ReadAllText($manifest.FullName).TrimEnd([char]10) -split "`n") |
+            Where-Object { -not $_.EndsWith('  x64/optimizer-fps-dlss5/' + $gridShader) })
+        [IO.File]::WriteAllText($manifest.FullName, (($kept -join "`n") + "`n"), (New-Object Text.UTF8Encoding($false)))
+    }
+    $bad = Invoke-ZipValidator $withoutGrid
+    Check ('zip without ' + $gridShader + ' (manifest consistent) is rejected') `
+        ($bad.Code -ne 0 -and $bad.Output.Contains('Missing ZIP DXBC: ' + $gridShader)) $bad.Output
+}
+
+# Package-Release refuses a build that did not produce a grid shader, before it stages anything.
+$fakeBuildX64Files = @(
+    'hosts\reshade\Release\optimizer-fps-dlss5.addon64',
+    'core\Release\optimizer-fps-dlss5-core.dll',
+    'hosts\reshade\ngx_forwarder\Release\nvngx.dll_optimizerfps.dll')
+foreach ($gridShader in $gridShaders) {
+    $fakeX64 = Join-Path $testsRoot ('build-without-' + $gridShader.Replace('_cs.dxbc', ''))
+    foreach ($relative in $fakeBuildX64Files) {
+        $target = Join-Path $fakeX64 $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $buildX64 $relative) -Destination $target
+    }
+    $fakeShaders = Join-Path $fakeX64 'shaders'
+    New-Item -ItemType Directory -Path $fakeShaders -Force | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $buildX64 'shaders') -File -Filter '*.dxbc' |
+        Where-Object { $_.Name -ne $gridShader } | Copy-Item -Destination $fakeShaders
+    $fakeOut = Join-Path $testsRoot ('release-without-' + $gridShader.Replace('_cs.dxbc', ''))
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $refused = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot 'tools\Package-Release.ps1') `
+        -BuildDirX64 $fakeX64 -BuildDirX86 $buildX86 -Out $fakeOut 2>&1 | Out-String
+    $refusedCode = $LASTEXITCODE
+    $ErrorActionPreference = $oldPreference
+    Check ('Package-Release refuses a build without ' + $gridShader) `
+        ($refusedCode -ne 0 -and $refused.Contains('Required compiled shader missing: ' + $gridShader) -and
+         -not (Test-Path -LiteralPath $fakeOut)) $refused
+}
+
 $withoutModule = New-MutatedZip 'missing-module' {
     param($dir)
     $file = @(Get-ChildItem -LiteralPath $dir -File -Recurse -Filter 'InstallFiles.psm1')[0]

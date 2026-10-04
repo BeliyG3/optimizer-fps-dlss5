@@ -10,4 +10,5 @@ struct Golden { OfpsSettingId id; const char *iniKey; OfpsSettingType type; floa
 {OFPS_SET_DEBUG_TEMPORAL_SMOOTH, "DebugTemporalSmooth", OFPS_TYPE_FLOAT, -1, 128, -1, 0}, {OFPS_SET_DEBUG_MOTION_SMOOTH, "DebugMotionSmooth", OFPS_TYPE_BOOL, 0, 1, 0, 0}, {OFPS_SET_DEBUG_PASS_NO_HISTORY, "DebugPassNoHistory", OFPS_TYPE_BOOL, 0, 1, 0, 0}, {OFPS_SET_DEBUG_TEMPORAL_NO_MODEL_MOTION, "DebugTemporalNoModelMotion", OFPS_TYPE_BOOL, 0, 1, 0, 0},
 {OFPS_SET_DEBUG_TEMPORAL_NO_EXPECT, "DebugTemporalNoExpect", OFPS_TYPE_BOOL, 0, 1, 0, 0}, {OFPS_SET_DEBUG_TEMPORAL_NO_CELLS, "DebugTemporalNoCells", OFPS_TYPE_BOOL, 0, 1, 0, 0}, {OFPS_SET_DEBUG_TEMPORAL_PHASE_IN, "DebugTemporalPhaseIn", OFPS_TYPE_INT, -1, 8, -1, 0}, {OFPS_SET_DEBUG_LAYER, "DebugLayer", OFPS_TYPE_BOOL, 0, 1, 0, 0},
 {OFPS_SET_DEBUG_WARP_PATH, "DebugWarpPath", OFPS_TYPE_ENUM, 0, 2, 0, 0},
-{OFPS_SET_MENU_MODE, "MenuMode", OFPS_TYPE_BOOL, 0, 1, 0, 0}, }; static_assert(sizeof(kToday) / sizeof(kToday[0]) == OFPS_SET_COUNT, "one golden row per id");
+{OFPS_SET_MENU_MODE, "MenuMode", OFPS_TYPE_BOOL, 0, 1, 0, 0},
+{OFPS_SET_TEMPORAL_GRID, "TemporalGrid", OFPS_TYPE_BOOL, 0, 1, 1, 0}, }; static_assert(sizeof(kToday) / sizeof(kToday[0]) == OFPS_SET_COUNT, "one golden row per id");

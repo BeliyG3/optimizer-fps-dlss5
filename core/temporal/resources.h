@@ -73,8 +73,11 @@ struct Constants {
     float fill[4];       // hole fill on/off, low-res width, low-res height, depth-guided chain fetch radius
     float smoothing[4];  // acceptance tap scale, guided smoothing radius, ratio domain (unused here), share of the new residual
     std::uint32_t hostModelGrid = 0; // CPU pipeline selection, not part of the shader constants
+    // CPU only: a carried frame's grid (0 = native). Selects the grid pipelines of the reprojection, cells and
+    // compose and reaches them through dispatch lanes 6-7 (PwTGridSize), never through the root constants.
+    std::uint32_t gridWidth = 0, gridHeight = 0;
 };
-static_assert(sizeof(Constants) == 37 * sizeof(float));
+static_assert(sizeof(Constants) == 39 * sizeof(float));
 constexpr UINT kConstantDwords = 36;
 
 struct SlotKey {
@@ -93,6 +96,9 @@ struct Resources {
 #include "core/shaders/temporal_passes.def"
 #undef PW_TEMPORAL_PASS
     ID3D12PipelineState *refineModelPso = nullptr, *flowLumaModelPso = nullptr;
+    // Optional: a carried frame's reprojection on the model's grid and the passes reading it (all three or none).
+    ID3D12PipelineState *reprojectGridPso = nullptr, *composeGridPso = nullptr, *cellsGridPso = nullptr;
+    bool GridReady() const { return reprojectGridPso != nullptr && composeGridPso != nullptr && cellsGridPso != nullptr; }
     ID3D12DescriptorHeap *srvHeap = nullptr;
     UINT srvIncrement = 0;
     struct Output { ID3D12Resource *resource = nullptr; DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; };

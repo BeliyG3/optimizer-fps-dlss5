@@ -24,8 +24,8 @@ def sections(data: bytes) -> configparser.ConfigParser:
 def schema_keys(root: Path) -> set[str]:
     source = (root / "core/settings/schema.cpp").read_text(encoding="utf-8")
     keys = set(re.findall(r'Row\(OFPS_SET_\w+,\s*"([^"]+)"', source))
-    if len(keys) != 46:
-        raise AssertionError(f"Expected 46 schema keys, got {len(keys)}")
+    if len(keys) != 47:
+        raise AssertionError(f"Expected 47 schema keys, got {len(keys)}")
     return keys | SHELL_KEYS
 
 

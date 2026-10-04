@@ -22,7 +22,7 @@ Fork копирует эти файлы вместе с `temporal.hlsl` и `full
 | Apply | t0: исходный кадр; t2/t10: новый/старый residual | кадр с фазируемым residual | — | native |
 | History, params.x=0 | t0: сохранённый цвет; t2: предыдущий residual | residual истории | цвет истории | ceil(native/3) |
 | History, params.x=1 | t4: цепочка нового прохода к предыдущему; t5: глубина этого кадра (источник связи); t6: предыдущая глубина; t11: expectation | глубина истории | связь между проходами | ceil(native/6) |
-| Reproject | t10: фазируемый residual; t12..t19: история | восстановленный кадр | addition/acceptance | native |
+| Reproject | t10: фазируемый residual; t12..t19: история | восстановленный кадр; перед Compose — null view, запись пропускается | addition/acceptance | native |
 | Cells | t2: addition/acceptance | addition ячеек | цвет ячеек | ceil(native/16) |
 | Compose | t1: цвет ячеек; t2: addition; t8: addition ячеек | сглаженный кадр | — | native |
 | Stats | t4: текущая цепочка | длина смещения | — | заданная сетка CPU readback |
@@ -36,7 +36,8 @@ t14/t15 — их цвет, t16/t17 — глубина, t18/t19 — связи. �
 Неиспользуемые слоты не получают активную ссылку на исходный ресурс.
 
 b0 — 36 float-констант из `temporal.hlsl`; b1 — восемь uint: размер цели, размер optical-flow
-сессии, шаг поля и padding. Add-on передаёт их root constants, fork — CBV. Это один shader ABI,
+сессии, шаг поля, `PwTSkipOut0` (1 — u0 привязан как null view, его заполнит следующий проход)
+и padding. Add-on передаёт их root constants, fork — CBV. Это один shader ABI,
 но не одна root signature. s0 — linear clamp, s1 — point clamp.
 
 ## Что ещё остаётся в адаптерах

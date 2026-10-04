@@ -64,9 +64,9 @@ inline constexpr const char *kIniKeys[] = {
     "Brightness", "Gamma",                                         // SaveColorAdjustToStore
     "TemporalMode", "TemporalEvery", "TemporalMaxQueue",           // SaveTemporalToStore
     "ModelPasses", "SpreadPasses",
-    "MenuMode",                                                    // SaveToStore
+    "MenuMode", "TemporalGrid",                                    // SaveToStore
 };
-static_assert(std::size(kIniKeys) == 23, "keep the list in step with the Save* functions below");
+static_assert(std::size(kIniKeys) == 24, "keep the list in step with the Save* functions below");
 
 // Only the mode, N and the queue cap are user settings (26.6.J). Everything else of the temporal machine
 // is fixed at the values that were verified on the bench and in the game (depth 0.05, colour 0.08, no
@@ -94,6 +94,7 @@ struct AddonPersisted {
     float gamma = 1.0f;
     TemporalConfig temporal{};
     bool menuMode = false;
+    bool temporalGrid = true; // TemporalGrid: carried frames reprojected on the model's grid (the core applies it)
 };
 
 // --- layout -------------------------------------------------------------------------------------
@@ -204,6 +205,7 @@ bool LoadFromStore(const Store &store, AddonPersisted &out)
     if (store.GetInt("ShowWorkOutline", integer)) out.showWorkOutline = integer != 0;
     if (store.GetInt("WorkShiftEnabled", integer)) out.workShiftEnabled = integer != 0;
     if (store.GetInt("MenuMode", integer)) out.menuMode = integer != 0;
+    if (store.GetInt("TemporalGrid", integer)) out.temporalGrid = integer != 0;
     float number = 0.0f;
     if (store.GetFloat("Brightness", number) && std::isfinite(number)) out.brightnessPercent = std::clamp(number, -20.0f, 20.0f);
     if (store.GetFloat("Gamma", number) && std::isfinite(number) && number > 0.0f) out.gamma = std::clamp(number, 0.7f, 1.4f);
@@ -222,6 +224,7 @@ void SaveToStore(Store &store, const AddonPersisted &persisted)
     SaveColorAdjustToStore(store, persisted.brightnessPercent, persisted.gamma);
     SaveTemporalToStore(store, persisted.temporal);
     store.SetInt("MenuMode", persisted.menuMode ? 1 : 0);
+    store.SetInt("TemporalGrid", persisted.temporalGrid ? 1 : 0);
 }
 
 } // namespace ofps::reshade

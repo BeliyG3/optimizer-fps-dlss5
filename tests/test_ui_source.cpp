@@ -82,8 +82,8 @@ int main() {
             Require(desc.defaultValue.i >= desc.minValue &&
                     desc.defaultValue.i <= desc.maxValue);
     }
-    Require(keys.size() == 46u);
-    Require(OFPS_SET_COUNT == 46u);
+    Require(keys.size() == 47u);
+    Require(OFPS_SET_COUNT == 47u);
     Require(kOfpsSettings[OFPS_SET_MODE].group == OFPS_GROUP_MODE);
     Require(kOfpsSettings[OFPS_SET_TEMPORAL_MODE].group == OFPS_GROUP_TEMPORAL);
     Require(kOfpsSettings[OFPS_SET_DEBUG_WARP_PATH].group == OFPS_GROUP_DIAGNOSTICS);

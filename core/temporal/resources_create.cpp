@@ -98,6 +98,19 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
         !gpu::CreateComputePass(device, rootSignature, shaders.temporalFlowLumaModel.data(),
                                 shaders.temporalFlowLumaModel.size(), "FlowLumaModel", &flowLumaModelPso, computeReason))
         return fail("model-grid compute pipeline missing or unsupported");
+    // Optional, unlike the passes above: without all three a carried frame keeps the native reprojection.
+    if (shaders.TemporalGridLoaded() &&
+        (!gpu::CreateComputePass(device, rootSignature, shaders.temporalReprojectGrid.data(), shaders.temporalReprojectGrid.size(),
+                                 "ReprojectGrid", &reprojectGridPso, computeReason) ||
+         !gpu::CreateComputePass(device, rootSignature, shaders.temporalComposeGrid.data(), shaders.temporalComposeGrid.size(),
+                                 "ComposeGrid", &composeGridPso, computeReason) ||
+         !gpu::CreateComputePass(device, rootSignature, shaders.temporalCellsGrid.data(), shaders.temporalCellsGrid.size(),
+                                 "CellsGrid", &cellsGridPso, computeReason))) {
+        for (ID3D12PipelineState **pso : {&reprojectGridPso, &composeGridPso, &cellsGridPso})
+            if (*pso) { (*pso)->Release(); *pso = nullptr; }
+        Log(true, "Optimizer FPS core: temporal grid pipelines unavailable (%s); carried frames keep the native reprojection",
+            computeReason.c_str());
+    }
 
     D3D12_DESCRIPTOR_HEAP_DESC hd{};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;

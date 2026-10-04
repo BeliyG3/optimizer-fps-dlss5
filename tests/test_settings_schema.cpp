@@ -122,7 +122,8 @@ private:
 
 bool SameSettings(const ofps::reshade::AddonPersisted &lhs, const ofps::reshade::AddonPersisted &rhs)
 {
-    return lhs.menuMode == rhs.menuMode && lhs.showCenterOutline == rhs.showCenterOutline &&
+    return lhs.menuMode == rhs.menuMode && lhs.temporalGrid == rhs.temporalGrid &&
+           lhs.showCenterOutline == rhs.showCenterOutline &&
            lhs.showWorkOutline == rhs.showWorkOutline &&
            lhs.workShiftEnabled == rhs.workShiftEnabled &&
            Near(lhs.brightnessPercent, rhs.brightnessPercent) &&
@@ -175,13 +176,14 @@ ofps::reshade::AddonPersisted NonDefaultPersisted()
     persisted.temporal.every = 4;
     persisted.temporal.maxQueue = 1;
     persisted.menuMode = true;
+    persisted.temporalGrid = false;
     return persisted;
 }
 
 // (a) A save writes exactly kIniKeys[] - no read-only key, no Debug* diagnostic, nothing left out.
 void TestSavedKeySet()
 {
-    Check(std::size(ofps::reshade::kIniKeys) == 23, "the add-on persists 23 keys");
+    Check(std::size(ofps::reshade::kIniKeys) == 24, "the add-on persists 24 keys");
 
     MemoryIni ini;
     ofps::reshade::SaveToStore(ini, NonDefaultPersisted());
@@ -272,11 +274,11 @@ void TestLegacySection()
     // The withdrawn keys are not settings any more: nothing of them reaches the add-on.
     Check(loaded.temporal.mode == 1, "withdrawn Temporal keys do not override the cadence");
 
-    // Only the model-pass keys and MenuMode (both newer than this fixture) are added to this legacy section.
+    // Only the model-pass keys, MenuMode and TemporalGrid (newer than this fixture) are added to this legacy section.
     const std::size_t before = ini.Keys().size();
     ofps::reshade::SaveToStore(ini, loaded);
     const std::vector<std::string> after = ini.Keys();
-    Check(after.size() == before + 3, "a save adds the model-pass keys and MenuMode and removes none");
+    Check(after.size() == before + 4, "a save adds the model-pass keys, MenuMode and TemporalGrid and removes none");
     for (const char *foreign : {"TemporalFeather", "TemporalSeparateZone", "TemporalToneMatch",
                                 "TemporalToneSmoothing", "TemporalCatmullRom", "TemporalHoleFill",
                                 "TemporalWarpBase", "TemporalMaxMotion", "TemporalResidualBlend",
@@ -422,6 +424,7 @@ void TestAbiRoundTrip() {
 }
 
 // (i) MenuMode: a persisted checkbox of the Mode group, off by default, read back from the ini.
+// TemporalGrid: a persisted checkbox of the Temporal group (shown with a temporal mode), on by default.
 void TestMenuModeKey()
 {
     const OfpsSettingDesc &d = kOfpsSettings[OFPS_SET_MENU_MODE];
@@ -429,12 +432,18 @@ void TestMenuModeKey()
           "MenuMode is a bool of the Mode group");
     Check(d.defaultValue.i == 0 && (d.flags & OFPS_FLAG_PERSISTED) != 0 && (d.flags & OFPS_FLAG_DIAGNOSTIC) == 0,
           "MenuMode is persisted and off by default");
+    const OfpsSettingDesc &g = kOfpsSettings[OFPS_SET_TEMPORAL_GRID];
+    Check(std::strcmp(g.iniKey, "TemporalGrid") == 0 && g.type == OFPS_TYPE_BOOL && g.group == OFPS_GROUP_TEMPORAL &&
+              g.defaultValue.i == 1 && g.flags == OFPS_FLAG_PERSISTED && g.visibleIf.settingId == OFPS_SET_TEMPORAL_MODE &&
+              g.visibleIf.op == OFPS_VIS_NE && g.visibleIf.value == 0,
+          "TemporalGrid is a persisted bool of the Temporal group, on by default, shown with a temporal mode");
     auto values = ofps::reshade::SchemaDefaults();
     Check(!ofps::reshade::LoadValuesFromStore(MemoryIni("SomeoneElsesKey=1\n"), values) &&
-              values.v[OFPS_SET_MENU_MODE].i == 0,
-          "a missing MenuMode key leaves menu mode off");
-    Check(ofps::reshade::LoadValuesFromStore(MemoryIni("MenuMode=1\n"), values) && values.v[OFPS_SET_MENU_MODE].i == 1,
-          "MenuMode=1 in the ini turns menu mode on");
+              values.v[OFPS_SET_MENU_MODE].i == 0 && values.v[OFPS_SET_TEMPORAL_GRID].i == 1,
+          "a missing MenuMode / TemporalGrid key leaves menu mode off and the grid on");
+    Check(ofps::reshade::LoadValuesFromStore(MemoryIni("MenuMode=1\nTemporalGrid=0\n"), values) &&
+              values.v[OFPS_SET_MENU_MODE].i == 1 && values.v[OFPS_SET_TEMPORAL_GRID].i == 0,
+          "MenuMode=1 / TemporalGrid=0 in the ini turn menu mode on and the grid off");
     std::set<std::string> persisted;
     for (uint32_t i = 0; i < OFPS_SET_COUNT; ++i)
         if ((kOfpsSettings[i].flags & OFPS_FLAG_PERSISTED) != 0) persisted.insert(kOfpsSettings[i].iniKey);

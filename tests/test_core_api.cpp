@@ -65,6 +65,14 @@ void ScenarioSettings(IOfpsCore *core, FakeHost &host) {
           "MenuMode passes through the core and reaches SETTINGS_CHANGED");
     SetInt(menu, OFPS_SET_MENU_MODE, 0);
     Check(core->SetSettings(&menu) == OFPS_OK, "MenuMode back to off");
+    OfpsSettingsValues grid = CurrentSettings(core);
+    Check(grid.v[OFPS_SET_TEMPORAL_GRID].i == 1, "TemporalGrid defaults to 1 (on)");
+    SetInt(grid, OFPS_SET_TEMPORAL_GRID, 0);
+    Check(core->SetSettings(&grid) == OFPS_OK && CurrentSettings(core).v[OFPS_SET_TEMPORAL_GRID].i == 0 &&
+              host.lastSettings.v[OFPS_SET_TEMPORAL_GRID].i == 0,
+          "TemporalGrid passes through the core and reaches SETTINGS_CHANGED");
+    SetInt(grid, OFPS_SET_TEMPORAL_GRID, 1);
+    Check(core->SetSettings(&grid) == OFPS_OK, "TemporalGrid back to on");
 }
 IOfpsFeature *ScenarioPassthrough(WarpDevice &w, IOfpsCore *core, FakeHost &host, FakeModelHost &m, HostFrame &f) {
     OfpsSettingsValues v = CurrentSettings(core);
@@ -354,8 +362,8 @@ int main(int argc, char **argv) {
     caps.flags = OFPS_CAP_QUEUES;
     core->SetHostCaps(&hostA, &caps);
     ScenarioSettings(core, hostA);
-    // 3 = the temporal edit plus the two MenuMode edits at the end of ScenarioSettings.
-    Check(hostB.events[OFPS_EVENT_SETTINGS_CHANGED] == 3 && hostB.lastSettings.v[OFPS_SET_TEMPORAL_EVERY].i == 8,
+    // 5 = the temporal edit plus the two MenuMode and the two TemporalGrid edits at the end of ScenarioSettings.
+    Check(hostB.events[OFPS_EVENT_SETTINGS_CHANGED] == 5 && hostB.lastSettings.v[OFPS_SET_TEMPORAL_EVERY].i == 8,
           "second host receives SETTINGS_CHANGED");
     HostFrame frame;
     Check(coretest::CreateHostFrame(w, frame), "host colour/depth/motion/output textures allocate");
@@ -378,6 +386,7 @@ int main(int argc, char **argv) {
     coretest::ScenarioComputeWarp(w, core, frame);
     coretest::ScenarioComputeTransferCore(w, core, frame);
     coretest::ScenarioPlanDeferral(w, core, hostA, frame);
+    coretest::ScenarioTemporalGrid(w, core, hostA, frame);
 #ifndef OFPS_TEST_DLL
     coretest::ScenarioComputeDirect(w, frame);
     coretest::ScenarioComputeTransfer(w);

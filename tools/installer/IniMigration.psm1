@@ -7,7 +7,7 @@ function Get-OfpsKnownIniKeys {
         'GlobalScale', 'Flags', 'OffsetX', 'OffsetY', 'WorkShiftX', 'WorkShiftY',
         'WorkShiftEnabled', 'ShowCenterOutline', 'ShowWorkOutline',
         'Brightness', 'Gamma', 'TemporalMode', 'TemporalEvery',
-        'TemporalMaxQueue', 'ModelPasses', 'SpreadPasses', 'MenuMode',
+        'TemporalMaxQueue', 'ModelPasses', 'SpreadPasses', 'MenuMode', 'TemporalGrid',
         'DebugTiming', 'DebugTemporalReadback', 'DebugAsyncLog',
         'DebugAsyncShowPass', 'DebugAsyncCompute', 'DebugAsyncNormalPriority',
         'DebugAsyncNoRealtime', 'DebugHookDelayMs', 'DebugKeepBackbuffer',

@@ -7,6 +7,7 @@
 #include "core/frame/common.h"
 #include "core/gpu/constant_ring.h"
 #include "core/frame/motion_smooth.h"
+#include "core/temporal/grid.h"
 #include "core/temporal/machine.h"
 #include "core/temporal/profile.h"
 #include "core/frame/spread_passes.h"
@@ -163,6 +164,7 @@ struct FeatureState {
     bool temporalDisabled = false;
     bool temporalLogged = false;
     std::uint64_t temporalStatsLogged = 0;
+    ofps::core::temporal::CarriedGrid carriedGrid{}; // the last grid SetCarriedGrid chose (carried_grid.h logs a change)
     void ReleaseGpu()
     {
         if (passStaging) { passStaging->Release(); passStaging = nullptr; }

@@ -33,6 +33,8 @@ Resources::~Resources()
 #undef PW_TEMPORAL_PASS
     if (refineModelPso) refineModelPso->Release();
     if (flowLumaModelPso) flowLumaModelPso->Release();
+    for (ID3D12PipelineState *pso : {reprojectGridPso, composeGridPso, cellsGridPso})
+        if (pso) pso->Release();
     if (rootSignature) rootSignature->Release();
     if (device) device->Release();
 }
@@ -90,6 +92,11 @@ void Resources::Dispatch(ID3D12GraphicsCommandList *cmd, Pass pass, Output outpu
         if (pass == kRefine) pso = refineModelPso;
         if (pass == kFlowLuma) pso = flowLumaModelPso;
     }
+    // A carried frame on the model's grid (Machine::RecordReproject): the reprojection runs over the grid's
+    // texels, and it, the cells and the compose learn the grid through lanes 6-7. Every other dispatch: 0.
+    const bool grid = constants.gridWidth != 0 && constants.gridHeight != 0 && GridReady() &&
+                      (pass == kReproject || pass == kCompose || pass == kCells);
+    if (grid) pso = pass == kReproject ? reprojectGridPso : pass == kCompose ? composeGridPso : cellsGridPso;
     cmd->SetPipelineState(pso);
     cmd->SetComputeRoot32BitConstants(0, kConstantDwords, &constants, 0);
     SlotKey bound = key;
@@ -100,9 +107,13 @@ void Resources::Dispatch(ID3D12GraphicsCommandList *cmd, Pass pass, Output outpu
                              pass == kReproject && constants.params[2] == 3.0f);
     if (exhausted) return;
     cmd->SetComputeRootDescriptorTable(1, table);
-    const auto size = DispatchSize(pass, {nativeW, nativeH}, {motionW, motionH}, {lowW, lowH}, {w, h});
+    const auto size = grid && pass == kReproject ? Size{constants.gridWidth, constants.gridHeight}
+                                                 : DispatchSize(pass, {nativeW, nativeH}, {motionW, motionH}, {lowW, lowH}, {w, h});
     w = size.width; h = size.height;
-    const UINT dispatch[8] = {w, h, flow.width, flow.height, flow.grid, 0, 0, 0};
+    // Lane 5 (PwTSkipOut0): u0 is a null view, so the pass need not compute what it would store there.
+    // Lanes 6-7 (PwTGridSize): the carried frame's grid, 0 outside the grid route.
+    const UINT dispatch[8] = {w, h, flow.width, flow.height, flow.grid, output.resource == nullptr ? 1u : 0u,
+                              grid ? constants.gridWidth : 0u, grid ? constants.gridHeight : 0u};
     cmd->SetComputeRoot32BitConstants(2, 8, dispatch, 0);
     const int timingSlot = timer.Begin(device, cmd, usePoint, pass);
     cmd->Dispatch((w + PW_TEMPORAL_THREADS_X - 1) / PW_TEMPORAL_THREADS_X, (h + PW_TEMPORAL_THREADS_Y - 1) / PW_TEMPORAL_THREADS_Y, 1);

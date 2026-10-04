@@ -107,6 +107,9 @@ struct TemporalSettings {
     // 26.6.X: on interpolated frames the reprojection's addition is smoothed along the original frame's own
     // smoothness (colour + depth) around rejected pixels, so no step appears where the game's frame has none.
     float smoothRadiusPx = 24.0f;  // 0 = off
+    // TemporalGrid (2026.10.1): a warped carried frame's reprojection on the grid matched to the model's
+    // density (core/temporal/grid.h, core/frame/carried_grid.h). Off = the native reprojection.
+    bool grid = true;
     // Diagnostics (all default off): flip the motion vectors' sign for the temporal machine;
     // interpolated frames show the raw colour; the model gets single-frame vectors on full passes
     // (no accumulation); a status line in the log every 60 interpolated frames.

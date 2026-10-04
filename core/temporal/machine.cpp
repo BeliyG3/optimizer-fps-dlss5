@@ -184,9 +184,17 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
     // addition along the original and writes the frame.
     const bool compose = in.compose && m.composePso != nullptr && m.toneAcc != nullptr && in.smoothRadius > 0.0f && in.debugVis == 0 && !in.rawInterpolation;
     if (compose) {
+        // On the model's grid the reprojection writes the addition into the top-left grid texels of toneAcc, and
+        // the cells and compose read it from there (PwTAddition); the statistics below keep the plain constants.
+        const bool grid = in.gridWidth != 0 && in.gridHeight != 0 && in.gridWidth <= m.nativeW && in.gridHeight <= m.nativeH &&
+                          m.GridReady();
+        Constants gc = c;
+        if (grid) { gc.gridWidth = in.gridWidth; gc.gridHeight = in.gridHeight; }
         Barrier(cmd, m.toneAcc, m.toneAccState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         const Resources::Output additionOutput = m.Target(kTargetAddition);
-        m.Dispatch(cmd, kReproject, m.Target(kTargetInterp), m.nativeW, m.nativeH, key, c, &additionOutput);
+        // Compose writes every pixel of interp, so the reprojection gets a null u0 and skips that store.
+        const Resources::Output noInterp{nullptr, m.Target(kTargetInterp).format};
+        m.Dispatch(cmd, kReproject, noInterp, m.nativeW, m.nativeH, key, gc, &additionOutput);
         Barrier(cmd, m.toneAcc, m.toneAccState, kReadable);
         // 26.28 PW_T_CELLS: what the reprojection accepted, averaged per cell of the low-res grid with
         // the mean look of the pixels it came from. A rejected pixel then takes a smooth blend of the
@@ -200,7 +208,7 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
             Barrier(cmd, m.cellsAdd, m.cellsAddState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             Barrier(cmd, m.cellsLook, m.cellsLookState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             const Resources::Output lookTarget = m.Target(kTargetCellsLook);
-            m.Dispatch(cmd, kCells, m.Target(kTargetCellsAdd), m.lowW, m.lowH, ak, c, &lookTarget);
+            m.Dispatch(cmd, kCells, m.Target(kTargetCellsAdd), m.lowW, m.lowH, ak, gc, &lookTarget);
             Barrier(cmd, m.cellsAdd, m.cellsAddState, kReadable);
             Barrier(cmd, m.cellsLook, m.cellsLookState, kReadable);
         }
@@ -213,7 +221,7 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
             ck.res[1] = m.cellsLook; ck.fmt[1] = kResidualFormat;
             ck.res[8] = m.cellsAdd; ck.fmt[8] = kResidualFormat;
         }
-        Constants cc = c;
+        Constants cc = gc;
         cc.fill[0] = cells ? 1.0f : 0.0f; // PSCompose reads PwTFill.x as "the cells are bound"
         m.Dispatch(cmd, kCompose, m.Target(kTargetInterp), m.nativeW, m.nativeH, ck, cc);
     } else {

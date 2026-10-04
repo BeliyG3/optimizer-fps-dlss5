@@ -13,6 +13,8 @@
 
     The shader list is never hard-coded: every *.dxbc the build produced goes into
     payload\x64\optimizer-fps-dlss5\, and the installer reads the list back out of files.sha256.
+    The one guard on it: the build must have produced the three temporal grid shaders, or no package is made
+    (the core copes without them, but a release that silently lacks the feature must not ship).
 
 .EXAMPLE
     powershell.exe -NoProfile -File tools\Package-Release.ps1
@@ -83,6 +85,12 @@ if ($shaders.Count -eq 0) { Fail ('No compiled .dxbc in ' + $shaderSrc) }
 $shaderNames = @($shaders | ForEach-Object { $_.Name.ToLowerInvariant() })
 if (@($shaderNames | Select-Object -Unique).Count -ne $shaders.Count) {
     Fail ('Duplicate compiled shader names (case-insensitive) in ' + $shaderSrc)
+}
+# Same list as tools\Test-ReleasePackage.ps1.
+foreach ($required in @('temporal_ReprojectGrid_cs.dxbc', 'temporal_ComposeGrid_cs.dxbc', 'temporal_CellsGrid_cs.dxbc')) {
+    if ($shaderNames -notcontains $required.ToLowerInvariant()) {
+        Fail ('Required compiled shader missing: ' + $required + ' in ' + $shaderSrc)
+    }
 }
 if ((Get-Item -LiteralPath $core).VersionInfo.FileVersion -ne $Version) {
     Fail 'Core DLL version does not match the package version.'

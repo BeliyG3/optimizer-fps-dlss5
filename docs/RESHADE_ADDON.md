@@ -40,7 +40,7 @@ shuts down the core. Hot-unload/pre-unload handshake and shell draining remain p
 | `optimizer-fps-dlss5.addon64` | beside the 64-bit ReShade DLL (in `host64\` for a 32-bit game) | the add-on itself |
 | `optimizer-fps-dlss5-core.dll` | beside the x64 add-on | shared frame core, ABI 1, static CRT |
 | `nvngx.dll_optimizerfps.dll` | beside the add-on | forwarder; exports `pw_ngx_call_create` / `_evaluate` / `_release` |
-| `optimizer-fps-dlss5\*.dxbc` | subdirectory beside the core DLL | 21 compiled shaders |
+| `optimizer-fps-dlss5\*.dxbc` | subdirectory beside the core DLL | 29 compiled shaders |
 | `optimizer-fps-dlss5-remote.addon32` | beside the game's 32-bit ReShade DLL | the tab only, for 32-bit games |
 
 The forwarder exists because the NR snippet checks its caller: it accepts calls only from a module
@@ -212,6 +212,7 @@ materialized by ordinary saves.
 | `TemporalMode` | 0/1/3 | every frame / interpolate (sync) / interpolate (background). `2` was withdrawn and falls back to `1` |
 | `TemporalEvery` | int | frames per model pass: 2…8 sync, 1…8 background |
 | `TemporalMaxQueue` | int | 0…8, background mode: GPU frames allowed unfinished when a frame is recorded |
+| `TemporalGrid` | 0/1 | carried frames reprojected at the model's resolution when the model is compressed (default 1); `0` = as before |
 | `ShowAdvanced` | 0/1 | the tab's **Advanced (diagnostics)** checkbox; written only when it is clicked |
 
 `OptiScalerTakeover` and `ForceBridgeWarpOff` are obsolete compatibility inputs;

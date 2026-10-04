@@ -38,13 +38,13 @@ Check 'migration excludes old bridge/FG keys' `
     (-not ($known -contains 'ForceBridgeWarpOff') -and
      -not ($known -contains 'OptiScalerTakeover'))
 
-# In repository tests the source table must still contain 46 setting IDs.
+# In repository tests the source table must still contain 47 setting IDs.
 $schemaPath = Join-Path $RepoRoot 'core\settings\schema.cpp'
 $schemaText = [IO.File]::ReadAllText($schemaPath)
 $rows = [regex]::Matches($schemaText,
     'Row\(OFPS_SET_[A-Z0-9_]+,\s*"([^"]+)"')
 $schemaKeys = @($rows | ForEach-Object { $_.Groups[1].Value })
-Check 'schema source still contains 46 iniKey rows' ($schemaKeys.Count -eq 46)
+Check 'schema source still contains 47 iniKey rows' ($schemaKeys.Count -eq 47)
 foreach ($key in $schemaKeys) {
     Check ('schema migration parity: ' + $key) ($known -contains $key)
 }

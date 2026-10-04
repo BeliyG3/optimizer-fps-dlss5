@@ -93,6 +93,7 @@ void SettingsToValues(const CoreSettings &in, OfpsSettingsValues *out) {
     I(OFPS_SET_DEBUG_LAYER, d.debugLayerLog ? 1 : 0);
     I(OFPS_SET_DEBUG_WARP_PATH, in.debugWarpPath);
     I(OFPS_SET_MENU_MODE, in.menuMode ? 1 : 0);
+    I(OFPS_SET_TEMPORAL_GRID, t.grid ? 1 : 0);
 }
 int ValuesToSettings(const OfpsSettingsValues &in, CoreSettings *io) {
     if (!io || in.size < offsetof(OfpsSettingsValues, v) || in.count > OFPS_SET_COUNT)
@@ -193,6 +194,7 @@ int ValuesToSettings(const OfpsSettingsValues &in, CoreSettings *io) {
     I(OFPS_SET_DEBUG_WARP_PATH, s.debugWarpPath);
     s.debugWarpPath = std::clamp(s.debugWarpPath, 0, 2);
     B(OFPS_SET_MENU_MODE, s.menuMode);
+    B(OFPS_SET_TEMPORAL_GRID, t.grid);
     *io = s;
     return OFPS_OK;
 }

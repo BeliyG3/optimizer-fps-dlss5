@@ -14,8 +14,10 @@ namespace ofps::core::gpu { struct Shaders { std::vector<char> vertex, pack, unp
 #include "core/shaders/temporal_passes.def"
 #undef PW_TEMPORAL_PASS
 std::vector<char> temporalRefineModel, temporalFlowLumaModel;
+std::vector<char> temporalReprojectGrid, temporalComposeGrid, temporalCellsGrid; // optional: carried frames on the model's grid
 bool loaded = false; bool tried = false; ofps::sdk::ShaderSet Set() const;
 bool WarpLoaded() const { return !warpPack.empty() && !warpUnpack.empty(); }
+bool TemporalGridLoaded() const { return !temporalReprojectGrid.empty() && !temporalComposeGrid.empty() && !temporalCellsGrid.empty(); }
 bool TemporalLoaded() const {
 #define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (temporal##name.empty()) return false;
 #include "core/shaders/temporal_passes.def"

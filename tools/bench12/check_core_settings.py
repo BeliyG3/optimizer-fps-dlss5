@@ -17,10 +17,12 @@ def main():
     rows = re.findall(
         r'Row\(OFPS_SET_\w+,\s*"(\w+)".*?OFPS_TYPE_\w+,\s*[^,]+,\s*[^,]+,\s*([IF])\(([^)]+)\)',
         schema, re.S)
-    if len(rows) != 46:
-        raise ValueError(f'Expected 46 schema rows, found {len(rows)}')
+    if len(rows) != 47:
+        raise ValueError(f'Expected 47 schema rows, found {len(rows)}')
     if rows[45] != ('MenuMode', 'I', '0'):
         raise ValueError(f'Expected schema row 45 to be MenuMode with default 0, found {rows[45]}')
+    if rows[46] != ('TemporalGrid', 'I', '1'):
+        raise ValueError(f'Expected schema row 46 to be TemporalGrid with default 1, found {rows[46]}')
     ini = configparser.ConfigParser(strict=False, interpolation=None)
     ini.read(args.ini, encoding='utf-8-sig')
     reference = ini['OptimizerFPS'] if ini.has_section('OptimizerFPS') else ini['PeripheralWarp']

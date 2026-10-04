@@ -84,5 +84,11 @@ so they survive ReShade re-creating its runtime. The Work boundary represents ra
 scale. Both are hidden outside Peripheral mode and change neither layout generation nor temporal
 reset state.
 
+With a temporal mode, the layout also decides whether carried frames are reprojected at the model's resolution
+(`TemporalGrid=1`, the default): only when the model gets about 80 % or less of the native resolution on both axes,
+for example Peripheral with Global scale below 80 %. The Quality and Balanced presets above stay at native
+resolution. `TemporalGrid=0` keeps carried frames exactly as before; see
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md#carried-frames-at-the-models-resolution).
+
 The add-on's own ini keys, including these and the temporal cadence, are listed in
 [RESHADE_ADDON.md](RESHADE_ADDON.md).

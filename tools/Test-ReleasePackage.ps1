@@ -91,6 +91,13 @@ try {
     if (@($seen.Keys | Where-Object { $_ -match '\.dxbc$' }).Count -ne $shaders.Count) {
         throw 'DXBC outside the expected x64 shader directory'
     }
+    # The installer reads the shader list from the manifest and keeps accepting older installs without these
+    # (the core falls back to the native reprojection), but a release must carry them: without all three the
+    # temporal grid silently never runs. Same list as tools\Package-Release.ps1.
+    foreach ($required in @('temporal_ReprojectGrid_cs.dxbc', 'temporal_ComposeGrid_cs.dxbc',
+                            'temporal_CellsGrid_cs.dxbc')) {
+        if (-not $seen.ContainsKey('x64/optimizer-fps-dlss5/' + $required)) { throw "Missing ZIP DXBC: $required" }
+    }
 
     $version = (Read-ZipText $entries['VERSION.txt']).Trim()
     $versionCmake = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\cmake\Version.cmake'))

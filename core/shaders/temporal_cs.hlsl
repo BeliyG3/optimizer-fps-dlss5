@@ -11,19 +11,21 @@
 
 #include "temporal_layout.h"
 
-#define PW_T_EXPECT 1 // the depth a surface had in the residual's frame travels with the chain: t11 and PSExpect
-#define PW_T_HISTORY 1 // rejected pixels look into the two full passes before the last: t12..t19
-#define PW_T_CELLS 1 // rejected pixels are painted from cells of the accepted addition: PSCells
-#define PW_T_RAMP 1 // a new pass is phased in over a few frames: t10 and PSResidualOld
-#include "temporal.hlsl"
-
+// Declared before temporal.hlsl: its PW_T_GRID variants read PwTGridSize (PwTAddition).
 cbuffer PwTDispatch : register(b1)
 {
     uint2 PwTTargetSize; // size of the texture this dispatch writes
     uint2 PwTFlowSize;   // size of the optical flow session's images (flow/OpticalFlow.h); 0 when unused
     uint PwTFlowGrid;    // session pixels per flow vector (1, 2 or 4)
-    uint3 PwTDispatchPad;
+    uint PwTSkipOut0;    // 1: u0 is a null view (a later pass writes that target); CSReproject skips the store
+    uint2 PwTGridSize;   // carried-frame grid: texels of the addition in t2 (0 = native)
 };
+
+#define PW_T_EXPECT 1 // the depth a surface had in the residual's frame travels with the chain: t11 and PSExpect
+#define PW_T_HISTORY 1 // rejected pixels look into the two full passes before the last: t12..t19
+#define PW_T_CELLS 1 // rejected pixels are painted from cells of the accepted addition: PSCells
+#define PW_T_RAMP 1 // a new pass is phased in over a few frames: t10 and PSResidualOld
+#include "temporal.hlsl"
 
 // The optical flow engine's result: S10.5 fixed point, one vector per PwTFlowGrid block of the session's image,
 // pointing from a pixel of the measured frame to where it is in the residual's frame.
@@ -223,9 +225,24 @@ void CSReproject(uint3 id : SV_DispatchThreadID)
 {
     if (PwTOutside(id.xy)) return;
     const PwTReprojectOut o = PSReproject(PwTVertex(id.xy));
-    // Debug views are written as they are.
-    PwTOut0[id.xy] = PwTParams.z == 0.0 ? float4(PwTLimitToFrame(PwTDecodeFrame(o.color.rgb), id.xy), o.color.a) : o.color;
+    // Debug views are written as they are. Before the compose pass u0 is not bound: the frame is not
+    // decoded and limited only to be thrown away (the addition below still comes from o.color).
+    if (PwTSkipOut0 == 0)
+        PwTOut0[id.xy] = PwTParams.z == 0.0 ? float4(PwTLimitToFrame(PwTDecodeFrame(o.color.rgb), id.xy), o.color.a) : o.color;
     PwTOut1[id.xy] = o.addw;
+}
+
+// A carried frame's reprojection on a coarser grid (PwTTargetSize = PwTGridSize). One thread per grid texel
+// runs the unchanged PSReproject at the native position the texel stands for, so every distance inside it
+// (taps, rings, edge fades, search radius) keeps its size in native pixels. Only the addition + acceptance is
+// written, into the top-left grid texels of u1; the cells and compose passes read it with PwTAddition.
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSReprojectGrid(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwFullscreenVertex v = PwTVertex(id.xy);
+    v.position.xy = v.uv * PwTNative.xy;
+    PwTOut1[id.xy] = PSReproject(v).addw;
 }
 
 // A full pass shown with the blended residual rather than the model's raw answer: the frame the model

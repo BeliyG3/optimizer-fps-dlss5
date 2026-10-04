@@ -1,12 +1,14 @@
 # Temporal modes
 
-The "Temporal" group has three settings; everything else in the machine is fixed at values verified
+The "Temporal" group has four settings; everything else in the machine is fixed at values verified
 on the bench and in game.
 
 * **Temporal mode** (`TemporalMode`) — `Every frame`; `Interpolate: full NR every N-th frame (sync)`;
   `Interpolate: model in the background (async)`.
 * **N** (`TemporalEvery`) — 2…8 sync, 1…8 background.
 * **GPU frames queued ahead** (`TemporalMaxQueue`, background only, default 2).
+* **Carry at the model's resolution** (`TemporalGrid`, default on) — see
+  [Carried frames at the model's resolution](#carried-frames-at-the-models-resolution).
 
 Fixed: depth tolerance 0.05, color tolerance 0.08 (chromaticity first, luma at twice the
 tolerance), no motion limit, hole fill on, Catmull-Rom resampling on, warp base on, residual age
@@ -91,6 +93,23 @@ cap does the same job. On activation the CPU also waits once for everything the 
 
 Frame times are more even, which is the point: the synchronous mode's long/short alternation reads as
 judder even when the average is higher.
+
+## Carried frames at the model's resolution
+
+With Uniform or Peripheral compressing the frame for the model, the model's edit never has more detail than the
+model's own, smaller frame. **Carry at the model's resolution** (`TemporalGrid=1`, on by default) uses that on carried
+frames, in both Interpolate modes: the reprojection, which decides per pixel where the last pass's edit comes from and
+whether it still fits, runs on a coarser grid matched to the model's resolution (in Peripheral, to its 1:1 centre)
+instead of on every native pixel, and its result is read back smoothly into the native frame. The frame itself and the
+compose step that smooths the edit stay at native resolution, and frames where the model runs are not affected.
+
+It applies only where the model really is smaller: when the model's frame is at most 80 % of the screen on each
+axis (Peripheral: its 1:1 centre after Global scale; Uniform: Work × Global scale, so Uniform with Work at 80 % or
+less uses it even at Global scale 100). Mode Off and a larger model, such as the default Peripheral 80/90 at
+Global scale 100, stay at native resolution. The price is a slightly softer edit on carried frames at moving
+edges; untick the checkbox (`TemporalGrid=0`) and carried frames are exactly as before. The log says
+`temporal grid WxH for native WxH (model WxH)` whenever the grid size changes (`0x0` = native, which is also what
+it says for an older install that lacks the three grid shader files: it keeps the native reprojection).
 
 ## The warped base
 

@@ -17,7 +17,7 @@ ctest --preset windows-x64-release --output-on-failure
 The other build presets are `windows-x64-mt`, `windows-x86`,
 `windows-x86-remote`, and `sdk-only-x64`. Each uses `<preset>-release` for the
 build. CTest presets exist for `windows-x64-release`, `windows-x86-release`,
-and `sdk-only-x64-release`; their current inventories are 26, 13, and 10 tests.
+and `sdk-only-x64-release`; their current inventories are 45, 16, and 10 tests.
 All five Windows builds enable warnings as errors. See [docs/BUILD.md](docs/BUILD.md)
 for the artifact paths and SDK install instructions.
 
@@ -32,7 +32,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/Lint-PowerShell51.
 
 The x64 runtime payload is `out/build/x64/hosts/reshade/Release/optimizer-fps-dlss5.addon64`,
 `out/build/x64/hosts/reshade/ngx_forwarder/Release/nvngx.dll_optimizerfps.dll`,
-`out/build/x64/core/Release/optimizer-fps-dlss5-core.dll`, and the 26 DXBC files
+`out/build/x64/core/Release/optimizer-fps-dlss5-core.dll`, and the 29 DXBC files
 under `out/build/x64/shaders/`. Stage the DXBC in `optimizer-fps-dlss5/`
 beside the core DLL. This count describes the current build; packaging takes
 its file list from the build outputs and writes it to `payload/files.sha256`.

@@ -1,5 +1,44 @@
 # Changelog
 
+## 2026.10.1
+
+Carried frames in Interpolate (sync) are cheaper, with a byte-identical image. With a compressed model, carried frames
+in both Interpolate modes can also be reprojected at the model's resolution (a new checkbox, on by default). This
+changes carried frames where it applies, and only there.
+
+**Added**
+
+* **Carry at the model's resolution** (`TemporalGrid`, a checkbox in the Temporal group, on by default). When Uniform
+  or Peripheral gives the model about 80% of the native resolution or less on both axes (for example, Peripheral with
+  Global scale below 80%), carried frames are reprojected on a coarser grid matched to the model's resolution instead
+  of on every native pixel. This works in Interpolate (sync) and in the background mode. The model's edit never has
+  more detail than that grid, so each carried frame costs less GPU time. The frame itself stays at native resolution,
+  and frames where the model runs are unchanged. Carried frames can look slightly softer at moving edges. Mode Off and
+  a model above about 80% are never affected. With the checkbox off, or wherever the grid does not apply, the output
+  is byte-identical to 2026.10.
+
+**Changed**
+
+* **Carried frames cost less GPU time, with a byte-identical image.** The smoothing step is skipped on pixels where it
+  has no effect (where the model's edit was accepted), and one redundant full-resolution write per carried frame is
+  gone. This saving never changes a pixel; the checkbox above is the only change to the image.
+
+On the 4K bench (Peripheral, Global scale 50, the model every third frame), the byte-identical saving cut a carried
+frame from 5.2 ms to 3.1 ms. In a second bench session, the checkbox cut it from 2.7 ms to 1.5 ms. Checked in
+Baldur's Gate 3.
+
+**Limits**
+
+* OptiScaler's own menu shows **Carry at the model's resolution** as unavailable: with OptiScaler's model
+  resolution, carried frames are always reprojected at native resolution.
+
+**Known issues**
+
+* 007 First Light: since the game's Steam patch of October 1, 2026, it crashes or hangs with any `dxgi.dll` or
+  `winmm.dll` proxy, including plain ReShade without this add-on
+  ([DLSS5-Swapper issue #413](https://github.com/rakanki911/DLSS5-Swapper/issues/413)). The add-on does not cause
+  it, but it cannot run there until the game or the loaders fix it.
+
 ## 2026.10
 
 Three changes. Menu mode runs Neural Rendering in the menus of games that switch it off there. Detail transfer is

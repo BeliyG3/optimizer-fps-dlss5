@@ -13,4 +13,4 @@
 # in DESCRIPTION and in the overlay banner instead.
 
 set(OFPS_SDK_VERSION "0.7.0")
-set(OFPS_RELEASE_VERSION "2026.10")
+set(OFPS_RELEASE_VERSION "2026.10.1")

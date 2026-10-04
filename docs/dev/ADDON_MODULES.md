@@ -41,7 +41,7 @@ from old-only `[PeripheralWarp]` through ReShade's API. It saves only changed,
 explicit persisted values; read-only diagnostics are never written back.
 `addon/ini_schema.h` and the public core schema provide defaults, ranges and
 conversions. `test_settings_schema` covers selection and migration. The public
-core schema contains 46 setting IDs.
+core schema contains 47 setting IDs.
 
 `direct_host.h/.cpp` replaces the removed `addon/layout_bridge.h/.cpp`. It probes
 `Local\OptimizerFpsDirectHost_<pid>` and latches direct-host ownership after a signal;

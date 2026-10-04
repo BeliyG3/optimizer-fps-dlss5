@@ -2,6 +2,7 @@
 #include "core/frame/warp_recorder.h"
 
 #include "core/context.h"
+#include "core/frame/carried_grid.h"
 #include "core/frame/host_depth_state.h"
 #include "core/frame/frame_inputs.h"
 #include "core/temporal/controller.h"
@@ -198,6 +199,7 @@ ofps::core::temporal::FrameInputs TemporalInputsWithBase(const EvalContext &c)
             t.colorRect = {r.x, r.y, r.w, r.h};
         }
     }
+    SetCarriedGrid(*c.st, t);
     return t;
 }
 

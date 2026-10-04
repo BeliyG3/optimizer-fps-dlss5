@@ -127,6 +127,26 @@ PwTReprojectOut PSReproject(PwFullscreenVertex input)
     return o;
 }
 
+// The reprojection's addition + acceptance (t2) for the native pixel at p, as the cells and compose passes read it.
+// PW_T_GRID: the reprojection ran on a coarser grid (CSReprojectGrid) and wrote only the top-left PwTGridSize
+// texels of t2. RGB is bilinear at the native pixel's centre, clamped to the grid's texel centres so nothing
+// outside the written corner contributes; .a is the nearest grid texel's - it carries the -1 "lone" mark, and
+// blending marks would invent acceptances. At a grid of the native size this reads exactly what Load reads.
+// Where the corner is smaller than the texture, the clamp stops 1/64 texel short of the last centre: a filter
+// fetches the next texel even at weight 0, and a NaN left there by an earlier frame would come through (WARP).
+float4 PwTAddition(float2 p)
+{
+#ifdef PW_T_GRID
+    const float2 grid = float2(PwTGridSize);
+    const float2 g = (floor(p) + 0.5) * (grid * PwTNative.zw); // the pixel's centre in grid texels
+    const float2 last = grid - (grid < PwTNative.xy ? 0.515625 : 0.5);
+    const float3 rgb = PwTResidual.SampleLevel(PwTLinearClamp, clamp(g, 0.5, last) * PwTNative.zw, 0.0).rgb;
+    return float4(rgb, PwTResidual.Load(int3(min(int2(g), int2(PwTGridSize) - 1), 0)).a);
+#else
+    return PwTResidual.Load(int3(int2(p), 0));
+#endif
+}
+
 #ifdef PW_T_CELLS
 // Cells of what the reprojection ACCEPTED on this frame, for the pixels it rejected (PSCompose).
 //
@@ -149,7 +169,7 @@ PwTCellsOut PSCells(PwFullscreenVertex input)
         [loop] for (int x = 0; x < 8; ++x)
         {
             float2 p = min(origin + (float2(x, y) + 0.5) * block * 0.125, PwTNative.xy - 1.0);
-            float4 aw = PwTResidual.Load(int3(int2(p), 0));
+            float4 aw = PwTAddition(p);
             float a = saturate(aw.a);
             float w = a * a; // firmly accepted pixels speak for the cell
             if (any(!isfinite(aw.rgb))) w = 0.0;
@@ -203,11 +223,17 @@ float4 PwTFromCells(float2 p, float3 encodedColour)
 float4 PSCompose(PwFullscreenVertex input) : SV_Target0
 {
     float2 p = input.position.xy;
-    int2 pi = int2(p);
+    float4 aw = PwTAddition(p);
     float4 color = PwTLoadFrame(PwTColor, int3(PwTRectTexel(p, PwTColorRect), 0));
-    float4 aw = PwTResidual.Load(int3(pi, 0));
     float radius = PwTSmooth.y;
     if (radius <= 0.0) return float4(color.rgb + aw.rgb, color.a);
+    // The share of the smoothed addition (see the end). Where it is exactly 0 the taps cannot change the
+    // result, so they are skipped. Only for a finite, nonzero addition: lerp turns an addition of -0 into
+    // +0, and that sign can reach the frame.
+    float s = 1.0 - smoothstep(0.2, 0.5, saturate(aw.a));
+#ifndef PW_T_COMPOSE_ALWAYS_SMOOTH // tests build the pass without this shortcut and compare
+    if (s == 0.0 && all(isfinite(aw.rgb)) && all(aw.rgb != 0.0)) return float4(color.rgb + aw.rgb, color.a);
+#endif
     float dc = PwTDepth.Load(int3(PwTRectTexel(p, PwTDepthRect), 0));
     const float2 taps[16] = { float2(1, 0), float2(-1, 0), float2(0, 1), float2(0, -1), float2(0.7, 0.7), float2(-0.7, 0.7), float2(0.7, -0.7), float2(-0.7, -0.7),
                               float2(0.5, 0), float2(-0.5, 0), float2(0, 0.5), float2(0, -0.5), float2(0.35, 0.35), float2(-0.35, 0.35), float2(0.35, -0.35), float2(-0.35, -0.35) };
@@ -222,7 +248,7 @@ float4 PSCompose(PwFullscreenVertex input) : SV_Target0
     {
         float2 tk = float2(taps[k].x * rot.x - taps[k].y * rot.y, taps[k].x * rot.y + taps[k].y * rot.x);
         float2 pk = clamp(p + tk * radius, 0.0, PwTNative.xy - 1.0);
-        float4 awk = PwTResidual.Load(int3(int2(pk), 0));
+        float4 awk = PwTAddition(pk);
         float3 ck = PwTLoadFrame(PwTColor, int3(PwTRectTexel(pk, PwTColorRect), 0)).rgb;
         float dk = PwTDepth.Load(int3(PwTRectTexel(pk, PwTDepthRect), 0));
         // A pixel rejected on a silhouette (see PwTReproject) cannot go by its depth: colour alone, strictly.
@@ -247,7 +273,6 @@ float4 PSCompose(PwFullscreenVertex input) : SV_Target0
     // Partial acceptance (0.5..0.9, common in the background mode where the residual is 3-8 frames old) still
     // carries the model's result: only pixels that were essentially rejected are painted. Blending the smoothed
     // addition into partially accepted pixels shifted whole surfaces (forward run, background mode: 1.7 -> 2.8).
-    float s = 1.0 - smoothstep(0.2, 0.5, saturate(aw.a));
     float3 add = lerp(aw.rgb, blurred, s);
     if (any(!isfinite(add))) add = aw.rgb;
     return float4(color.rgb + add, color.a);

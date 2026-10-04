@@ -5,6 +5,7 @@
 #include "core/temporal/async_scheduler.h"
 
 #include "core/frame/debug_readback.h"
+#include "core/frame/carried_grid.h"
 #include "core/frame/feature_state.h"
 #include "core/context.h"
 #include "core/frame/host_depth_state.h"
@@ -378,6 +379,7 @@ int AsyncBody(AsyncCtx &c)
     // 4. The frame the host gets: colour + reprojected residual; the plain colour until the first pass.
     //    Warped: the frame's colour through Pack -> Unpack (no model) is the base, as on the pass.
     ofps::core::temporal::FrameInputs tinOut = c.tin;
+    SetCarriedGrid(st, tinOut); // warped frames only (core/frame/carried_grid.h); the native route stays native
     if (c.useBase && c.host && st.unpackBase) {
         EvalContext hc = *c.host;
         hc.cmd = cmd;

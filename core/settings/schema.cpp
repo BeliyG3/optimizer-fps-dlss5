@@ -229,4 +229,8 @@ const OfpsSettingDesc kOfpsSettings[OFPS_SET_COUNT] = {
         "frame itself. Starts on its own 150 ms after the game's last NR frame and ends when the game calls NR again. "
         "Turn it on during gameplay: in a menu that is already open when you tick it, it starts the next time a menu opens.",
         OFPS_TYPE_BOOL, 0.0f, 1.0f, I(0), kPersisted),
+    Row(OFPS_SET_TEMPORAL_GRID, "TemporalGrid", OFPS_GROUP_TEMPORAL, "Carry at the model's resolution",
+        "The reprojection of carried frames runs on a grid matched to the model's resolution (faster). Off = as "
+        "before.",
+        OFPS_TYPE_BOOL, 0.0f, 1.0f, I(1), kPersisted, kTemporalOn),
 };

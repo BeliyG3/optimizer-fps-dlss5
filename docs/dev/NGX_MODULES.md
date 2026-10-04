@@ -4,7 +4,7 @@
 static `ofps_core` (`OptimizerFps::Core`) used by tests. The Windows x64 core
 builds independently of the ReShade shell. `hosts/reshade/` and the narrow
 OptiScaler integration consume the same ABI 1 contract. The ReShade payload
-places the DLL and 21 DXBC in `optimizer-fps-dlss5/` beside the x64 add-on;
+places the DLL and 29 DXBC in `optimizer-fps-dlss5/` beside the x64 add-on;
 the x86 remote tab stays beside the x86 ReShade DLL and connects to the x64
 host through IPC V4.
 
@@ -46,6 +46,9 @@ restores resource states and supplies the existing SEH wrappers and fallback out
 `host_shape`, `host_depth_state`, `motion_smooth`, `debug_readback` and `timing`
 retain their separate shape, depth-state, smoothing, readback and timestamp responsibilities.
 `model_passes`, `spread_passes` and `spread_model` retain sequential and spread model work.
+`carried_grid.h/.cpp` applies the TemporalGrid rule (`core/temporal/grid.h`) to a feature's carried frame on the
+two routes that carry a warped frame (`TemporalInputsWithBase`, the background scheduler's carried frame) and logs
+a change of the chosen size.
 
 ## Temporal code and shaders
 

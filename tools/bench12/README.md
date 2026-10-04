@@ -751,7 +751,7 @@ shaders together. This does not enable the legacy OptiScaler core integration.
 
 Core cases run in `<Out>/core-runtime/`, copied by an allowlist with no ReShade,
 local DXGI or addons. The manifest records actual argv, working directory and
-binary hashes. All 46 effective schema settings are checked against the reference
+binary hashes. All 47 effective schema settings are checked against the reference
 INI (schema defaults apply to missing keys) before image comparison. Legacy keys
 outside ABI 1's schema are not treated as active settings.
 
