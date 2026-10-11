@@ -16,6 +16,7 @@
 #include "core/temporal/machine.h"
 #include "core/temporal/phase.h"
 #include "core/temporal/history.h"
+#include "core/temporal/sky_field.h"
 #include "core/temporal/stats.h"
 #include "core/temporal/pass_timing.h"
 #include "core/shaders/temporal_layout.h"
@@ -27,7 +28,10 @@ namespace ofps::core::temporal {
 // Shared t0..t19, u0/u1 and b0/b1 contract. The add-on reserves t9 for optional optical flow.
 using namespace pwtemporalcontract;
 constexpr int kTableUsed = PW_TEMPORAL_SRV_COUNT;
-constexpr std::uint32_t kTableSlots = 256; // fresh tables for both chains, adoption and kick, with queue headroom
+// Fresh tables for both chains, adoption and kick, with queue headroom. 512: a host list no queue event reports submitted
+// (renodx's Present hook point) frees its tables kDeferredReleaseEvaluates evaluates after use, and the synchronous mode
+// takes about 15 per evaluate: 17 evaluates in flight filled 256 exactly (bench, renodx 8.5 NRHookPoint=2).
+constexpr std::uint32_t kTableSlots = 512;
 constexpr std::uint32_t kFallbackTableSlots = 64; // independent capacity for raw colour conversion
 constexpr std::uint32_t kLowDivisor = 16; // low-res residual and cell grid: native / 16 per axis
 constexpr D3D12_RESOURCE_STATES kReadable = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -60,7 +64,7 @@ enum TargetIndex : int {
     kTargetCount
 };
 
-// Mirrors cbuffer PwTemporalConstants in shaders/temporal.hlsl: 9 float4 of root constants. The
+// Mirrors cbuffer PwTemporalConstants in shaders/temporal.hlsl: 11 float4 of root constants. The
 // shader carries the per-lane description.
 struct Constants {
     float native[4];     // native width, height, 1/width, 1/height
@@ -72,13 +76,17 @@ struct Constants {
     float tune[4];       // colour tolerance, motion sign, raw interpolation, residual blend weight
     float fill[4];       // hole fill on/off, low-res width, low-res height, depth-guided chain fetch radius
     float smoothing[4];  // acceptance tap scale, guided smoothing radius, ratio domain (unused here), share of the new residual
+    float sky[4];        // x: the host's far-plane depth (1 standard, 0 reversed Z) for the sky field; y: the probe's accept-all
+                         // (Reproject); z: the main chain's rule (Accumulate, LinkFail, AccumulatePair); w: the carry chain's
+                         // rule (AccumulatePair); 0 on every other pass (PwTSky, temporal.hlsl)
+    float depthFRect[4]; // the sub-rect of the depth at t6 as its own frame described it (Resources::depthFRect)
     std::uint32_t hostModelGrid = 0; // CPU pipeline selection, not part of the shader constants
     // CPU only: a carried frame's grid (0 = native). Selects the grid pipelines of the reprojection, cells and
     // compose and reaches them through dispatch lanes 6-7 (PwTGridSize), never through the root constants.
     std::uint32_t gridWidth = 0, gridHeight = 0;
 };
-static_assert(sizeof(Constants) == 39 * sizeof(float));
-constexpr UINT kConstantDwords = 36;
+static_assert(sizeof(Constants) == 47 * sizeof(float));
+constexpr UINT kConstantDwords = 44;
 
 struct SlotKey {
     ID3D12Resource *res[kTableUsed] = {};
@@ -96,9 +104,32 @@ struct Resources {
 #include "core/shaders/temporal_passes.def"
 #undef PW_TEMPORAL_PASS
     ID3D12PipelineState *refineModelPso = nullptr, *flowLumaModelPso = nullptr;
+    ID3D12PipelineState *refinePairModelPso = nullptr; // optional: RefinePair on the model grid (the carry chain's)
     // Optional: a carried frame's reprojection on the model's grid and the passes reading it (all three or none).
     ID3D12PipelineState *reprojectGridPso = nullptr, *composeGridPso = nullptr, *cellsGridPso = nullptr;
     bool GridReady() const { return reprojectGridPso != nullptr && composeGridPso != nullptr && cellsGridPso != nullptr; }
+    // Optional: the sky field's passes (all four or none) and its pyramid.
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) ID3D12PipelineState *member##Pso = nullptr;
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+    bool SkyPassesReady() const
+    {
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (member##Pso == nullptr) return false;
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+        return true;
+    }
+    bool SkyReady() const { return SkyPassesReady() && sky.Created(); }
+    // Optional, each on its own: the marker's passes (temporal_marker_passes.def).
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) ID3D12PipelineState *member##Pso = nullptr;
+#include "core/shaders/temporal_marker_passes.def"
+#undef PW_TEMPORAL_PASS
+    // DebugTemporalCarryChainRule's carry chain (carry_chain.cpp) needs the two pair passes, and RefinePair's model-grid
+    // variant on a host that keeps a model grid.
+    bool PairReady(bool modelGrid) const
+    {
+        return accumulatePairPso != nullptr && refinePairPso != nullptr && (!modelGrid || refinePairModelPso != nullptr);
+    }
     ID3D12DescriptorHeap *srvHeap = nullptr;
     UINT srvIncrement = 0;
     struct Output { ID3D12Resource *resource = nullptr; DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; };
@@ -119,7 +150,30 @@ struct Resources {
     ID3D12Resource *residualMix = nullptr;
     ID3D12Resource *cellsAdd = nullptr, *cellsLook = nullptr; // 26.28 PW_T_CELLS
     ID3D12Resource *modelMv = nullptr;                      // 26.28: vectors handed to the model on a full pass
+    // DebugTemporalDumpAcc: why ModelMotion marked each texel (R8_UINT, PwTMarkerReason), created on first use.
+    ID3D12Resource *markerReason = nullptr;
+    D3D12_RESOURCE_STATES markerReasonState = D3D12_RESOURCE_STATE_COMMON;
+    // DebugTemporalMarkerRule 3/4: every texel's base marker verdict (R8_UINT, MarkerFail), created on first use.
+    ID3D12Resource *markerFail = nullptr;
+    D3D12_RESOURCE_STATES markerFailState = D3D12_RESOURCE_STATE_COMMON;
+    // DebugTemporalChainRule 3: every texel's rule-2 link verdict (R8_UINT, LinkFail), created on first use.
+    ID3D12Resource *linkFail = nullptr;
+    D3D12_RESOURCE_STATES linkFailState = D3D12_RESOURCE_STATE_COMMON;
+    // DebugTemporalCarryChainRule 1..6: the carry chain the reprojection reads (carry_chain.cpp), a ping-pong pair like
+    // acc, created on first use; accCarry[accCarryCurrent] holds the latest.
+    ID3D12Resource *accCarry[2] = {};
+    D3D12_RESOURCE_STATES accCarryState[2] = {D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON};
+    int accCarryCurrent = 0;
+    // DebugTemporalCarryChainRule 6: a copy of last frame's unrefined main chain (carry_chain.cpp), which AccumulatePair
+    // reads around each texel while it overwrites the original. Created on first use.
+    ID3D12Resource *accUnrefined = nullptr;
+    D3D12_RESOURCE_STATES accUnrefinedState = D3D12_RESOURCE_STATE_COMMON;
+    bool carryChainFailed = false; // a texture of the carry chain could not be created: not retried until these Resources go
 
+    // The sub-rects the depth snapshots were copied with (their frames' depthRect; w = 0 before the first copy). A
+    // host with dynamic resolution moves the depth's sub-rect between frames; the passes read a snapshot through its
+    // own (PwTDepthFRect), not through the current frame's.
+    Rect depthFRect{}, depthPrevRect{};
     D3D12_RESOURCE_STATES residualState = D3D12_RESOURCE_STATE_COMMON, residualPrevState = D3D12_RESOURCE_STATE_COMMON,
                           depthFState = D3D12_RESOURCE_STATE_COMMON, depthPrevState = D3D12_RESOURCE_STATE_COMMON,
                           accState[2] = {D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON},
@@ -143,6 +197,7 @@ struct Resources {
     bool residualEverWritten = false;
     PhaseIn phase;
     History history;
+    SkyField sky;
     StatsReader stats;
     PassTimer timer;
 
@@ -159,6 +214,15 @@ struct Resources {
     std::uint32_t historyPictureDivisor = 3;
     MachineRole role = MachineRole::Synchronous; // decides the optional textures above (machine_role.h)
     DXGI_FORMAT outputFormat = DXGI_FORMAT_UNKNOWN, outputView = DXGI_FORMAT_UNKNOWN, depthFormat = DXGI_FORMAT_UNKNOWN;
+    // DebugTemporalDumpAcc (acc_dump_copies.cpp): the readback of modelMv, the chain and markerReason, created on first
+    // use; the fence point of the frame it was recorded on (fence AddRef'd, null = an evaluate count as in OfpsFencePoint).
+    struct AccDump {
+        ID3D12Resource *buffer = nullptr;
+        ID3D12Fence *fence = nullptr;
+        std::uint64_t value = 0;
+        AccDumpTags tags;
+        bool pending = false;
+    } accDump;
 
     ~Resources();
 
@@ -179,11 +243,28 @@ struct Resources {
 
     // The inputs as the passes see them: with a base colour, it stands in for the host colour.
     FrameInputs Resolve(const FrameInputs &raw) const;
+    // PwTDepthFRect is depthFRect (t6 = the residual frame's snapshot); a pass binding another depth at t6 overrides it
+    // with SetDepthFRect.
     Constants BaseConstants(const FrameInputs &in) const;
+    static void SetDepthFRect(Constants &c, const Rect &copied, const FrameInputs &in);
     // The bindings every pass shares (t0..t11); each pass overrides what it reads differently.
     SlotKey BaseKey(const FrameInputs &in, ID3D12Resource *accPrev) const;
     // Makes sure `colorF` matches the host colour's description; false when it could not be created.
     bool EnsureColorSnapshot(const FrameInputs &in);
+    // Creates `texture` (markerReason, markerFail, linkFail) on first use: motion-texture size, R8_UINT; false when it cannot.
+    bool EnsureMotionByte(ID3D12Resource *&texture);
+    // Before ModelMotion / MarkerReason with this key and these constants (the rule in params[2]): t1 becomes the
+    // fail mask's view, and under rules 3/4 MarkerFail fills the mask and params[0] = 1 tells the pass to read it.
+    // Without the pass or its texture the pass tests every neighbour inline (the same decisions).
+    void RecordMarkerFail(ID3D12GraphicsCommandList *cmd, SlotKey &key, Constants &c);
+    // Before a chain's Accumulate (the main one or the carry chain, carry_chain.cpp) with this key and these constants
+    // (its rule in sky[2]): t1 becomes the LinkFail mask's view, and under rule 3, where the links are tested, LinkFail
+    // fills the mask (one texture: each chain fills it right before its own Accumulate reads it). Without the pass or its
+    // texture rule 3 runs as rule 2 (sky[2] = 2, logged once).
+    void RecordLinkFail(ID3D12GraphicsCommandList *cmd, SlotKey &key, Constants &c);
+    // Creates the carry chain's pair (accCarry) on first use, and with `unrefined` accUnrefined; false when it cannot (and
+    // from then on, without trying again: carryChainFailed).
+    bool EnsureCarryChain(bool unrefined);
 };
 
 } // namespace ofps::core::temporal

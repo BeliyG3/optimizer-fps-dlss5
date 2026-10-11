@@ -1,5 +1,6 @@
 #include "animation.h"
 #include "animation_deform.h"
+#include "wind.h"
 #include <chrono>
 #include <stdexcept>
 
@@ -43,6 +44,7 @@ void Animation::Start(TriVertex *destination,const std::vector<unsigned> &order)
             output[out]={};
             if(size_t(i)*2+1<p.uvs.size()) { output[out].uv[0]=p.uvs[size_t(i)*2]; output[out].uv[1]=p.uvs[size_t(i)*2+1]; }
         }
+        if(source.nodes[ref.node].wind) { item.wind=WindWeights(source,ref.node,ref.primitive); hasWind=hasWind || !item.wind.empty(); }
         primitives.push_back(std::move(item));
     }
     size_t total=0;
@@ -84,24 +86,31 @@ void Animation::Process(Worker &w)
             if(geometryChanged) DeformVertex(p,v,current.weights,current.joints,currentPose.worlds[ref.node],pos,normal);
             if(before==now) prev=pos;
             else if(seek) { Vec3 unused; DeformVertex(p,v,previous.weights,previous.joints,previousPose.worlds[ref.node],prev,unused); }
-            item.positions[v]=pos;
+            item.positions[v]=pos; // the rest position: wind is added to the output only
+            Vec3 outPos=pos,outPrev=prev;
+            if(!item.wind.empty()) { // exact motion: this frame's offset on `pos`, the previous frame's on `prev`
+                outPos=pos+WindOffset(windNow,pos,item.wind[v],windStrength);
+                outPrev=prev+WindOffset(windBefore,prev,item.wind[v],windStrength);
+            }
             for(size_t k=item.offsets[v];k<item.offsets[v+1];++k) {
-                auto &out=output[item.outputs[k]]; out.prevPos=prev;
-                if(geometryChanged) { out.pos=pos; out.normal=normal; }
+                auto &out=output[item.outputs[k]]; out.prevPos=outPrev;
+                if(geometryChanged || (windChanged && !item.wind.empty())) out.pos=outPos;
+                if(geometryChanged) out.normal=normal;
             }
         }
     }
 }
-bool Animation::Evaluate(float time,float previousTime)
+bool Animation::Evaluate(float time,float previousTime,unsigned windFrame,unsigned windFrameBefore)
 {
-    geometryChanged=false;
-    if(workers.empty() || (evaluated && time==now && previousTime==before)) { cpuMs=0; return false; }
+    geometryChanged=windChanged=false;
+    const bool windMoves=hasWind && (!evaluated || windFrame!=windNow);
+    if(workers.empty() || (evaluated && time==now && previousTime==before && !windMoves)) { cpuMs=0; return false; }
     const auto start=std::chrono::steady_clock::now();
-    geometryChanged=!evaluated || time!=now;
+    geometryChanged=!evaluated || time!=now; windChanged=windMoves;
     reusePrevious=evaluated && previousTime==now;
     if(geometryChanged) currentPose.Evaluate(source,time);
     if(!reusePrevious && previousTime!=time) previousPose.Evaluate(source,previousTime);
-    std::unique_lock lock(mutex); now=time; before=previousTime; pending=workers.size(); ++generation;
+    std::unique_lock lock(mutex); now=time; before=previousTime; windNow=windFrame; windBefore=windFrameBefore; pending=workers.size(); ++generation;
     wake.notify_all(); done.wait(lock,[&] { return pending==0; });
     cpuMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
     evaluated=true; return true;

@@ -11,4 +11,14 @@ struct Golden { OfpsSettingId id; const char *iniKey; OfpsSettingType type; floa
 {OFPS_SET_DEBUG_TEMPORAL_NO_EXPECT, "DebugTemporalNoExpect", OFPS_TYPE_BOOL, 0, 1, 0, 0}, {OFPS_SET_DEBUG_TEMPORAL_NO_CELLS, "DebugTemporalNoCells", OFPS_TYPE_BOOL, 0, 1, 0, 0}, {OFPS_SET_DEBUG_TEMPORAL_PHASE_IN, "DebugTemporalPhaseIn", OFPS_TYPE_INT, -1, 8, -1, 0}, {OFPS_SET_DEBUG_LAYER, "DebugLayer", OFPS_TYPE_BOOL, 0, 1, 0, 0},
 {OFPS_SET_DEBUG_WARP_PATH, "DebugWarpPath", OFPS_TYPE_ENUM, 0, 2, 0, 0},
 {OFPS_SET_MENU_MODE, "MenuMode", OFPS_TYPE_BOOL, 0, 1, 0, 0},
-{OFPS_SET_TEMPORAL_GRID, "TemporalGrid", OFPS_TYPE_BOOL, 0, 1, 1, 0}, }; static_assert(sizeof(kToday) / sizeof(kToday[0]) == OFPS_SET_COUNT, "one golden row per id");
+{OFPS_SET_TEMPORAL_GRID, "TemporalGrid", OFPS_TYPE_BOOL, 0, 1, 1, 0},
+{OFPS_SET_TEMPORAL_SKY_FIELD, "TemporalSkyField", OFPS_TYPE_BOOL, 0, 1, 1, 0},
+{OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC, "DebugTemporalDumpAcc", OFPS_TYPE_BOOL, 0, 1, 0, 0},
+{OFPS_SET_DEBUG_TEMPORAL_MARKER_RULE, "DebugTemporalMarkerRule", OFPS_TYPE_INT, 0, 4, 0, 0},
+{OFPS_SET_DEBUG_TEMPORAL_MARKER_NEIGHBOURS, "DebugTemporalMarkerNeighbours", OFPS_TYPE_INT, 0, 25, 0, 0},
+{OFPS_SET_TEMPORAL_MODEL_MARKER, "TemporalModelMarker", OFPS_TYPE_ENUM, 0, 2, 2, 0},
+{OFPS_SET_DEBUG_TEMPORAL_CARRY_PROBE, "DebugTemporalCarryProbe", OFPS_TYPE_INT, 0, 7, 0, 0},
+{OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC_FROM, "DebugTemporalDumpAccFrom", OFPS_TYPE_INT, 0, 1000000, 0, 0},
+{OFPS_SET_DEBUG_TEMPORAL_CHAIN_RULE, "DebugTemporalChainRule", OFPS_TYPE_INT, 0, 4, 0, 0},
+{OFPS_SET_DEBUG_TEMPORAL_CARRY_CHAIN_RULE, "DebugTemporalCarryChainRule", OFPS_TYPE_INT, 0, 6, 0, 0},
+{OFPS_SET_TEMPORAL_CHAIN_RULE, "TemporalChainRule", OFPS_TYPE_ENUM, 0, 1, 1, 0}, }; static_assert(sizeof(kToday) / sizeof(kToday[0]) == OFPS_SET_COUNT, "one golden row per id");

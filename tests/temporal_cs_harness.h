@@ -1,8 +1,9 @@
 #pragma once
 
 // D3D11 WARP harness for single temporal compute passes (core/shaders/temporal_cs.hlsl): float images as SRVs,
-// two RGBA32F UAVs that start from given images and are read back, b0 (36 floats), b1 (8 lanes) and the two
-// samplers of the machine's root signature. Used by test_temporal_grid_shaders.cpp.
+// two RGBA32F UAVs that start from given images and are read back, b0 (44 floats), b1 (8 lanes) and the two
+// samplers of the machine's root signature. Used by test_temporal_grid_shaders.cpp, the sky field tests and
+// test_temporal_marker_reason.cpp (u0 as R8_UINT).
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -22,8 +23,8 @@ namespace temporal_cs {
 
 using Microsoft::WRL::ComPtr;
 using Texel = std::array<float, 4>;
-using Views = std::array<ID3D11ShaderResourceView *, 20>;
-using Root = std::array<float, 36>;
+using Views = std::array<ID3D11ShaderResourceView *, 22>;
+using Root = std::array<float, 44>;
 using Lanes = std::array<std::uint32_t, 8>;
 
 inline void Check(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("D3D operation failed"); }
@@ -88,9 +89,10 @@ struct Gpu {
         return Srv(image.width, image.height, DXGI_FORMAT_R32G32B32A32_FLOAT, image.texels.data(), sizeof(Texel));
     }
 
-    // One dispatch of `threads`; u0 and u1 start as `out` and hold what the pass left there afterwards.
+    // One dispatch of `threads`; u0 and u1 start as `out` and hold what the pass left there afterwards. `u0Format`
+    // R8_UINT (the marker reason): u0 is a uint target, its byte travels in x of `out[0]`.
     void Run(const std::vector<char> &code, const Views &views, const Root &root, const Lanes &lanes, UINT threadsX, UINT threadsY,
-             std::array<Image, 2> &out)
+             std::array<Image, 2> &out, DXGI_FORMAT u0Format = DXGI_FORMAT_R32G32B32A32_FLOAT)
     {
         ComPtr<ID3D11ComputeShader> shader; Check(device->CreateComputeShader(code.data(), code.size(), nullptr, &shader));
         context->CSSetShader(shader.Get(), nullptr, 0);
@@ -103,12 +105,17 @@ struct Gpu {
         context->CSSetConstantBuffers(0, 2, buffers);
         ComPtr<ID3D11Texture2D> targets[2];
         ComPtr<ID3D11UnorderedAccessView> uavs[2];
+        const bool bytes = u0Format == DXGI_FORMAT_R8_UINT;
+        std::vector<std::uint8_t> u0Bytes(out[0].texels.size());
+        for (std::size_t k = 0; k < u0Bytes.size(); ++k) u0Bytes[k] = static_cast<std::uint8_t>(out[0].texels[k][0]);
         for (int i = 0; i < 2; ++i) {
+            const bool asBytes = i == 0 && bytes;
             D3D11_TEXTURE2D_DESC desc{};
             desc.Width = out[i].width; desc.Height = out[i].height; desc.MipLevels = desc.ArraySize = 1;
-            desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT; desc.SampleDesc.Count = 1;
+            desc.Format = asBytes ? u0Format : DXGI_FORMAT_R32G32B32A32_FLOAT; desc.SampleDesc.Count = 1;
             desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-            const D3D11_SUBRESOURCE_DATA init{out[i].texels.data(), out[i].width * static_cast<UINT>(sizeof(Texel)), 0};
+            const D3D11_SUBRESOURCE_DATA init = asBytes ? D3D11_SUBRESOURCE_DATA{u0Bytes.data(), out[i].width, 0}
+                                                        : D3D11_SUBRESOURCE_DATA{out[i].texels.data(), out[i].width * static_cast<UINT>(sizeof(Texel)), 0};
             Check(device->CreateTexture2D(&desc, &init, &targets[i]));
             Check(device->CreateUnorderedAccessView(targets[i].Get(), nullptr, &uavs[i]));
         }
@@ -124,8 +131,13 @@ struct Gpu {
             ComPtr<ID3D11Texture2D> staging; Check(device->CreateTexture2D(&desc, nullptr, &staging));
             context->CopyResource(staging.Get(), targets[i].Get());
             D3D11_MAPPED_SUBRESOURCE mapped{}; Check(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
-            for (UINT y = 0; y < out[i].height; ++y)
-                std::memcpy(&out[i].at(0, y), static_cast<const char *>(mapped.pData) + y * mapped.RowPitch, out[i].width * sizeof(Texel));
+            for (UINT y = 0; y < out[i].height; ++y) {
+                const char *row = static_cast<const char *>(mapped.pData) + y * mapped.RowPitch;
+                if (i == 0 && bytes)
+                    for (UINT x = 0; x < out[i].width; ++x) out[i].at(x, y) = {float(static_cast<std::uint8_t>(row[x])), 0, 0, 0};
+                else
+                    std::memcpy(&out[i].at(0, y), row, out[i].width * sizeof(Texel));
+            }
             context->Unmap(staging.Get(), 0);
         }
     }

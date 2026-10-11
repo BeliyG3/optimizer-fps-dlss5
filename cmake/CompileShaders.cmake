@@ -40,16 +40,25 @@ set(_ofps_shader_sources
     "${PROJECT_SOURCE_DIR}/core/shaders/temporal_mapping.hlsli"
     "${PROJECT_SOURCE_DIR}/core/shaders/temporal_residual.hlsli"
     "${PROJECT_SOURCE_DIR}/core/shaders/temporal_reproject.hlsli"
+    "${PROJECT_SOURCE_DIR}/core/shaders/temporal_sky.hlsli"
+    "${PROJECT_SOURCE_DIR}/core/shaders/temporal_chain_pair.hlsli"
     "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl"
     "${PROJECT_SOURCE_DIR}/core/shaders/motion_smooth.hlsl"
     "${PROJECT_SOURCE_DIR}/core/shaders/warp_cs.hlsl"
     "${PROJECT_SOURCE_DIR}/core/shaders/menu_convert_cs.hlsl")
 
-# One manifest drives both products' temporal binaries and pipeline tables.
+# One manifest drives both products' temporal binaries and pipeline tables; the sky field's and the marker's optional
+# passes have manifests of their own with the same columns (the core loads them optionally).
 set(OFPS_TEMPORAL_SOURCE "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl")
-list(APPEND _ofps_shader_sources "${PROJECT_SOURCE_DIR}/core/shaders/temporal_passes.def" "${PROJECT_SOURCE_DIR}/core/shaders/temporal_layout.h")
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/core/shaders/temporal_passes.def")
-file(STRINGS "${PROJECT_SOURCE_DIR}/core/shaders/temporal_passes.def" _ofps_pass_rows REGEX "^PW_TEMPORAL_PASS")
+set(_ofps_pass_manifests "${PROJECT_SOURCE_DIR}/core/shaders/temporal_passes.def" "${PROJECT_SOURCE_DIR}/core/shaders/temporal_sky_passes.def"
+    "${PROJECT_SOURCE_DIR}/core/shaders/temporal_marker_passes.def")
+list(APPEND _ofps_shader_sources ${_ofps_pass_manifests} "${PROJECT_SOURCE_DIR}/core/shaders/temporal_layout.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_ofps_pass_manifests})
+set(_ofps_pass_rows)
+foreach(_ofps_manifest IN LISTS _ofps_pass_manifests)
+    file(STRINGS "${_ofps_manifest}" _ofps_manifest_rows REGEX "^PW_TEMPORAL_PASS")
+    list(APPEND _ofps_pass_rows ${_ofps_manifest_rows})
+endforeach()
 foreach(_ofps_row IN LISTS _ofps_pass_rows)
     string(REGEX REPLACE "PW_TEMPORAL_PASS\\(([A-Za-z]+),.*" "\\1" _ofps_name "${_ofps_row}")
     list(APPEND OFPS_TEMPORAL_PASSES_NAMES "temporal_${_ofps_name}_cs")
@@ -80,7 +89,8 @@ ofps_compile_dxbc(menu_convert_cs "${PROJECT_SOURCE_DIR}/core/shaders/menu_conve
 foreach(_ofps_pass_name _ofps_pass_entry IN ZIP_LISTS OFPS_TEMPORAL_PASSES_NAMES OFPS_TEMPORAL_PASSES_ENTRIES)
     ofps_compile_dxbc("${_ofps_pass_name}" "${OFPS_TEMPORAL_SOURCE}" "${_ofps_pass_entry}" cs_5_0)
 endforeach()
-foreach(_ofps_model_pass IN ITEMS Refine FlowLuma)
+# RefinePair's model-grid variant is optional (the carry chain's; without it a host on the model grid has no carry chain).
+foreach(_ofps_model_pass IN ITEMS Refine FlowLuma RefinePair)
     ofps_compile_dxbc("temporal_${_ofps_model_pass}Model_cs" "${OFPS_TEMPORAL_SOURCE}" "CS${_ofps_model_pass}" cs_5_0 /D PW_T_MODEL_GRID=1)
 endforeach()
 # A carried frame's reprojection on the model's grid, and the cells/compose passes that read it. Optional, outside
@@ -116,7 +126,7 @@ if(OFPS_DXC_EXECUTABLE)
     foreach(_ofps_pass_name _ofps_pass_entry IN ZIP_LISTS OFPS_TEMPORAL_PASSES_NAMES OFPS_TEMPORAL_PASSES_ENTRIES)
         ofps_compile_spirv("${_ofps_pass_name}" "${OFPS_TEMPORAL_SOURCE}" "${_ofps_pass_entry}" cs_6_0)
     endforeach()
-    foreach(_ofps_model_pass IN ITEMS Refine FlowLuma)
+    foreach(_ofps_model_pass IN ITEMS Refine FlowLuma RefinePair)
         ofps_compile_spirv("temporal_${_ofps_model_pass}Model_cs" "${OFPS_TEMPORAL_SOURCE}" "CS${_ofps_model_pass}" cs_6_0 -DPW_T_MODEL_GRID=1)
     endforeach()
     ofps_compile_spirv(temporal_ReprojectGrid_cs "${OFPS_TEMPORAL_SOURCE}" CSReprojectGrid cs_6_0)

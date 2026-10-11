@@ -10,6 +10,31 @@ namespace {
 using ofps::core::gpu::Barrier;
 using ofps::core::gpu::BarrierExternal;
 
+// ModelMotion and MarkerReason run the same tests (PwTMarkerReason) on the same inputs; only the target differs. Under
+// rules 3/4 each one is preceded by MarkerFail (Resources::RecordMarkerFail).
+void RecordChainTest(Resources &m, ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn, Pass pass, Resources::Output target,
+                     D3D12_RESOURCE_STATES &targetState)
+{
+    const FrameInputs in = m.Resolve(rawIn);
+    BarrierExternal(cmd, in.color, in.colorState, kReadable, in.colorSubresource);
+    BarrierExternal(cmd, in.depth, in.depthState, kReadable, in.depthSubresource);
+    Barrier(cmd, m.depthF, m.depthFState, kReadable);
+    if (m.colorF) Barrier(cmd, m.colorF, m.colorFState, kReadable);
+    Barrier(cmd, m.acc[m.accCurrent], m.accState[m.accCurrent], kReadable);
+    Barrier(cmd, target.resource, targetState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Constants c = m.BaseConstants(in);
+    if (m.colorF == nullptr) c.tune[0] = 0.0f; // no snapshot yet: no colour test
+    c.params[1] = static_cast<float>(in.markerNeighbours); // free on these passes (accumulate's y)
+    c.params[2] = static_cast<float>(in.markerRule);
+    SlotKey key = m.BaseKey(in, m.acc[m.accCurrent]);
+    m.RecordMarkerFail(cmd, key, c);
+    m.Dispatch(cmd, pass, target, m.motionW, m.motionH, key, c);
+    Barrier(cmd, target.resource, targetState, kAccState);
+    Barrier(cmd, m.acc[m.accCurrent], m.accState[m.accCurrent], kAccState);
+    BarrierExternal(cmd, in.color, kReadable, in.colorState, in.colorSubresource);
+    BarrierExternal(cmd, in.depth, kReadable, in.depthState, in.depthSubresource);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -38,6 +63,7 @@ void Machine::RecordExpect(ID3D12GraphicsCommandList *cmd, const FrameInputs &in
     key.res[11] = textures[current]; key.fmt[11] = DXGI_FORMAT_R32G32B32A32_FLOAT;
     key.res[6] = m.depthPrev; key.fmt[6] = in.depthView; // t6 here is the PREVIOUS frame's depth
     Constants c = m.BaseConstants(in);
+    Resources::SetDepthFRect(c, m.depthPrevRect, in); // ...read through the previous frame's own sub-rect
     c.params[0] = on ? 1.0f : 0.0f;
     c.params[1] = (on && valid) ? 1.0f : 0.0f; // the previous frame's expectation is usable
     m.Dispatch(cmd, kExpect, m.Target(outputs[next]), m.motionW, m.motionH, key, c);
@@ -54,6 +80,7 @@ void Machine::RecordDepthPrev(ID3D12GraphicsCommandList *cmd, const FrameInputs 
     BarrierExternal(cmd, in.depth, in.depthState, D3D12_RESOURCE_STATE_COPY_SOURCE, in.depthSubresource);
     Barrier(cmd, m.depthPrev, m.depthPrevState, D3D12_RESOURCE_STATE_COPY_DEST);
     CopyDepth(cmd, in, m.depthPrev);
+    m.depthPrevRect = in.depthRect;
     Barrier(cmd, m.depthPrev, m.depthPrevState, kReadable);
     BarrierExternal(cmd, in.depth, D3D12_RESOURCE_STATE_COPY_SOURCE, in.depthState, in.depthSubresource);
 }
@@ -75,7 +102,8 @@ void Machine::RecordAccumulate(ID3D12GraphicsCommandList *cmd, const FrameInputs
 {
     Resources &m = *res_;
     const FrameInputs in = m.Resolve(rawIn);
-    RecordFlowSeed(cmd, in);
+    const bool seeded = RecordFlowSeed(cmd, in);
+    if (seeded) unrefinedKept_ = false; // the seed took the place of last frame's unrefined chain
     const int prev = m.accCurrent;
     const int next = 1 - prev;
     // The chain's link test and the expectation both read the frame and the depth in a pixel shader.
@@ -89,21 +117,32 @@ void Machine::RecordAccumulate(ID3D12GraphicsCommandList *cmd, const FrameInputs
         RecordExpect(cmd, in, in.expectedDepth);
     }
     if (accValid_) Barrier(cmd, m.acc[prev], m.accState[prev], kReadable);
-    Barrier(cmd, m.acc[next], m.accState[next], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Constants c = m.BaseConstants(in);
     c.params[0] = 1.0f; // validate each link against the residual's frame (depth + colour); the pending chain has no stored frame to test against
     c.params[1] = accValid_ ? 1.0f : 0.0f;
-    m.Dispatch(cmd, kAccumulate, m.Target(m.accTarget[next]), m.motionW, m.motionH, m.BaseKey(in, m.acc[prev]), c);
-    Barrier(cmd, m.acc[next], m.accState[next], kAccState);
-    // Match the fork: register the accumulated chain against the two real pictures. Keep the
-    // correction in the chain so later links do not keep amplifying subpixel drift.
-    m.accCurrent = next;
-    if (m.colorF && in.refine) {
-        Barrier(cmd, m.acc[prev], m.accState[prev], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        m.Dispatch(cmd, kRefine, m.Target(m.accTarget[prev]), m.motionW, m.motionH, m.BaseKey(in, m.acc[next]), c);
-        Barrier(cmd, m.acc[prev], m.accState[prev], kAccState);
-        m.accCurrent = prev;
+    c.sky[2] = static_cast<float>(in.chainRule); // DebugTemporalChainRule: which change restarts the chain (PSAccumulate)
+    if (in.oracleChain) c.params[0] = c.params[1] = 0.0f; // DebugTemporalCarryProbe: the host's motion is the chain, acc = mv
+    const bool refine = m.colorF && in.refine;
+    // DebugTemporalCarryChainRule: both chains in one pass each (carry_chain.cpp); otherwise the main chain alone.
+    if (in.carryChainRule == 0 || !RecordChainPair(cmd, in, c, (carryValid_ && !seeded) ? -1 : prev)) {
+        carryValid_ = false;
+        Barrier(cmd, m.acc[next], m.accState[next], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        SlotKey key = m.BaseKey(in, m.acc[prev]);
+        m.RecordLinkFail(cmd, key, c); // rule 3's mask at t1, recorded on the same inputs
+        m.Dispatch(cmd, kAccumulate, m.Target(m.accTarget[next]), m.motionW, m.motionH, key, c);
+        Barrier(cmd, m.acc[next], m.accState[next], kAccState);
+        m.accCurrent = next;
+        // Match the fork: register the accumulated chain against the two real pictures. Keep the
+        // correction in the chain so later links do not keep amplifying subpixel drift.
+        if (refine) {
+            c.sky[2] = 0.0f; // the rule is Accumulate's alone
+            Barrier(cmd, m.acc[prev], m.accState[prev], D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            m.Dispatch(cmd, kRefine, m.Target(m.accTarget[prev]), m.motionW, m.motionH, m.BaseKey(in, m.acc[next]), c);
+            Barrier(cmd, m.acc[prev], m.accState[prev], kAccState);
+            m.accCurrent = prev;
+        }
     }
+    unrefinedKept_ = refine; // acc[next] keeps the chain before this Refine until the next Accumulate
     BarrierExternal(cmd, in.color, kReadable, in.colorState, in.colorSubresource);
     BarrierExternal(cmd, in.motion, kReadable, in.motionState, in.motionSubresource);
     BarrierExternal(cmd, in.depth, kReadable, in.depthState, in.depthSubresource);
@@ -125,6 +164,7 @@ void Machine::RecordAccumulatePending(ID3D12GraphicsCommandList *cmd, const Fram
     Constants c = m.BaseConstants(in);
     c.params[1] = pendingValid_ ? 1.0f : 0.0f;
     SlotKey key = m.BaseKey(in, m.accP[prev]);
+    key.fmt[1] = DXGI_FORMAT_R8_UINT; // no link test, no LinkFail mask: a null view of its type
     if (m.expectP[m.expectPCurrent]) key.res[11] = m.expectP[m.expectPCurrent];
     m.Dispatch(cmd, kAccumulate, m.Target(m.accPTarget[next]), m.motionW, m.motionH, key, c);
     Barrier(cmd, m.accP[next], m.accPState[next], kAccState);
@@ -144,20 +184,16 @@ void Machine::RecordModelMotion(ID3D12GraphicsCommandList *cmd, const FrameInput
 {
     Resources &m = *res_;
     if (m.modelMotionPso == nullptr || !accValid_) return;
-    const FrameInputs in = m.Resolve(rawIn);
-    BarrierExternal(cmd, in.color, in.colorState, kReadable, in.colorSubresource);
-    BarrierExternal(cmd, in.depth, in.depthState, kReadable, in.depthSubresource);
-    Barrier(cmd, m.depthF, m.depthFState, kReadable);
-    if (m.colorF) Barrier(cmd, m.colorF, m.colorFState, kReadable);
-    Barrier(cmd, m.acc[m.accCurrent], m.accState[m.accCurrent], kReadable);
-    Barrier(cmd, m.modelMv, m.modelMvState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    Constants c = m.BaseConstants(in);
-    if (m.colorF == nullptr) c.tune[0] = 0.0f; // no snapshot yet: no colour test
-    m.Dispatch(cmd, kModelMotion, m.Target(kTargetModelMv), m.motionW, m.motionH, m.BaseKey(in, m.acc[m.accCurrent]), c);
-    Barrier(cmd, m.modelMv, m.modelMvState, kAccState);
-    Barrier(cmd, m.acc[m.accCurrent], m.accState[m.accCurrent], kAccState);
-    BarrierExternal(cmd, in.color, kReadable, in.colorState, in.colorSubresource);
-    BarrierExternal(cmd, in.depth, kReadable, in.depthState, in.depthSubresource);
+    RecordChainTest(m, cmd, rawIn, kModelMotion, m.Target(kTargetModelMv), m.modelMvState);
+}
+
+bool Machine::RecordMarkerReason(ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn)
+{
+    if (res_ == nullptr || res_->modelMotionPso == nullptr || res_->markerReasonPso == nullptr || !accValid_) return false;
+    Resources &m = *res_;
+    if (!m.EnsureMotionByte(m.markerReason)) return false;
+    RecordChainTest(m, cmd, rawIn, kMarkerReason, {m.markerReason, DXGI_FORMAT_R8_UINT}, m.markerReasonState);
+    return true;
 }
 
 } // namespace ofps::core::temporal

@@ -98,11 +98,15 @@ void Submission::Push(ID3D12CommandQueue *queue, ID3D12CommandList *list)
         e.flowTag = 0;
     std::uint64_t tag = 0;
     size = sizeof(tag);
-    if (SUCCEEDED(list->GetPrivateData(kSubmissionTag, &size, &tag)) && size == sizeof(tag))
-        for (Recording &r : recordings_) if (r.tag == tag && r.serial == 0 && !r.signalled) {
-            r.queue = queue;
-            r.serial = e.serial;
-        }
+    if (FAILED(list->GetPrivateData(kSubmissionTag, &size, &tag)) || size != sizeof(tag)) tag = 0;
+    while (tag != 0) { // the list's recording and the unclaimed ones it chains (UsePoint)
+        Recording *hit = nullptr;
+        for (Recording &r : recordings_) if (r.tag == tag && r.serial == 0 && !r.signalled) { hit = &r; break; }
+        if (hit == nullptr) break;
+        hit->queue = queue;
+        hit->serial = e.serial;
+        tag = hit->previousTag;
+    }
     if (count_ == kSubmissionRing)
     {
         head_ = (head_ + 1) % kSubmissionRing;
@@ -137,8 +141,17 @@ std::uint32_t Submission::Drain(SubmissionEntry *out, std::uint32_t capacity, Si
     // Untrack cannot invalidate a borrowed UsePoint during an evaluate.
     for (auto it = recordings_.begin(); it != recordings_.end();) {
         if (it->serial == 0 && !it->signalled &&
-            Ctx().evalCounter - it->createdEval >= kDeferredReleaseEvaluates)
+            Ctx().evalCounter - it->createdEval >= kDeferredReleaseEvaluates) {
             it->signalled = SUCCEEDED(it->fence->Signal(1)); // Cancel an abandoned recording, as in Untrack.
+            if (!unseenLogged_) {
+                unseenLogged_ = true;
+                Log(false, "Optimizer FPS core: a host list recorded %llu evaluates ago was never reported submitted (the host "
+                    "submits it where no queue event sees it, e.g. renodx's Present hook point); such lists release their "
+                    "descriptors %llu evaluates after use instead of on a GPU fence (logged once)",
+                    static_cast<unsigned long long>(Ctx().evalCounter - it->createdEval),
+                    static_cast<unsigned long long>(kDeferredReleaseEvaluates));
+            }
+        }
         if (!it->signalled) { ++it; continue; }
         it->fence->Release();
         it->device->Release();
@@ -164,10 +177,11 @@ void Submission::PendingGate(ID3D12Device *device, ID3D12Device *proxyDevice, Ga
 {
     if (gate == nullptr)
         return;
+    ID3D12Device *const alias = RegisteredAlias(device, proxyDevice); // before mutex_: the registry has its own lock
     std::lock_guard<std::mutex> lock(mutex_);
     for (const Tracked &t : queues_)
     {
-        if (t.device != device && t.device != proxyDevice)
+        if (t.device != device && t.device != proxyDevice && (alias == nullptr || t.device != alias))
             continue;
         if (t.pushed == 0)
             continue;

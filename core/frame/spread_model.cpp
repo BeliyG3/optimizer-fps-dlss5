@@ -4,6 +4,7 @@
 #include "core/frame/codec_frame.h"
 #include "core/frame/model_grid.h"
 #include "core/context.h"
+#include "core/temporal/controller.h"
 #include "core/frame/model_passes.h"
 #include "core/frame/timing.h"
 #include "core/frame/warp_recorder.h"
@@ -33,7 +34,7 @@ int SpreadModel(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsMode
     bool accumulated = stage.AccValid() && !Ctx().temporal.debugSingleFrameMotion;
     if (accumulated) {
         vectors = stage.Acc();
-        if (!Ctx().diag.temporalNoModelMotion && stage.ModelMv()) {
+        if (ModelMarkerSettings().sync && stage.ModelMv()) {
             stage.RecordModelMotion(cmd, in);
             vectors = stage.ModelMv();
         }
@@ -54,6 +55,7 @@ int SpreadModel(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsMode
             modelInputs.motion.restState = kModelInputState;
             modelInputs.motion.subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         }
+        if (accumulated) SetMotionAnchor(st, stage.ChainFrame());
         TimingBegin(st, cmd);
         result = EvaluateModelPasses(st, cmd, modelInputs);
         TimingEnd(st, cmd);
@@ -77,6 +79,7 @@ int SpreadModel(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsMode
         c.depthState = in.depthState; c.depthSub = in.depthSubresource;
         c.mvScaleX = in.mvScaleX; c.mvScaleY = in.mvScaleY;
         c.motionIsAcc = accumulated;
+        c.motionAnchor = accumulated ? stage.ChainFrame() : 0;
         c.depthConvention = in.depthInverted ? ofps::sdk::DepthConvention::Reversed : ofps::sdk::DepthConvention::Normal;
         c.slot = c.packSlot = st.nextPackSlot;
         st.nextPackSlot = (st.nextPackSlot + 1) % FeatureState::kBgPackSlot;

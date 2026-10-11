@@ -1,9 +1,13 @@
 #include "core/frame/debug_readback.h"
 
 #include "core/context.h"
+#include "core/frame/acc_dump.h"
 #include "core/gpu/descriptor_pool.h"
+#include "core/temporal/controller.h"
 
 #include <cmath>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace ofps::core {
@@ -81,6 +85,46 @@ void TemporalDebugReadback(FeatureState &st, ID3D12GraphicsCommandList *cmd, con
         Ctx().temporal.colorTolerance, Ctx().temporal.depthTolerance, Ctx().temporal.holeFill ? "on" : "off");
     const D3D12_RANGE none{0, 0};
     st.motionReadback->Unmap(0, &none);
+}
+
+void TemporalAccDumpPoll(FeatureState &st)
+{
+    if (!Ctx().diag.debugTemporalDumpAcc || !st.temporal) return;
+    temporal::AccDumpHalves halves;
+    if (st.temporal->TakeAccDump(Ctx().evalCounter, halves) != 1) return;
+    AccDumpHeader header;
+    header.width = halves.width;
+    header.height = halves.height;
+    header.eval = static_cast<std::uint32_t>(halves.tags.eval);
+    header.fullPassIndex = halves.tags.fullPass;
+    header.mvScaleX = halves.tags.mvScaleX;
+    header.mvScaleY = halves.tags.mvScaleY;
+    std::vector<float> model(halves.model.size()), chain(halves.chain.size());
+    for (std::size_t i = 0; i < model.size(); ++i) model[i] = HalfToFloat(halves.model[i]);
+    for (std::size_t i = 0; i < chain.size(); ++i) chain[i] = HalfToFloat(halves.chain[i]);
+    std::vector<float> carry(halves.carry.size()); // OFAC v3 under DebugTemporalCarryChainRule
+    for (std::size_t i = 0; i < carry.size(); ++i) carry[i] = HalfToFloat(halves.carry[i]);
+    std::wstring exe(32768, L'\0');
+    exe.resize(GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size())));
+    const std::filesystem::path path =
+        std::filesystem::path(exe).parent_path() / ("ofps_acc_" + std::to_string(header.eval) + ".bin");
+    const bool ok = WriteAccDump(path, header, model, chain, halves.reason, carry);
+    Log(!ok, "Optimizer FPS NGX hook [temporal debug] acc dump %s %s (%ux%u, full pass %u)", ok ? "wrote" : "could not write",
+        path.filename().string().c_str(), header.width, header.height, header.fullPassIndex);
+}
+
+void TemporalAccDumpRecord(FeatureState &st, ID3D12GraphicsCommandList *cmd, const temporal::FrameInputs &tin, bool fullPass)
+{
+    if (!Ctx().diag.debugTemporalDumpAcc || !st.temporal ||
+        !AccDumpWanted(static_cast<std::uint32_t>(Ctx().evalCounter), fullPass, tin.dumpAccFrom) || EffectiveTemporalMode(st) != 1)
+        return;
+    TemporalAccDumpPoll(st);
+    const temporal::AccDumpTags tags{Ctx().evalCounter, static_cast<std::uint32_t>(Ctx().status.fullFrames), tin.mvScaleX,
+                                     tin.mvScaleY, !fullPass, tin.carryChainRule > 0};
+    bool dropped = false;
+    if (fullPass && !st.temporal->RecordMarkerReason(cmd, tin)) return; // a carried frame ran no ModelMotion: reasons 0
+    if (st.temporal->RecordAccDumpCopies(cmd, tags, &dropped) && dropped)
+        Log(false, "Optimizer FPS NGX hook [temporal debug] acc dump of the previous frame skipped: its readback was not ready");
 }
 
 float HalfToFloat(std::uint16_t h)

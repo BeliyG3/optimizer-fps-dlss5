@@ -1,10 +1,11 @@
 // The core's registered queues (core/gpu/queues.h) on WARP: a queue retained for deferred work outlives its
-// registration, and the optical flow's GPU ordering waits only on queues of the same device identity, and succeeds
-// only when every one of them accepted its Wait.
+// registration, the optical flow's GPU ordering waits only on queues of the same device identity, and succeeds
+// only when every one of them accepted its Wait, and a proxy of the registered device is served by its queues.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "core/gpu/queues.h"
 #include "test_menu_host_queue_fakes.h"
+#include "test_proxy_device.h"
 #include <d3d12.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
@@ -111,6 +112,49 @@ void TestWaitEveryQueue(ID3D12Device *warp)
           "every queue: the accepted Waits pass once the fence did");
     UnregisterQueue(good.Get());
 }
+// renodx 8.5 / SF: the evaluate gets ReShade's proxy list; its device and the resources' are the proxy, while ReShade
+// registered the queue under the native device. The registry serves the proxy with the one registered device on its
+// adapter (the background mode's queue count, signal, wait and timestamp lookups, and the retirement gate); with two
+// registered devices on that adapter it does not guess.
+void TestProxyAlias(ID3D12Device *warp)
+{
+    D3D12_COMMAND_QUEUE_DESC qd{};
+    qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    ComPtr<ID3D12CommandQueue> queue, second;
+    ComPtr<ID3D12Fence> signalled, waited, probe;
+    Check(SUCCEEDED(warp->CreateCommandQueue(&qd, IID_PPV_ARGS(&queue))) && SUCCEEDED(warp->CreateCommandQueue(&qd, IID_PPV_ARGS(&second))) &&
+              SUCCEEDED(warp->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&signalled))) &&
+              SUCCEEDED(warp->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&waited))) &&
+              SUCCEEDED(warp->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&probe))),
+          "proxy alias: queues and fences");
+    proxytest::ProxyDevice proxy(warp), otherProxy(warp);
+    Check(RegisterQueue(warp, queue.Get()), "proxy alias: the queue is registered under the native device");
+    std::size_t total = 0;
+    Check(CountQueues(&proxy, &proxy, &total) == 1 && total == 1, "proxy alias: the proxy counts the native device's graphics queue");
+    Check(RegisteredAlias(&proxy, &proxy) == warp && RegisteredAlias(warp, &proxy) == nullptr,
+          "proxy alias: the native device stands for the proxy only when no queue is keyed on either");
+    Check(SignalRegisteredQueues(&proxy, &proxy, signalled.Get(), 1) && WaitFence(signalled.Get(), 1),
+          "proxy alias: the background signal reaches the native device's queue");
+    Check(WaitRegisteredQueues(&proxy, &proxy, waited.Get(), 1), "proxy alias: the background wait reaches it too");
+    Check(SUCCEEDED(waited->Signal(1)) && SUCCEEDED(queue->Signal(probe.Get(), 1)) && WaitFence(probe.Get(), 1),
+          "proxy alias: and the queue runs once the waited fence passed");
+    UINT64 frequency = 0;
+    Check(TimestampFrequency(&proxy, &proxy, &frequency) && frequency != 0, "proxy alias: timestamp frequency");
+    {
+        GateSet gate = SignalGate(&proxy, &proxy);
+        Check(gate.Size() == 1, "proxy alias: the retirement gate covers the native device's queue");
+        gate.Wait(3000);
+        Check(gate.Completed(), "proxy alias: and completes");
+    }
+    // A second registered identity on the adapter: the proxy is not attributed to either.
+    Check(RegisterQueue(&otherProxy, second.Get()), "proxy alias: a second device identity registered on the adapter");
+    Check(CountQueues(&proxy, &proxy, &total) == 0 && total == 2 && RegisteredAlias(&proxy, nullptr) == nullptr,
+          "proxy alias: two registered devices on the adapter give no alias");
+    Check(CountQueues(warp, nullptr, &total) == 1, "proxy alias: an exact identity still matches its own queue");
+    UnregisterQueue(second.Get());
+    UnregisterQueue(queue.Get());
+    Check(CountQueues(&proxy, &proxy, &total) == 0 && total == 0, "proxy alias: nothing registered, nothing matched");
+}
 } // namespace
 
 int TestQueueWaits(ID3D12Device *warp, IDXGIFactory4 *factory)
@@ -119,5 +163,6 @@ int TestQueueWaits(ID3D12Device *warp, IDXGIFactory4 *factory)
     TestQueueLifetime(warp);
     TestWaitSameAdapter(warp, factory);
     TestWaitEveryQueue(warp);
+    TestProxyAlias(warp);
     return failures;
 }

@@ -86,9 +86,15 @@ struct RetirementProbe : IUnknown {
 struct ModelCreate {
     std::uint32_t w = 0, h = 0, withholdUi = 0;
 };
+struct ModelRun {
+    void *handle = nullptr;
+    std::uint32_t reset = 0;
+};
 struct FakeModelHost : IOfpsModelHost {
     int createResult = OFPS_OK;
     int runResult = OFPS_OK;
+    void *failHandle = nullptr;  // RunModel answers OFPS_E_DEVICE for this handle (after recording the run)
+    std::vector<ModelRun> runs;  // every RunModel call: which feature, with which Reset
     int prepareResult = OFPS_S_IDENTITY;
     std::uint32_t ready = 1;
     bool refuseCreate = false; // as ModelHostNgx inside a menu call: OFPS_E_STATE, no handle, NGX not called
@@ -100,6 +106,8 @@ struct FakeModelHost : IOfpsModelHost {
     OfpsModelInputs lastInputs{};
     std::vector<void *> live;
     ReadbackCapture colorCapture, depthCapture, motionCapture;
+    std::vector<ReadbackCapture> sameFrame; // earlier captures of the frame being recorded (RunModel)
+    std::uint32_t captureFrame = ~0u;       // endFrameCalls when the captures above were recorded
     int CreateModel(ID3D12GraphicsCommandList *cmd, std::uint32_t w, std::uint32_t h, std::uint32_t withholdUi,
                     void **handle) override {
         (void)cmd;
@@ -135,13 +143,23 @@ struct FakeModelHost : IOfpsModelHost {
             return OFPS_E_ARG;
         const std::size_t bytes = inputs->size < sizeof(lastInputs) ? inputs->size : sizeof(lastInputs);
         std::memcpy(&lastInputs, inputs, bytes);
+        runs.push_back(ModelRun{handle, inputs->reset});
         if (inputs->color.res == nullptr || inputs->output.res == nullptr)
             return OFPS_E_ARG;
         if (runResult != OFPS_OK)
             return runResult;
+        if (handle != nullptr && handle == failHandle)
+            return OFPS_E_DEVICE;
         ComPtr<ID3D12Device> device;
         if (FAILED(cmd->GetDevice(IID_PPV_ARGS(&device))))
             return OFPS_E_DEVICE;
+        // Two passes in one frame (one list): the first pass's readbacks stay alive until the list has run.
+        if (captureFrame == endFrameCalls) {
+            for (ReadbackCapture *c : {&colorCapture, &depthCapture, &motionCapture}) sameFrame.push_back(*c);
+        } else {
+            sameFrame.clear();
+        }
+        captureFrame = endFrameCalls;
         const auto capture = [&](const OfpsResource &r, ReadbackCapture &out) {
             out = CreateReadback(device.Get(), r.res);
             if (!out.buffer)

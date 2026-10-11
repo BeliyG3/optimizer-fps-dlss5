@@ -1,6 +1,6 @@
 #pragma once
 
-// D3D12 WARP fixtures of the temporal machine's grid tests (test_temporal_grid_machine.cpp,
+// D3D12 WARP fixtures of the temporal machine's grid and sky field tests (test_temporal_grid_machine.cpp, test_temporal_sky_machine.cpp,
 // test_temporal_grid_switch.cpp): textures painted by clears, the temporal shader set read from a directory, and the
 // RGBA16F outputs read back as floats after the recorded list ran.
 #ifndef WIN32_LEAN_AND_MEAN
@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <vector>
 
 namespace temporal_d3d12 {
@@ -132,18 +133,64 @@ inline bool LoadShaders(const char *directory, ofps::core::gpu::Shaders &shaders
     return shaders.TemporalLoaded() && shaders.TemporalGridLoaded() == grid;
 }
 
-// Copies `outputs` (kColor, resting in COMMON) into a readback buffer, runs the list and returns them as floats;
+inline void ReadInto(const std::filesystem::path &path, std::vector<char> &code)
+{
+    std::ifstream file(path, std::ios::binary);
+    code.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+// The sky field's optional passes (temporal_sky_passes.def).
+inline bool LoadSkyShaders(const char *directory, ofps::core::gpu::Shaders &shaders)
+{
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) ReadInto(std::filesystem::path(directory) / "temporal_" #name "_cs.dxbc", shaders.temporal##name);
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+    return shaders.TemporalSkyLoaded();
+}
+
+// Master's four passes the sky field changed (tests/fixtures/temporal_pre_sky) in place of the current ones.
+inline bool LoadMasterPasses(const char *fixture, ofps::core::gpu::Shaders &shaders)
+{
+    const std::filesystem::path dir(fixture);
+    ReadInto(dir / "temporal_Reproject_cs.dxbc", shaders.temporalReproject);
+    ReadInto(dir / "temporal_Compose_cs.dxbc", shaders.temporalCompose);
+    ReadInto(dir / "temporal_ComposeGrid_cs.dxbc", shaders.temporalComposeGrid);
+    ReadInto(dir / "temporal_Apply_cs.dxbc", shaders.temporalApply);
+    return !shaders.temporalReproject.empty() && !shaders.temporalCompose.empty() && !shaders.temporalComposeGrid.empty() &&
+           !shaders.temporalApply.empty();
+}
+
+// The passes that read t6, built with PW_T_DEPTHF_SHARED_RECT (tests/CMakeLists.txt), in place of the current ones:
+// every depth through the current frame's sub-rect, as before 2026.10.2 (the depth snapshots' own sub-rect).
+inline bool LoadDepthFSharedPasses(const char *directory, ofps::core::gpu::Shaders &s)
+{
+    std::vector<char> *const passes[] = {&s.temporalAccumulate, &s.temporalExpect, &s.temporalHistory, &s.temporalModelMotion,
+                                         &s.temporalRefine, &s.temporalRefineModel, &s.temporalReproject, &s.temporalReprojectGrid,
+                                         &s.temporalResidualOld, &s.temporalResidual, &s.temporalSkyDown, &s.temporalStats};
+    const char *const names[] = {"Accumulate", "Expect", "History", "ModelMotion", "Refine", "RefineModel", "Reproject",
+                                 "ReprojectGrid", "ResidualOld", "Residual", "SkyDown", "Stats"};
+    for (std::size_t i = 0; i < std::size(passes); ++i) {
+        ReadInto(std::filesystem::path(directory) / (std::string("temporal_") + names[i] + "_cs.dxbc"), *passes[i]);
+        if (passes[i]->empty()) return false;
+    }
+    return true;
+}
+
+// Copies `outputs` (kColor) and then `vectors` (R16G16_FLOAT: validated model vectors), all kW x kH and resting in
+// COMMON, into a readback buffer, runs the list and returns them in that order as floats (4 and 2 channels per texel);
 // empty when the GPU did not finish.
 inline std::vector<Picture> Execute(ID3D12Device *device, ID3D12CommandQueue *queue, Recording &r,
-                                    const std::vector<ComPtr<ID3D12Resource>> &outputs)
+                                    const std::vector<ComPtr<ID3D12Resource>> &outputs,
+                                    const std::vector<ComPtr<ID3D12Resource>> &vectors = {})
 {
-    constexpr std::uint32_t kPitch = kW * 8;
-    const std::size_t image = static_cast<std::size_t>(kPitch) * kH;
+    constexpr std::uint32_t kSlotPitch = kW * 8;
+    const std::size_t slot = static_cast<std::size_t>(kSlotPitch) * kH, count = outputs.size() + vectors.size();
+    auto channelsOf = [&](std::size_t i) { return i < outputs.size() ? 4u : 2u; };
     D3D12_HEAP_PROPERTIES props{};
     props.Type = D3D12_HEAP_TYPE_READBACK;
     D3D12_RESOURCE_DESC buffer{};
     buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buffer.Width = outputs.size() * image;
+    buffer.Width = count * slot;
     buffer.Height = buffer.DepthOrArraySize = buffer.MipLevels = 1;
     buffer.SampleDesc.Count = 1;
     buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
@@ -151,14 +198,15 @@ inline std::vector<Picture> Execute(ID3D12Device *device, ID3D12CommandQueue *qu
     if (FAILED(device->CreateCommittedResource(&props, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                IID_PPV_ARGS(&readback))))
         return {};
-    for (std::size_t i = 0; i < outputs.size(); ++i) {
-        BarrierExternal(r.list.Get(), outputs[i].Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    for (std::size_t i = 0; i < count; ++i) {
+        ID3D12Resource *texture = i < outputs.size() ? outputs[i].Get() : vectors[i - outputs.size()].Get();
+        BarrierExternal(r.list.Get(), texture, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = readback.Get();
         dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        dst.PlacedFootprint.Offset = i * image;
-        dst.PlacedFootprint.Footprint = {kColor, kW, kH, 1, kPitch};
-        src.pResource = outputs[i].Get();
+        dst.PlacedFootprint.Offset = i * slot;
+        dst.PlacedFootprint.Footprint = {i < outputs.size() ? kColor : DXGI_FORMAT_R16G16_FLOAT, kW, kH, 1, kW * 2 * channelsOf(i)};
+        src.pResource = texture;
         src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         r.list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
     }
@@ -172,13 +220,15 @@ inline std::vector<Picture> Execute(ID3D12Device *device, ID3D12CommandQueue *qu
     void *data = nullptr;
     const D3D12_RANGE all{0, static_cast<SIZE_T>(buffer.Width)};
     if (!finished || device->GetDeviceRemovedReason() != S_OK || FAILED(readback->Map(0, &all, &data))) return {};
-    std::vector<Picture> pictures(outputs.size(), Picture(static_cast<std::size_t>(kW) * kH * 4));
-    for (std::size_t i = 0; i < outputs.size(); ++i)
+    std::vector<Picture> pictures(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        pictures[i].resize(static_cast<std::size_t>(kW) * kH * channelsOf(i));
         for (std::size_t t = 0; t < pictures[i].size(); ++t) {
             std::uint16_t h;
-            std::memcpy(&h, static_cast<const unsigned char *>(data) + i * image + t * 2, sizeof(h));
+            std::memcpy(&h, static_cast<const unsigned char *>(data) + i * slot + t * 2, sizeof(h));
             pictures[i][t] = Half(h);
         }
+    }
     const D3D12_RANGE none{0, 0};
     readback->Unmap(0, &none);
     return pictures;

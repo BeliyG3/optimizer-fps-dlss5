@@ -48,6 +48,16 @@ enum OfpsSettingId {
     OFPS_SET_DEBUG_WARP_PATH,        // 0 auto, 1 compute, 2 pixel (plan 5)
     OFPS_SET_MENU_MODE,              // appended 2026.10: the ReShade shell's menu mode (bool); the core carries it
     OFPS_SET_TEMPORAL_GRID,          // appended 2026.10.1: carried frames reprojected on the model's grid (bool, on)
+    OFPS_SET_TEMPORAL_SKY_FIELD,     // appended 2026.10.2: smooth sky (far-plane pixels) in carried frames (bool, on)
+    OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC, // appended after 2026.10.2: diagnostic, full passes' model motion + chain to files (bool, off)
+    OFPS_SET_DEBUG_TEMPORAL_MARKER_RULE, // appended after 2026.10.2: diagnostic, the model's no-history marker rule (int 0..4, 0 = today's)
+    OFPS_SET_DEBUG_TEMPORAL_MARKER_NEIGHBOURS, // appended after 2026.10.2: diagnostic, marker rules 3/4's 5x5 threshold (int 0..25, 0 = 12)
+    OFPS_SET_TEMPORAL_MODEL_MARKER,  // appended 2026.10.2: the model's no-history markers on full passes (enum 0 off, 1 classic, 2 narrow)
+    OFPS_SET_DEBUG_TEMPORAL_CARRY_PROBE, // appended after 2026.10.2: diagnostic, carry attribution bits (int 0..7: 1 oracle chain, 2 accept all, 4 bilinear residual)
+    OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC_FROM, // appended after 2026.10.2: diagnostic, the first evaluate of a 64-evaluate chain dump window (int 0..1000000, 0 = off)
+    OFPS_SET_DEBUG_TEMPORAL_CHAIN_RULE, // appended after 2026.10.2: diagnostic, when the carry's chain restarts (int 0..4, 0 = today's)
+    OFPS_SET_DEBUG_TEMPORAL_CARRY_CHAIN_RULE, // appended after 2026.10.2: diagnostic, a separate chain for carried frames' reprojection (int 0..6, 0 = none)
+    OFPS_SET_TEMPORAL_CHAIN_RULE,    // appended 2026.10.2: the chains carried frames reproject along (enum 0 classic, 1 coherent)
     OFPS_SET_COUNT
 };
 

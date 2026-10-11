@@ -14,20 +14,24 @@
 
 cbuffer PwTemporalConstants : register(b0)
 {
-    // 9 float4 (36 root constants).
+    // 11 float4 (44 root constants).
     float4 PwTNative;      // native width, height, 1/width, 1/height
     float4 PwTColorRect;   // host colour sub-rect x, y, w, h (colour texture pixels)
     float4 PwTMotionRect;  // host motion sub-rect x, y, w, h (motion texture pixels)
     float4 PwTDepthRect;   // host depth sub-rect x, y, w, h (depth texture pixels)
     float4 PwTMotionTex;   // motion texture width, height, MVecScale X, MVecScale Y
-    // x: accumulate only - validate each link of the chain against the residual's frame (0/1)
+    // x: accumulate - validate each link of the chain against the residual's frame (0/1)
+    //    | model motion / marker reason - read rules 3/4's MarkerFail mask at t1 (0/1, PwTMarkerReason)
     // y: accumulate - the previous accumulation is valid (0/1) | reproject - Catmull-Rom residual filter (0/1)
-    // z: debug visualisation (0 = off; reproject only)
+    //    | model motion / marker reason - DebugTemporalMarkerNeighbours (rules 3/4's threshold of 25, 0 = 12)
+    // z: debug visualisation (0 = off; reproject only) | model motion / marker reason - DebugTemporalMarkerRule (0..4, PwTMarkerReason)
     // w: relative depth mismatch that counts as a surface change (the disocclusion tolerance)
     float4 PwTParams;
     float4 PwTTune;        // colour tolerance (relative luma, 0 = off), motion sign (+1/-1), raw interpolation (>0.5), disable history neighbour search (<-0.5), residual blend weight (Residual); fill floor toggle 0/1 (Reproject)
     float4 PwTFill;        // hole fill with the low-res residual (0/1), low-res width, low-res height, depth-guided chain fetch (0 off, 1 four texels, >1 = search radius in native px)
     float4 PwTSmooth;      // acceptance tap radius scale (0 = 1), guided smoothing radius in px (26.6.X, 0 = off), ratio-domain scale s (0 = frames as they are; see PwTEncodeFrame), share of the NEW residual while it is phased in (PW_T_RAMP; 0 or 1 = all of it)
+    float4 PwTSky;         // the host's far-plane depth, 1 (standard Z) or 0 (reversed Z): the sky field's pixels (temporal_sky.hlsli); y: DebugTemporalCarryProbe accept-all (Reproject, >0.5); z: the main chain's rule (Accumulate, LinkFail, AccumulatePair; 0..4, DebugTemporalChainRule, 0 under TemporalChainRule); w: the carry chain's rule (AccumulatePair; 1..6, 5 under TemporalChainRule=1, core/temporal/chain_rule.h); yzw 0 on every other pass
+    float4 PwTDepthFRect;  // the sub-rect of the depth at t6 as the frame it was copied on described it (PwTDepthFRectOf); size 0 = PwTDepthRect
 };
 
 Texture2D<float4> PwTColor : register(t0);     // host colour (native)
@@ -64,6 +68,10 @@ Texture2D<float4> PwTHistLink[2] : register(t18);
 // and equal to the new residual wherever the move failed its tests. See PSResidualOld.
 Texture2D<float4> PwTResidualOld : register(t10);
 #endif
+// The sky field (temporal_sky.hlsli): the finest filled level, a null view when the policy is off; and this frame's
+// share of sky (a of the 1x1 texel), which weighs the field on a carried frame.
+Texture2D<float4> PwTSkyField : register(t20);
+Texture2D<float4> PwTSkyNow : register(t21);
 SamplerState PwTLinearClamp : register(s0);
 SamplerState PwTPointClamp : register(s1);
 
@@ -97,6 +105,7 @@ PwFullscreenVertex VSMain(uint vertexId : SV_VertexID) { return PwFullscreenVS(v
 
 
 #include "temporal_mapping.hlsli"
+#include "temporal_sky.hlsli"
 #include "temporal_residual.hlsli"
 // Registration of the chain against the real frames (runs after PSAccumulate, over the same texels).
 //
@@ -225,14 +234,20 @@ float4 PSCompose(PwFullscreenVertex input) : SV_Target0
     float2 p = input.position.xy;
     float4 aw = PwTAddition(p);
     float4 color = PwTLoadFrame(PwTColor, int3(PwTRectTexel(p, PwTColorRect), 0));
+    // The sky policy (temporal_sky.hlsli), at this native pixel: a far-plane pixel mixes the sky field into whatever
+    // was carried or smoothed here by the field's weight, and at weight 1 takes the field alone. Every other pixel
+    // (weight 0) goes on as before.
+    float3 sky;
+    const float skyWeight = PwTSkyAt(p, sky);
+    if (skyWeight >= 1.0) return float4(color.rgb + sky, color.a);
     float radius = PwTSmooth.y;
-    if (radius <= 0.0) return float4(color.rgb + aw.rgb, color.a);
+    if (radius <= 0.0) return float4(color.rgb + PwTSkyMix(aw.rgb, sky, skyWeight), color.a);
     // The share of the smoothed addition (see the end). Where it is exactly 0 the taps cannot change the
     // result, so they are skipped. Only for a finite, nonzero addition: lerp turns an addition of -0 into
     // +0, and that sign can reach the frame.
     float s = 1.0 - smoothstep(0.2, 0.5, saturate(aw.a));
 #ifndef PW_T_COMPOSE_ALWAYS_SMOOTH // tests build the pass without this shortcut and compare
-    if (s == 0.0 && all(isfinite(aw.rgb)) && all(aw.rgb != 0.0)) return float4(color.rgb + aw.rgb, color.a);
+    if (s == 0.0 && all(isfinite(aw.rgb)) && all(aw.rgb != 0.0)) return float4(color.rgb + PwTSkyMix(aw.rgb, sky, skyWeight), color.a);
 #endif
     float dc = PwTDepth.Load(int3(PwTRectTexel(p, PwTDepthRect), 0));
     const float2 taps[16] = { float2(1, 0), float2(-1, 0), float2(0, 1), float2(0, -1), float2(0.7, 0.7), float2(-0.7, 0.7), float2(0.7, -0.7), float2(-0.7, -0.7),
@@ -275,5 +290,5 @@ float4 PSCompose(PwFullscreenVertex input) : SV_Target0
     // addition into partially accepted pixels shifted whole surfaces (forward run, background mode: 1.7 -> 2.8).
     float3 add = lerp(aw.rgb, blurred, s);
     if (any(!isfinite(add))) add = aw.rgb;
-    return float4(color.rgb + add, color.a);
+    return float4(color.rgb + PwTSkyMix(add, sky, skyWeight), color.a);
 }

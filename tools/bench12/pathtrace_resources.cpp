@@ -1,4 +1,5 @@
 #include "pathtrace.h"
+#include "startup_profile.h"
 
 ID3D12Resource *Pathtrace::DisplaySource(const Options &o) const
 {
@@ -31,7 +32,8 @@ void Pathtrace::Configure(Device &d, Options &o)
 {
     unsigned w=std::max(1u,unsigned(float(d.width)*o.renderScale)), h=std::max(1u,unsigned(float(d.height)*o.renderScale));
     bool resized=w!=width || h!=height || outputWidth!=d.width || outputHeight!=d.height;
-    if(resized || configuredUpscaler!=o.upscaler || configuredReverse!=o.reverse || configuredNr!=o.nr || configuredMotion!=o.mvFormat) {
+    if(resized || configuredUpscaler!=o.upscaler || configuredReverse!=o.reverse || configuredNr!=o.nr || configuredMotion!=o.mvFormat
+       || configuredRender!=o.render) {
         nr.Shutdown(d); ngx.Shutdown(d); Reset(); initialized=false;
         width=w; height=h; outputWidth=d.width; outputHeight=d.height;
         const DXGI_FORMAT formats[]={DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R32_FLOAT,DXGI_FORMAT_R16G16_FLOAT,
@@ -47,6 +49,7 @@ void Pathtrace::Configure(Device &d, Options &o)
             d.gpu->CreateUnorderedAccessView(outputs[i].Get(),nullptr,&u,d.Cpu(uavBase+(i==8 ? 9 : i)));
             if(i<8) d.TextureSrv(outputs[i].Get(),srvBase+i);
         }
+        raster.Resize(d,width,height);
         std::printf("[info] render %ux%u, output %ux%u\n",width,height,d.width,d.height);
         error.clear();
         // NR upscaling replaces DLSS; the options reject the pair, the interactive menu may still set it.
@@ -58,8 +61,10 @@ void Pathtrace::Configure(Device &d, Options &o)
                 std::fprintf(stderr,"[ngx fallback] %s\n",error.c_str());
             }
         }
-        configuredUpscaler=o.upscaler; configuredReverse=o.reverse; displayKey.clear();
+        configuredUpscaler=o.upscaler; configuredReverse=o.reverse; configuredRender=o.render; displayKey.clear();
+        StartupMark("first frame: render targets, DLSS SR/RR init");
         ConfigureNeuralRendering(d,o);
+        StartupMark("first frame: NR runtime load");
     }
 }
 bool Pathtrace::ReadPick(unsigned &triangle, unsigned &group)

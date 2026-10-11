@@ -22,7 +22,7 @@ void Machine::RecordBackgroundAccumulate(ID3D12GraphicsCommandList *cmd, const F
 
 void Machine::RecordBackgroundKick(ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn, bool pending,
                                    ID3D12Resource *modelVectors, D3D12_RESOURCE_STATES vectorState,
-                                   ID3D12Resource *kickColor, ID3D12Resource *kickDepth, bool validate)
+                                   ID3D12Resource *kickColor, ID3D12Resource *kickDepth, const Rect &kickDepthRect, bool validate)
 {
     Resources &m = *res_;
     const FrameInputs in = m.Resolve(rawIn);
@@ -61,6 +61,12 @@ void Machine::RecordBackgroundKick(ID3D12GraphicsCommandList *cmd, const FrameIn
     }
     Barrier(cmd, m.modelMv, m.modelMvState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     Constants c = m.BaseConstants(in);
+    // t6 is the previous kick's private copy, not the residual frame's snapshot: after a discarded kick they differ, and
+    // with dynamic resolution so do their sub-rects. Read it through the sub-rect that kick described.
+    Resources::SetDepthFRect(c, kickDepthRect, in);
+    c.params[1] = static_cast<float>(in.markerNeighbours); // free on these passes (accumulate's y)
+    c.params[2] = static_cast<float>(in.markerRule);
+    m.RecordMarkerFail(cmd, key, c); // the same two passes as the host's ModelMotion, on the kick's inputs
     m.Dispatch(cmd, kModelMotion, m.Target(kTargetModelMv), m.motionW, m.motionH, key, c);
     // Only this private copy is consumed on the background queue. The host remains free to reuse
     // its model-motion target and descriptor ring on subsequent frames.

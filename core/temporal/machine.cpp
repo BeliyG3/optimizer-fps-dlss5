@@ -89,9 +89,12 @@ void Machine::Invalidate()
     hasResidual_ = false;
     expectValid_ = false;
     expectPendingValid_ = false;
+    carryValid_ = false;
+    unrefinedKept_ = false;
     if (res_) {
         res_->residualEverWritten = false; // nothing from before the reset is blended in
         res_->history.Reset();
+        res_->sky.Reset();
         res_->phase.Start(0, false);
     }
 }
@@ -112,6 +115,17 @@ void Machine::PromotePending()
     accValid_ = pendingValid_;
     pendingValid_ = false;
     pendingMirror_ = accValid_;
+    carryValid_ = false; // the next RecordAccumulate's carry chain adopts the promoted main chain (carry_chain.cpp)
+    unrefinedKept_ = false; // acc[1 - accCurrent] is the promoted chain's own
+    chainFrame_ = pendingFrame_; // the main chain is now the one that started at the adopted pass's kick
+}
+
+void Machine::ResetPending()
+{
+    pendingValid_ = false;
+    pendingMirror_ = false;
+    expectPendingValid_ = false;
+    pendingFrame_ = res_ ? res_->evalNow : 0;
 }
 
 ID3D12Resource *Machine::Acc() const { return res_ ? res_->acc[res_->accCurrent] : nullptr; }
@@ -155,17 +169,30 @@ void Machine::CopyInterp(ID3D12GraphicsCommandList *cmd, ID3D12Resource *hostOut
 void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn, ID3D12Resource *hostOutput,
                               D3D12_RESOURCE_STATES hostOutputState, std::uint32_t dstX, std::uint32_t dstY, UINT outputSubresource)
 {
+    Reproject(cmd, rawIn, hostOutput, hostOutputState, dstX, dstY, outputSubresource, true);
+}
+
+void Machine::Reproject(ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn, ID3D12Resource *hostOutput,
+                        D3D12_RESOURCE_STATES hostOutputState, std::uint32_t dstX, std::uint32_t dstY, UINT outputSubresource,
+                        bool sampleStats)
+{
     Resources &m = *res_;
     const FrameInputs in = m.Resolve(rawIn);
     m.phase.Reproject();
     BarrierExternal(cmd, in.color, in.colorState, kReadable, in.colorSubresource);
     BarrierExternal(cmd, in.depth, in.depthState, kReadable, in.depthSubresource);
-    Barrier(cmd, m.acc[m.accCurrent], m.accState[m.accCurrent], kAccState);
+    // DebugTemporalCarryChainRule: both reproject draws read the carry chain when there is one (CarryAcc()).
+    ID3D12Resource *const chain = CarryAcc();
+    Barrier(cmd, chain, carryValid_ ? m.accCarryState[m.accCarryCurrent] : m.accState[m.accCurrent], kAccState);
     Barrier(cmd, m.residual, m.residualState, kReadable);
     Barrier(cmd, m.depthF, m.depthFState, kReadable);
     Barrier(cmd, m.interp, m.interpState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    SlotKey key = m.BaseKey(in, m.acc[m.accCurrent]);
+    SlotKey key = m.BaseKey(in, chain);
     key.res[1] = m.residual; key.fmt[1] = kResidualFormat; // t1 must be bound to something (the reprojection does not read it)
+    // The sky field, weighed by this frame's own share of sky (sky_field.h), for the passes that form the frame; not
+    // for the debug views or raw interpolation, which never use it. Without the field nothing extra is recorded.
+    const bool sky = in.skyField && in.allowSky && in.debugVis == 0 && !in.rawInterpolation && m.sky.Measure(m, cmd, in);
+    m.sky.Bind(cmd, key, sky); // the sky field for the route that writes the frame here (no compose pass)
     const bool ramp = m.residualOld != nullptr && m.phase.Share() < 1.0f;
     if (ramp) {
         Barrier(cmd, m.residualOld, m.residualOldState, kReadable);
@@ -180,6 +207,8 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
     c.tune[3] = in.fillFloor ? 1.0f : 0.0f;
     m.history.Bind(m, cmd, key, c, in.history ? in.historyPasses : 0u);
     if (!ramp) c.smoothing[3] = 1.0f; // no phase-in this frame: the stored residual alone
+    // PwTSky.y: DebugTemporalCarryProbe's accept-all (bit 1), on the reprojection's own dispatch only; every other pass keeps 0.
+    const auto reproject = [&](Constants k) { k.sky[1] = in.acceptAll ? 1.0f : 0.0f; return k; };
     // 26.6.X: the reprojection also writes its addition + acceptance; the compose pass then smooths the
     // addition along the original and writes the frame.
     const bool compose = in.compose && m.composePso != nullptr && m.toneAcc != nullptr && in.smoothRadius > 0.0f && in.debugVis == 0 && !in.rawInterpolation;
@@ -194,7 +223,7 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
         const Resources::Output additionOutput = m.Target(kTargetAddition);
         // Compose writes every pixel of interp, so the reprojection gets a null u0 and skips that store.
         const Resources::Output noInterp{nullptr, m.Target(kTargetInterp).format};
-        m.Dispatch(cmd, kReproject, noInterp, m.nativeW, m.nativeH, key, gc, &additionOutput);
+        m.Dispatch(cmd, kReproject, noInterp, m.nativeW, m.nativeH, key, reproject(gc), &additionOutput);
         Barrier(cmd, m.toneAcc, m.toneAccState, kReadable);
         // 26.28 PW_T_CELLS: what the reprojection accepted, averaged per cell of the low-res grid with
         // the mean look of the pixels it came from. A rejected pixel then takes a smooth blend of the
@@ -217,6 +246,7 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
         ck.res[0] = in.color; ck.fmt[0] = in.colorView;
         ck.res[2] = m.toneAcc; ck.fmt[2] = kResidualFormat;
         ck.res[5] = in.depth; ck.fmt[5] = in.depthView;
+        m.sky.Bind(cmd, ck, sky); // far-plane pixels take the sky field here, at native resolution (sky_field.h)
         if (cells) {
             ck.res[1] = m.cellsLook; ck.fmt[1] = kResidualFormat;
             ck.res[8] = m.cellsAdd; ck.fmt[8] = kResidualFormat;
@@ -225,26 +255,19 @@ void Machine::RecordReproject(ID3D12GraphicsCommandList *cmd, const FrameInputs 
         cc.fill[0] = cells ? 1.0f : 0.0f; // PSCompose reads PwTFill.x as "the cells are bound"
         m.Dispatch(cmd, kCompose, m.Target(kTargetInterp), m.nativeW, m.nativeH, ck, cc);
     } else {
-        m.Dispatch(cmd, kReproject, m.Target(kTargetInterp), m.nativeW, m.nativeH, key, c);
+        m.Dispatch(cmd, kReproject, m.Target(kTargetInterp), m.nativeW, m.nativeH, key, reproject(c));
     }
-    if (m.statsPso && !m.exhausted)
-        m.stats.Record(m, cmd, key, c, in.fillFloor);
+    // Only the shown machine's statistics reach the status (core_feature.cpp): a Hidden one never samples.
+    if (sampleStats && m.role != MachineRole::Hidden && m.statsPso && !m.exhausted) {
+        SlotKey main = key; // the statistics measure the main chain, which the reprojection may not have read
+        main.res[4] = m.acc[m.accCurrent];
+        Barrier(cmd, m.acc[m.accCurrent], m.accState[m.accCurrent], kAccState);
+        m.stats.Record(m, cmd, main, c, in.fillFloor);
+    }
     BarrierExternal(cmd, in.color, kReadable, in.colorState, in.colorSubresource);
     BarrierExternal(cmd, in.depth, kReadable, in.depthState, in.depthSubresource);
     if (m.exhausted || hostOutput == nullptr) return; // diagnostics: the target is kept, the host's Output is left alone
     CopyInterp(cmd, hostOutput, hostOutputState, dstX, dstY, outputSubresource);
-}
-
-void Machine::RecordRaw(ID3D12GraphicsCommandList *cmd, const FrameInputs &in, ID3D12Resource *target,
-                        D3D12_RESOURCE_STATES state, std::uint32_t dstX, std::uint32_t dstY, UINT outputSubresource)
-{
-    const auto phase = res_->phase;
-    FrameInputs raw = in;
-    raw.base = nullptr;
-    raw.debugVis = 3;
-    raw.phaseInFrames = 0;
-    RecordReproject(cmd, raw, target, state, dstX, dstY, outputSubresource);
-    res_->phase = phase;
 }
 
 void Machine::RecordDebugCopies(ID3D12GraphicsCommandList *cmd, const FrameInputs &rawIn, ID3D12Resource *readback, std::uint32_t x,

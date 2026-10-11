@@ -27,6 +27,12 @@ void RetireModelPasses(FeatureState &st, const ofps::core::gpu::GateSet &gate)
     st.passPending[0] = st.passPending[1] = false;
 }
 
+void SetMotionAnchor(FeatureState &st, std::uint64_t frame)
+{
+    st.motionAnchor = frame;
+    st.motionAnchorEvaluate = Ctx().evalCounter;
+}
+
 bool PrepareModelPasses(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs)
 {
     const int requested = st.modelResolution ? 1 : Ctx().temporal.modelPasses;
@@ -92,18 +98,41 @@ static int RunPass(FeatureState &st, ID3D12GraphicsCommandList *cmd, void *handl
     return st.frameModelResult;
 }
 
+// The frame this evaluate's motion reaches back to: the chain anchor its caller named this evaluate
+// (SetMotionAnchor), else the host's own one-frame vectors, i.e. this feature's previous evaluate. Consumed.
+static std::uint64_t TakeMotionAnchor(FeatureState &st)
+{
+    const bool named = st.motionAnchorEvaluate == Ctx().evalCounter && st.motionAnchor != 0;
+    st.motionAnchorEvaluate = 0;
+    return named ? st.motionAnchor : st.previousEvaluate;
+}
+
+// One NR feature. It keeps its history only when that history ends on the frame the supplied motion reaches back
+// to (`anchor`); a feature with no history on record for this handle resets as well. No exceptions: under
+// DebugTemporalSingleFrameMotion a full frame's one-frame vectors miss an older history and reset it. A successful
+// evaluate moves the history to this frame.
+static int RunFeature(FeatureState &st, ID3D12GraphicsCommandList *cmd, void *handle, ModelHistory &history,
+                      OfpsModelInputs in, std::uint64_t anchor)
+{
+    const bool continues = history.frame != 0 && history.handle == handle && history.frame == anchor;
+    if (!continues) in.reset = 1;
+    const int result = RunPass(st, cmd, handle, in);
+    if (result == OFPS_OK) history = ModelHistory{handle, Ctx().evalCounter};
+    return result;
+}
+
 int EvaluateModelPasses(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs)
 {
     OfpsModelInputs in = inputs;
     in.reset = in.reset || st.forcedReset;
-    if (st.passesReady == 1 && st.activeModelStage < 0) return RunPass(st, cmd, st.realHandle, in);
+    const std::uint64_t anchor = TakeMotionAnchor(st); // the in-frame extra passes share pass 1's motion and frame
+    if (st.passesReady == 1 && st.activeModelStage < 0) return RunFeature(st, cmd, st.realHandle, st.histories[0], in, anchor);
     if (st.activeModelStage >= 0) {
         const int stage = st.activeModelStage;
 
-        if ((stage > 0 && (st.passReset[stage - 1] || Ctx().diag.passNoHistory)) ||
-            (stage == 0 && st.spread && st.spread->frames == 0))
-            in.reset = 1;
-        const int r = RunPass(st, cmd, stage == 0 ? st.realHandle : st.passHandles[stage - 1], in);
+        if (stage > 0 && (st.passReset[stage - 1] || Ctx().diag.passNoHistory)) in.reset = 1;
+        void *const handle = stage == 0 ? st.realHandle : st.passHandles[stage - 1];
+        const int r = RunFeature(st, cmd, handle, st.histories[stage], in, anchor);
         if (r == OFPS_OK) {
             if (stage > 0) st.passReset[stage - 1] = false;
             ++Ctx().status.modelPassEvaluations[stage];
@@ -113,7 +142,7 @@ int EvaluateModelPasses(FeatureState &st, ID3D12GraphicsCommandList *cmd, const 
         }
         return r;
     }
-    int result = RunPass(st, cmd, st.realHandle, in);
+    int result = RunFeature(st, cmd, st.realHandle, st.histories[0], in, anchor);
     if (result != OFPS_OK) return result;
     ++Ctx().status.modelPassEvaluations[0];
     if (st.passesReady <= 1) return result;
@@ -144,7 +173,7 @@ int EvaluateModelPasses(FeatureState &st, ID3D12GraphicsCommandList *cmd, const 
         in.color.restState = kModelInputState;
         in.color.subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         in.reset = inputs.reset || st.forcedReset || st.passReset[i] || Ctx().diag.passNoHistory;
-        result = RunPass(st, cmd, st.passHandles[i], in);
+        result = RunFeature(st, cmd, st.passHandles[i], st.histories[i + 1], in, anchor);
         if (result != OFPS_OK) {
             // Preserve the last successful answer even if NGX wrote before reporting failure.
             Barrier(cmd, st.passStaging, st.passStagingState, D3D12_RESOURCE_STATE_COPY_SOURCE);

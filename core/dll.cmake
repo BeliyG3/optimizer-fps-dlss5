@@ -1,7 +1,8 @@
 enable_language(RC)
 configure_file(core_version.rc.in core_version.rc @ONLY)
 # This X-macro manifest is an include, not a linker module definition file.
-set_source_files_properties(shaders/temporal_passes.def PROPERTIES HEADER_FILE_ONLY TRUE)
+set_source_files_properties(shaders/temporal_passes.def shaders/temporal_sky_passes.def shaders/temporal_marker_passes.def
+    PROPERTIES HEADER_FILE_ONLY TRUE)
 # Compile private copies with MT; never mix the public MD archives into this DLL.
 set(_sdk_absolute)
 set(_sdk_includes)

@@ -17,6 +17,21 @@ PW_INLINE float MediumDistance(float density, float distance, float u)
 {
     return density>0 ? -log(1-u*(1-MediumTransmittance(density,distance)))/density : u*distance;
 }
+// The sun's transmittance from a scattering point of a camera ray to the medium's boundary (a sphere of `radius` around
+// the camera), averaged over the ray's single-scattering distances: Haze() (haze.hlsli) samples a distance t up to
+// `distance` with MediumDistance and attenuates the sun over the rest of the way to the boundary along the direction
+// whose cosine with the ray is cosToSun. The raster fog takes that mean with `steps` midpoints of the same inverse CDF.
+PW_INLINE float HazeSunTransmittance(float density, float distance, float cosToSun, float radius, int steps)
+{
+    float sum=0;
+    for(int i=0;i<steps;++i) {
+        float t=MediumDistance(density,distance,(float(i)+0.5f)/float(steps)), projected=t*cosToSun;
+        float inside=radius*radius-t*t+projected*projected;
+        float sunDistance=-projected+sqrt(inside>0 ? inside : 0.0f);
+        sum+=MediumTransmittance(density,sunDistance>0 ? sunDistance : 0.0f);
+    }
+    return sum/float(steps);
+}
 PW_INLINE float PhaseHG(float cosine, float g)
 {
     float d=1+g*g-2*g*cosine;

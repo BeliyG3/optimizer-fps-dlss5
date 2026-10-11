@@ -8,6 +8,7 @@ function Get-OfpsKnownIniKeys {
         'WorkShiftEnabled', 'ShowCenterOutline', 'ShowWorkOutline',
         'Brightness', 'Gamma', 'TemporalMode', 'TemporalEvery',
         'TemporalMaxQueue', 'ModelPasses', 'SpreadPasses', 'MenuMode', 'TemporalGrid',
+        'TemporalSkyField', 'TemporalModelMarker', 'TemporalChainRule',
         'DebugTiming', 'DebugTemporalReadback', 'DebugAsyncLog',
         'DebugAsyncShowPass', 'DebugAsyncCompute', 'DebugAsyncNormalPriority',
         'DebugAsyncNoRealtime', 'DebugHookDelayMs', 'DebugKeepBackbuffer',
@@ -15,7 +16,11 @@ function Get-OfpsKnownIniKeys {
         'DebugTemporalBlend', 'DebugTemporalDepth', 'DebugTemporalSmooth',
         'DebugMotionSmooth', 'DebugPassNoHistory',
         'DebugTemporalNoModelMotion', 'DebugTemporalNoExpect',
-        'DebugTemporalNoCells', 'DebugTemporalPhaseIn', 'DebugWarpPath'
+        'DebugTemporalNoCells', 'DebugTemporalPhaseIn', 'DebugWarpPath',
+        'DebugTemporalDumpAcc', 'DebugTemporalMarkerRule',
+        'DebugTemporalMarkerNeighbours', 'DebugTemporalCarryProbe',
+        'DebugTemporalDumpAccFrom', 'DebugTemporalChainRule',
+        'DebugTemporalCarryChainRule'
     )
     # DebugLayer belongs to shell settings and must appear only once.
     return @($schema + @('Passive', 'FloatingWindow', 'TraceExit',

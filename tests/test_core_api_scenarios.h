@@ -8,8 +8,11 @@ void ScenarioPlanDeferral(WarpDevice &, IOfpsCore *, FakeHost &, HostFrame &); /
 void ScenarioMenuQueueRelease(WarpDevice &, IOfpsCore *, FakeHost &, HostFrame &); // test_core_api_menu_queue.cpp
 void ScenarioMenuRebuild(WarpDevice &, IOfpsCore *, HostFrame &);                  // test_core_api_menu_rebuild.cpp
 void ScenarioTemporalGrid(WarpDevice &, IOfpsCore *, FakeHost &, HostFrame &);     // test_core_api_grid.cpp
+void ScenarioSpreadPasses(WarpDevice &, IOfpsCore *, FakeHost &, HostFrame &);     // test_core_api_spread.cpp
+void ScenarioModelHistory(WarpDevice &, IOfpsCore *, FakeHost &, HostFrame &);     // test_core_api_history.cpp
 #ifndef OFPS_TEST_DLL
 void ScenarioComputeDirect(WarpDevice &, HostFrame &);
 void ScenarioComputeTransfer(WarpDevice &);
+void ScenarioSkySpread(WarpDevice &, IOfpsCore *, HostFrame &); // test_core_api_sky.cpp
 #endif
 }

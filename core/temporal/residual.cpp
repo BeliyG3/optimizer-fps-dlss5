@@ -129,17 +129,25 @@ void Machine::RecordResidual(ID3D12GraphicsCommandList *cmd, const FrameInputs &
     BarrierExternal(cmd, in.depth, in.depthState, D3D12_RESOURCE_STATE_COPY_SOURCE, in.depthSubresource);
     Barrier(cmd, m.depthF, m.depthFState, D3D12_RESOURCE_STATE_COPY_DEST);
     CopyDepth(cmd, in, m.depthF);
+    m.depthFRect = in.depthRect; // the passes above read the previous snapshot through its own sub-rect
     Barrier(cmd, m.depthF, m.depthFState, kReadable);
     if (m.depthPrev && in.expectedDepth && !in.background) {
         // The expectation restarts here too: the previous frame of the next link is this one. (Only
         // when the expectation runs: in the background mode `in.depth` is a copy of an older frame.)
         Barrier(cmd, m.depthPrev, m.depthPrevState, D3D12_RESOURCE_STATE_COPY_DEST);
         CopyDepth(cmd, in, m.depthPrev);
+        m.depthPrevRect = in.depthRect;
         Barrier(cmd, m.depthPrev, m.depthPrevState, kReadable);
     }
     BarrierExternal(cmd, in.depth, D3D12_RESOURCE_STATE_COPY_SOURCE, in.depthState, in.depthSubresource);
+    // The sky field of this residual, from it and the depth snapshot just taken (this pass's depth; in the background
+    // mode the kick's, which is the adopted pass's own). Not on a menu evaluation (sky_field.h).
+    if (in.skyField && in.allowSky && m.SkyReady()) m.sky.Build(m, cmd, in);
+    else m.sky.Reset();
     hasResidual_ = true;
+    chainFrame_ = res_->evalNow; // the frame the next chain reaches back to (the background mode: PromotePending)
     accValid_ = false;  // the displacement restarts from this frame
+    carryValid_ = false; // the carry chain too (carry_chain.cpp)
     expectValid_ = false; // and so does the expectation
 }
 
@@ -153,6 +161,7 @@ void Machine::RecordApply(ID3D12GraphicsCommandList *cmd, const FrameInputs &raw
     if (rawIn.rawFull || !PhaseInActive() || hostOutput == nullptr) return;
     const FrameInputs in = m.Resolve(rawIn);
     BarrierExternal(cmd, in.color, in.colorState, kReadable, in.colorSubresource);
+    BarrierExternal(cmd, in.depth, in.depthState, kReadable, in.depthSubresource);
     Barrier(cmd, m.residual, m.residualState, kReadable);
     Barrier(cmd, m.residualOld, m.residualOldState, kReadable);
     Barrier(cmd, m.interp, m.interpState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -160,8 +169,11 @@ void Machine::RecordApply(ID3D12GraphicsCommandList *cmd, const FrameInputs &raw
     key.valid = true;
     key.res[0] = in.color; key.fmt[0] = in.colorView;
     key.res[2] = m.residual; key.fmt[2] = kResidualFormat;
+    key.res[5] = in.depth; key.fmt[5] = in.depthView; // which pixels are sky, with the field (t20) of this pass
     key.res[10] = m.residualOld; key.fmt[10] = kResidualFormat;
+    m.sky.Bind(cmd, key, in.skyField && in.allowSky);
     m.Dispatch(cmd, kApply, m.Target(kTargetInterp), m.nativeW, m.nativeH, key, m.BaseConstants(in));
+    BarrierExternal(cmd, in.depth, kReadable, in.depthState, in.depthSubresource);
     BarrierExternal(cmd, in.color, kReadable, in.colorState, in.colorSubresource);
     CopyInterp(cmd, hostOutput, hostOutputState, dstX, dstY, outputSubresource);
 }

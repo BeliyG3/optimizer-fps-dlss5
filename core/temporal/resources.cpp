@@ -1,5 +1,6 @@
 #include "core/temporal/resources.h"
 
+#include <atomic>
 #include <cstdio>
 
 namespace ofps::core::temporal {
@@ -25,14 +26,20 @@ Resources::~Resources()
 {
     for (ID3D12Resource *r : {residual, residualPrev, depthF, depthPrev, acc[0], acc[1], interp, colorF, residualLow,
                               accP[0], accP[1], toneAcc, expect[0], expect[1], expectP[0], expectP[1], expectKick,
-                              residualOld, residualMix, cellsAdd, cellsLook, modelMv})
+                              residualOld, residualMix, cellsAdd, cellsLook, modelMv, markerReason, markerFail, linkFail,
+                              accCarry[0], accCarry[1], accUnrefined})
         if (r) r->Release();
+    if (accDump.buffer) accDump.buffer->Release();
+    if (accDump.fence) accDump.fence->Release();
     if (srvHeap) srvHeap->Release();
 #define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (member##Pso) member##Pso->Release();
 #include "core/shaders/temporal_passes.def"
+#include "core/shaders/temporal_sky_passes.def"
+#include "core/shaders/temporal_marker_passes.def"
 #undef PW_TEMPORAL_PASS
     if (refineModelPso) refineModelPso->Release();
     if (flowLumaModelPso) flowLumaModelPso->Release();
+    if (refinePairModelPso) refinePairModelPso->Release();
     for (ID3D12PipelineState *pso : {reprojectGridPso, composeGridPso, cellsGridPso})
         if (pso) pso->Release();
     if (rootSignature) rootSignature->Release();
@@ -85,12 +92,15 @@ void Resources::Dispatch(ID3D12GraphicsCommandList *cmd, Pass pass, Output outpu
     switch (pass) {
 #define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) case k##name: pso = member##Pso; break;
 #include "core/shaders/temporal_passes.def"
+#include "core/shaders/temporal_sky_passes.def"
+#include "core/shaders/temporal_marker_passes.def"
 #undef PW_TEMPORAL_PASS
     default: return;
     }
     if (constants.hostModelGrid) {
         if (pass == kRefine) pso = refineModelPso;
         if (pass == kFlowLuma) pso = flowLumaModelPso;
+        if (pass == kRefinePair) pso = refinePairModelPso;
     }
     // A carried frame on the model's grid (Machine::RecordReproject): the reprojection runs over the grid's
     // texels, and it, the cells and the compose learn the grid through lanes 6-7. Every other dispatch: 0.
@@ -116,12 +126,42 @@ void Resources::Dispatch(ID3D12GraphicsCommandList *cmd, Pass pass, Output outpu
                               grid ? constants.gridWidth : 0u, grid ? constants.gridHeight : 0u};
     cmd->SetComputeRoot32BitConstants(2, 8, dispatch, 0);
     const int timingSlot = timer.Begin(device, cmd, usePoint, pass);
-    cmd->Dispatch((w + PW_TEMPORAL_THREADS_X - 1) / PW_TEMPORAL_THREADS_X, (h + PW_TEMPORAL_THREADS_Y - 1) / PW_TEMPORAL_THREADS_Y, 1);
+    const bool pairTile = pass == kAccumulatePair; // its votes' tile (temporal_layout.h)
+    const UINT gx = pairTile ? PW_TEMPORAL_PAIR_THREADS_X : PW_TEMPORAL_THREADS_X, gy = pairTile ? PW_TEMPORAL_PAIR_THREADS_Y : PW_TEMPORAL_THREADS_Y;
+    cmd->Dispatch((w + gx - 1) / gx, (h + gy - 1) / gy, 1);
     timer.End(cmd, usePoint, timingSlot);
     // Also orders consecutive dispatches writing interp without an intervening transition.
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
     cmd->ResourceBarrier(1, &barrier);
+}
+
+void Resources::RecordMarkerFail(ID3D12GraphicsCommandList *cmd, SlotKey &key, Constants &c)
+{
+    key.fmt[1] = DXGI_FORMAT_R8_UINT; // a null view of the mask's type when it is not read
+    if (c.params[2] < 3.0f || markerFailPso == nullptr || !EnsureMotionByte(markerFail)) return;
+    gpu::Barrier(cmd, markerFail, markerFailState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Dispatch(cmd, kMarkerFail, {markerFail, DXGI_FORMAT_R8_UINT}, motionW, motionH, key, c);
+    gpu::Barrier(cmd, markerFail, markerFailState, kReadable);
+    key.res[1] = markerFail;
+    c.params[0] = 1.0f;
+}
+
+void Resources::RecordLinkFail(ID3D12GraphicsCommandList *cmd, SlotKey &key, Constants &c)
+{
+    key.fmt[1] = DXGI_FORMAT_R8_UINT; // a null view of the mask's type when it is not read
+    if (c.sky[2] != 3.0f || c.params[0] < 0.5f || c.params[1] < 0.5f) return; // no rule 3, or no link is tested
+    if (linkFailPso == nullptr || !EnsureMotionByte(linkFail)) {
+        c.sky[2] = 2.0f;
+        static std::atomic<bool> s_logged{false};
+        if (!s_logged.exchange(true))
+            Log(true, "Optimizer FPS core: chain rule 3 (DebugTemporalChainRule / DebugTemporalCarryChainRule) needs the LinkFail pass; it runs as rule 2");
+        return;
+    }
+    gpu::Barrier(cmd, linkFail, linkFailState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    Dispatch(cmd, kLinkFail, {linkFail, DXGI_FORMAT_R8_UINT}, motionW, motionH, key, c);
+    gpu::Barrier(cmd, linkFail, linkFailState, kReadable);
+    key.res[1] = linkFail;
 }
 
 FrameInputs Resources::Resolve(const FrameInputs &raw) const
@@ -167,8 +207,15 @@ Constants Resources::BaseConstants(const FrameInputs &in) const
     c.smoothing[1] = in.smoothRadius;
     c.smoothing[2] = in.ratioScale;
     c.smoothing[3] = phase.Share();
+    c.sky[0] = in.depthInverted ? 0.0f : 1.0f; // the far plane the sky field's pixels lie on (sky_field.h)
+    SetDepthFRect(c, depthFRect, in);
     c.hostModelGrid = in.hostModelGrid ? 1u : 0u;
     return c;
+}
+
+void Resources::SetDepthFRect(Constants &c, const Rect &copied, const FrameInputs &in)
+{
+    SetRect(c.depthFRect, copied.w != 0 && copied.h != 0 ? copied : in.depthRect); // before the first copy: as before
 }
 
 SlotKey Resources::BaseKey(const FrameInputs &in, ID3D12Resource *accPrev) const

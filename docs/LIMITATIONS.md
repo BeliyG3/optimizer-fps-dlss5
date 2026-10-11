@@ -13,7 +13,7 @@
 - The model's tonal response differs slightly on a compressed frame. The Brightness/Gamma
   compensation is applied before the host decodes the model's output, so it is not 1:1 with the
   final picture and has to be tuned by eye.
-- Eye tracking and a moving foveal centre are out of scope for the 0.5 SDK.
+- Eye tracking and a moving foveal centre are out of scope for the SDK.
 
 ## The temporal modes
 
@@ -26,6 +26,10 @@
   registered and the synchronous interpolation runs instead.
 - Background mode trades quality for even frame times when the GPU is saturated: the residual ages
   further the longer a pass takes.
+- **Smooth sky in carried frames** expects the sky at the far plane of a 0-to-1 depth buffer. A game that draws its
+  sky at another depth keeps the ordinary carry there; a game that hands over linear depth should switch it off
+  (`TemporalSkyField=0`).
+- Spread passes still run the model on two consecutive frames.
 
 ## Menu mode
 
@@ -38,7 +42,7 @@
   Peripheral show "unavailable: optical flow is not available". This state lasts until the game restarts.
 - The first menu of a game session can hitch once (about 60 ms) while the optical flow session is created.
 - A few soft frames after leaving a menu: NR's history is reset. With a temporal mode the first frames can be up to
-  about 7 dB below the same frames without menu mode on the bench, and more in Uniform.
+  about 7 dB below the same frames without menu mode in the test scene, and more in Uniform.
 - A setting changed inside a menu takes effect from the game's next frame.
 - The menu's own text and panels go through the model too.
 - A host-side NR toggle (OptiScaler's F6) does not switch NR off inside menus while menu mode is on. OptiScaler's own
@@ -49,7 +53,7 @@
   last menu frame finished; menu mode stays on.
 - Turned on inside an open menu, menu mode starts with the next menu.
 - Checked in game in Star Wars Jedi: Fallen Order (OptiScaler's D3D11 path). Not yet checked in games: the menus of
-  Baldur's Gate 3, DLSS5-Reshade-AIO (its compute queue is fenced; bench only), DLSS5-Feeder, resizing or leaving the
+  Baldur's Gate 3, DLSS5-Reshade-AIO (its compute queue is fenced; checked only in a test setup), DLSS5-Feeder, resizing or leaving the
   game inside a menu.
 - When ReShade never reports the game's NR queue (OptiScaler's own D3D12 device in D3D11 games), menu mode hooks
   `ExecuteCommandLists` to see it; the first menu within about 8 frames of the game's first NR frame still says

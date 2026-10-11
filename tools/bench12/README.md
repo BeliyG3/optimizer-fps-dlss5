@@ -115,6 +115,18 @@ Skinned meshes, animated morph weights, and meshes below animated TRS nodes upda
 
 Camera-ray single-scattering haze is enabled by default. Presentation adds threshold-free bloom and ACES-like tone mapping after optional NGX reconstruction. Auto exposure is opt-in and presentation-only. The default upscaler remains `none`.
 
+Auto exposure (`--auto-exposure 1`, `shaders/display.hlsl`, `display_math.hlsli`) adapts in stops (log2): the real
+frame time interactively (at most 0.1 s a frame), a fixed 1/60 s a frame in scripted runs (deterministic dumps); the
+first frame (and a resize) takes the target at once. Metering: the log-average luminance to 0.18, but at most so far
+that the 90th percentile of a 64-bin luminance histogram (of the pyramid level at most 512 texels wide, optionally
+centre-weighted) reaches 0.20 before the tone curve (sRGB about 0.58; 0.32 before task 5b read pale): in the sunny garden that is the sunlit sand,
+indoors the lamps and their reflections. `--exposure` is applied before the metering, so with auto exposure it cancels
+out (1.45 and 0.007 give the same picture), the firefly clamp included: under auto exposure `--firefly` is divided by
+the last frame's adapted scale (`FireflyLimit`, `display.h`), so it limits the luminance on screen. Until 2026-10-07 it
+did not, and with `--exposure 1.45` the garden's sun took every sunlit surface over 50: all of them were clamped to one
+luminance (flat sand, grey-white suits; RASTER_ACCEPTANCE.md, "Outdoor colours"). Dumps print `[exposure] frame N:
+auto scale ...` with both targets.
+
 ## Interactive scene lab (milestone 4)
 
 Run `run_lab.bat` beside the executable, or:
@@ -256,7 +268,7 @@ Run from `tools/bench12` so the relative asset paths below resolve:
 pw_bench12.exe 40 --gltf ..\bench\assets\lab_scene.glb --camera static --cam-dolly 2.9 --cam-lift 0.35 --fov 62 --sun-dir -0.30,-0.80,0.52 --sun-strength 400 --albedo 0.4 --dump 30
 ```
 
-Successful completion prints `[info] bench finished after 40 frames, device ok` and writes `dump_30.bmp` beside the executable. Dumps are zero-based and capture the full-size, tone-mapped/debug image copied from the back buffer before presentation. Shader binaries are always loaded from `shaders/bin` beside the executable; input paths are relative to the working directory.
+Successful completion prints `[info] bench finished after 40 frames, device ok` and writes `dump_30.bmp` beside the executable (`--dump-format png` writes `dump_30.png`: the same pixels, lossless, about 3-5x smaller; recommended for 4K runs). Dumps are zero-based and capture the full-size, tone-mapped/debug image copied from the back buffer before presentation. Shader binaries are always loaded from `shaders/bin` beside the executable; input paths are relative to the working directory.
 
 Append `--debug-layer` for D3D12 validation. All stored D3D12 messages are printed at initialization and after submissions; error/corruption messages fail the run. Check every view on a DXR device, confirm cut-out shadows, and compare static `--view accum` frames with individual noisy frames. A moving camera must reset accumulation. No GPU run or clean debug-layer result is claimed by the CPU tests.
 
@@ -300,12 +312,21 @@ otherwise the next run starts in the add-on's safe mode. For a control run insid
 `dxgi.dll` (for example to `dxgi.dll.off`); ReShade and the add-on are then not loaded. `run_nrhost\` is not
 tracked.
 
+## Raster mode (`--render raster`)
+
+A game-like frame without ray tracing (shadow-mapped sun, lamp point lights, analytic fog), plus `--motion none`,
+`--camera snap`, `--hud` and baked lightmaps (`--lightmap`): see [RASTER.md](RASTER.md). Baking and the outdoor yard:
+[RASTER_BAKED.md](RASTER_BAKED.md); measurements and acceptance: [RASTER_ACCEPTANCE.md](RASTER_ACCEPTANCE.md).
+
 ## Options
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | positional frame count | `600` | Number of frames; closing the window stops early. |
 | `--gltf file.glb` | `../bench/assets/lab_scene.glb` | Scene loaded through the existing bench loader. |
+| `--no-instancing` | off | Flatten meshes shared by static nodes per node, as before instancing ([INSTANCING.md](INSTANCING.md)). |
+| `--cull-small-radius R`, `--cull-cone-deg D`, `--cull-small-distance M` | 0.75, 170, 0 (off) | Raster: small instances leave every pass outside the cone around the view or beyond the distance; `--no-small-culling`, `--no-occlusion-culling` (the camera passes' Hi-Z), `--cull-check`, `--cull-debug` ([INSTANCING.md](INSTANCING.md), "Culling small objects"). |
+| `--cpu-skinning` | off | Skin characters and `--wind` nodes with the CPU workers and upload them every frame, as before the GPU skinning pass ([INSTANCING.md](INSTANCING.md), "GPU skinning"). |
 | `--hdri file.hdr` | constant sky | Radiance RGBE, `-Y +X`, flat or scanline RLE. Invalid input fails explicitly. |
 | `--width W --height H` | `1920 1080` | Window client area and RGBA8 flip-model swap-chain size; fixed in scripted mode, resizable in interactive mode. |
 | `--render-scale S` | `0.5` | Render/guide dimensions: output times S, truncated, minimum one pixel. Range `(0,1]`. |
@@ -322,7 +343,7 @@ tracked.
 | `--sun-angle D` | `0.5` | Full angular diameter in degrees; zero gives a directional light. |
 | `--exposure E` | `1.45` | Linear radiance multiplier before firefly clamping and presentation. |
 | `--albedo A` | `1` | Base-colour multiplier, excluding lamp emission; reflectance clamps to `[0,1]`. |
-| `--firefly L` | `50` | Maximum sample luminance after exposure. This deliberate clamp biases extreme samples. |
+| `--firefly L` | `50` | Maximum sample luminance after exposure (with `--auto-exposure 1`: after the adapted scale too, so on screen). This deliberate clamp biases extreme samples. |
 | `--spp N` | `1` | Lighting samples per pixel, `1..4096`; primary jitter is shared within a frame. |
 | `--bounces 0..8` | `4` | Indirect bounces per path; every vertex receives sun and lamp NEE. Secondary lamp emission is included with MIS. |
 | `--light-candidates M` | `8` | RIS lamp candidates per vertex, `1..1024`; at most one selected lamp shadow ray. |
@@ -337,13 +358,28 @@ tracked.
 | `--mv-format rg16f\|rgba16f` | `rg16f` | Motion texture handed to DLSS and NR: the RG16F guide, or an RGBA16F copy (xy motion, zw 0) as some games use. |
 | `--jitter 0\|1` | `1` | Halton(2,3) projection jitter in render pixels, positive right/down. |
 | `--depth standard\|reverse` | `standard` | Unjittered projection, near `0.1`, far `300`; miss is `1` standard or `0` reverse. |
-| `--view VIEW` | `colour` | `colour`, `noisy`, `accum`, `depth`, `motion`, `normal`, `roughness`, `albedo`, `specular`. |
-| `--dump N[,N...]` | none | Zero-based frames to save as `dump_N.bmp` beside the executable. |
+| `--view VIEW` | `colour` | `colour`, `noisy`, `accum`, `depth`, `motion`, `normal`, `roughness`, `albedo`, `specular`, `vegmask` (raster only: the foliage class of each pixel from `foliage_class.h` in red, R = class * 50: 0 none or sky, 50 grass, 100 leaves, 150 fern, 200 trunk; G = B = 0; point-read, use `--render-scale 1`). |
+| `--dump N[,N...]` | none | Zero-based frames to save as `dump_N.bmp` (or `dump_N.png`, see `--dump-format`) beside the executable. Encoded and written on worker threads (`dump_writer.h`); the run ends once every file is on disk. |
+| `--dump-format bmp\|png` | `bmp` | Dump file format. `bmp` is the 32-bit BMP every reference and hash comparison uses. `png` (WIC, 8-bit RGB, lossless) holds exactly the same pixels in about 3-5x less disk (a 4K BMP is 33 MB); recommended for large runs. |
+| `--dump-raw motion` | none | Also writes `motion_N.f32` beside the executable for every `--dump` frame: a 16-byte header (`OFMV`, then uint32 width, height, frame) and width*height float32 pairs (x, y) of the render-size motion target, current->previous, render pixels, +x right, +y down, rows from the top. With `--view vegmask` the target holds the class instead. |
+| `--dump-raw prevdepth` | none | Alone: writes `prevdepth_N.f32` instead (`OFPD`, width*height float32): the view depth in metres that each pixel's surface point had in the camera of frame t − span (`--motion-span`), 0 on the sky. The motion guide carries it, so such a run is for this dump only (`--nr off`). |
+| `--motion-span K` | `1` | 1..64. Frame t's motion is the offset to frame t-K (clamped to frame 0): previous animation time, wind frame and view of t-K. Ground truth for chained offsets; it changes the motion every consumer reads, so use it with `--nr off`. K > 1 exits with code 2 with `--camera follow` or `--interactive`. |
+| `--motion-span cadence` | off | With `--cadence N` (2..8) and `--cadence-phase P` (0..N−1, default 0): frame t's motion is the offset to its last full pass, the frames with (t − P) mod N == 0 (a full pass points N frames back). Same limits as K > 1: use with `--nr off`; exits with code 2 with `--camera follow` or `--interactive`, or with `--cadence` without it. |
+| `--start-frame S` | `0` | The loop starts at frame S as if frames 0..S−1 had run (animation clock, frame S−1's view; camera, wind, jitter and dumps are functions of the frame). NR, RR and the core start without history. Rejected with `--camera follow`, `--interactive`, frame events before S, and under `--auto-exposure 1` without `--exposure-replay`. `motion/README.md`, "Short runs". |
+| `--exposure-record FILE`, `--exposure-replay FILE` | none | One line per frame, `frame scale average highlight` (`exposure_track.h`): record writes the auto exposure each frame ended with; replay makes Adapt write the recorded scale and the firefly clamp read the previous frame's, so the frames equal the recorded run's byte for byte. One of them at a time, scripted runs only. |
+| `--nr-reset-at F[,F2...]` | none | Frame F's feature-18 evaluate reads `DLSSNR.Reset=1` (the add-on's core drops its temporal history, the model its own). On S + 1 of a full run it makes the window the short run's byte for byte. `motion/README.md`, "Short runs". |
+| `--variants K`, `--variant-set K,ID,VALUE[,...]` | `1` | The window [`--start-frame`, frames) K times in one process; before variant k it starts again as a run from S (feature 18 released and created after frame S's present, clock, history, previous view) and sets k's add-on settings through `OptimizerFpsSetSettingV1` (a refused one fails the run); dumps `v<k>_dump_<frame>`. Raster, `--host ngx`, no raw dumps or frame events. `motion/run_variants.py`. |
+| `--texture-cache DIR` | none | The scene images' decoded mip chains, one file per image keyed by its encoded bytes (`texture_cache.h`); a hit skips the decode and the mips. No effect on the frames. |
+| `--startup-profile` | off | Prints the wall time of the run's phases from the process's creation (loader, device, glb, textures with the decode/mips/copy split, BLAS, pipelines, sky, probes, NR runtime, feature 18, frames, dump writes) at the end. |
 | `--haze D` | `0.012` | Camera-medium extinction per metre, nonnegative; zero disables haze. Scattering albedo is 0.9. |
 | `--haze-g G` | `0.6` | Henyey-Greenstein anisotropy, strictly between -1 and 1. |
 | `--tonemap aces\|neutral\|none` | `aces` | ACES-like filmic fit, the original Reinhard curve, or no curve (clip at 1, sRGB-encode: with `--bloom 0` the back buffer carries the NR sRGB proxy's encoding). |
 | `--bloom S` | `0.06` | Nonnegative strength of three threshold-free blurred pyramid copies. Zero disables addition. |
-| `--auto-exposure 0\|1` | `0` | Presentation-only log-average exposure adaptation, one simulated second time constant. |
+| `--auto-exposure 0\|1` | `0` | Presentation-only eye adaptation in stops, metered on the average with highlight protection; see "Auto exposure" above the milestone 4 section. |
+| `--exposure-ev EV` | `0` | Auto exposure compensation in stops on the metered target (-10..10); the menu's "Exposure compensation", saved in settings.json. |
+| `--exposure-centre W` | `0` | Centre weighting of the metering histogram, 0..1: the corners count `1 - W` (at least 1/16); the menu's "Centre weighting". |
+| `--exposure-speed-up S` | `3` | Auto exposure towards a brighter scene (the scale falls, e.g. flying outdoors): each second closes `1 - exp(-S)` of the remaining stops; 3 settles 90 % in about 0.8 s. 0.01..100; the menu's "Adapt to brighter", saved in settings.json. |
+| `--exposure-speed-down S` | `1.5` | The same towards a darker scene (the scale rises, back indoors); 1.5 settles 90 % in about 1.5 s. 0.01..100; the menu's "Adapt to darker". |
 | `--debug-layer` | off | Enable D3D12 debug layer and print its messages. |
 | `--help` | | Print usage without creating a device. |
 
@@ -359,11 +395,13 @@ All guides use the render resolution. `colour` is RGBA16F; `depth` R32F; `motion
 
 - `main.cpp`, `options.h`, `application.*`: entry wiring, strict option parsing, and application loops.
 - `math.h`, `camera.h`: loader-compatible math, projection, jitter, and camera path.
-- `device.h/.cpp`, `device_dump.cpp`: device/window, queue/fence, descriptors, uploads, readback, BMP output.
+- `device.h/.cpp`, `device_dump.cpp`: device/window, queue/fence, descriptors, uploads, readback, dump output (BMP or PNG; the writers are `WriteBmp`/`WritePng` in `image.cpp`).
 - `device_timing.cpp`: timestamp queries, readback, and per-run GPU timing averages.
 - `image.h/.cpp`: WIC decoding and Radiance HDR loading.
 - `scene.h/.cpp`: glTF conversion and static/dynamic partitioning, material/texture buffers, emissive power CDF, camera anchor.
-- `accel.h/.cpp`: static/dynamic opaque/cut-out BLAS geometries, dynamic refits/rebuilds, and one/two-instance TLAS.
+- `scene_instances.h/.cpp`: which static nodes share a mesh as instances, their object-space triangles and transforms ([INSTANCING.md](INSTANCING.md)).
+- `accel.h/.cpp`, `accel_instances.h`: static/dynamic opaque/cut-out BLAS geometries, a BLAS per instanced mesh, dynamic refits/rebuilds, and the TLAS.
+- `raster_instances.h/.cpp`: raster's per-pass instance culling, the per-instance input buffer and the instanced draws.
 - `pathtrace.h/.cpp`, `pathtrace_pipeline.cpp`: output resources, constants, dispatch/present, root signatures, and PSOs.
 - `ngx.h/.cpp`, `ngx_evaluate.cpp`: dynamic driver loading, NGX lifetime, helper bridges, parameter logging, and SR/RR evaluation barriers.
 - `ngx_sdk.h`, `ngx_contract.h`: D3D-only SDK includes, quality/flag selection, matrix conversion, and testable RR parameter construction.
@@ -378,6 +416,7 @@ All guides use the render resolution. `colour` is RGBA16F; `depth` R32F; `motion
 - `shaders/reservoir.hlsli`, `specular_guide.hlsli`: RIS estimator math and the per-channel F0 implementation of [NVIDIA's EnvBRDFApprox2](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_RR.md#421-specular-albedo-generation), shared with CPU tests.
 - `image_mips.h/.cpp`, `device_texture.cpp`: CPU colour/data/HDR mip chains and multi-subresource upload.
 - `display.h/.cpp`, `shaders/display.hlsl`: linear bloom pyramid and exact weighted log-luminance reduction for display exposure.
+- `local_exposure.h/.cpp`, `shaders/local_exposure.hlsl/.hlsli`, `shaders/tonemap_ue.hlsli`, `hlsl_compat.h`, `tests_tonemap.cpp`: the UE5-like display (`--local-exposure`, `--tonemap ue-filmic`, `--exposure-metering ue`), see [DISPLAY_UE.md](DISPLAY_UE.md).
 - `pipeline.h/.cpp`: shared shader loading and root-signature creation.
 - `shaders/bsdf.hlsli`, `haze.hlsli`, `sampling_math.hlsli`, `display_math.hlsli`: surface scattering, medium scattering, and CPU-tested sampling/display math.
 - `tests.cpp`, `tests_materials.cpp`: CPU regression checks and shared-loader compile coverage, with optional actual-scene validation.

@@ -54,7 +54,7 @@ the zip → Properties → Unblock **before** unpacking.
 
 The reason in the banner tells you which of these it is.
 
-### `crash guard: the previous session … ended right after the first warped frame`
+### `CRASH GUARD: the previous session of this game ended right after the first frame this add-on warped`
 
 The marker file `optimizer-fps-dlss5.session` beside the add-on is written just before the first warped
 evaluate and removed on a clean unload. It was still there at startup, so this session forwards
@@ -84,7 +84,7 @@ is 32-bit and NR lives in `host64` (see below).
 The consumer is there but has not asked for NR. In RenoDX, check that neural rendering is enabled in
 its menu (`NeuralUplift`); in a game that simply does not use NR, there is nothing to accelerate.
 
-The hook itself is fine at this point. If the banner instead shows `hook attempts so far: N`, the
+The hook itself is fine at this point. If the banner instead shows `hook attempts: N, retried every frame`, the
 Detours hook has not landed yet; it is retried every frame, and hosts that create their feature
 during a level load can take a while.
 
@@ -178,6 +178,15 @@ synchronous interpolation`. The background pass needs a D3D12 queue that ReShade
 `init_command_queue`; when the consumer creates its device before ReShade is in place — always the
 case when OptiScaler loads ReShade (`LoadReshade=true`) — no queue is ever registered. Use
 **Interpolate** (sync) there.
+
+Behind renodx 8.5 and the ShortFuse build (26.1003), releases before 2026.10.2 showed the same message
+although the game's queue was registered. Update the add-on.
+
+## Frames without NR and short stalls behind renodx 8.5 or the ShortFuse build
+
+With NR at the present (renodx 8.5 `NRHookPoint=2`, the ShortFuse build's hook stage 3), releases before
+2026.10.2 ran out of descriptor tables every 18 to 24 frames: the log says `descriptor pool exhausted`, and those
+frames show the game's image without NR and stall for up to 100 ms. Update the add-on.
 
 ## The picture looks compressed twice with OptiScaler
 

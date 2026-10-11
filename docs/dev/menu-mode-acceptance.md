@@ -1,6 +1,6 @@
 # Menu mode: stage-1 bench acceptance (D3D12)
 
-Plan: `docs/superpowers/plans/2026-09-29-menu-mode.md`, Task 9 and correction C7. Yardstick: the spike
+Yardstick: the spike
 (`docs/dev/menu-mode-spikes.md`, 0b-1; the spike pages are not published). The menu frame goes to NR as it is, so the look
 numbers are recorded, not tuned. No game install was touched.
 

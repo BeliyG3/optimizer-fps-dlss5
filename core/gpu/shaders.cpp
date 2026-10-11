@@ -41,11 +41,23 @@ bool LoadShaders(const std::wstring &coreDirectory, Shaders &s)
 #undef PW_TEMPORAL_PASS
     ReadWholeFile(dir + L"temporal_RefineModel_cs.dxbc", s.temporalRefineModel);
     ReadWholeFile(dir + L"temporal_FlowLumaModel_cs.dxbc", s.temporalFlowLumaModel);
+    ReadWholeFile(dir + L"temporal_RefinePairModel_cs.dxbc", s.temporalRefinePairModel);
     ReadWholeFile(dir + L"temporal_ReprojectGrid_cs.dxbc", s.temporalReprojectGrid);
     ReadWholeFile(dir + L"temporal_ComposeGrid_cs.dxbc", s.temporalComposeGrid);
     ReadWholeFile(dir + L"temporal_CellsGrid_cs.dxbc", s.temporalCellsGrid);
     if (!s.TemporalGridLoaded())
         Log(true, "Optimizer FPS core: temporal_*Grid_cs.dxbc were not found in optimizer-fps-dlss5\\; carried frames keep the native reprojection");
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) \
+    ReadWholeFile(dir + L"temporal_" L## #name L"_cs.dxbc", s.temporal##name);
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+    if (!s.TemporalSkyLoaded())
+        Log(true, "Optimizer FPS core: temporal_Sky*_cs.dxbc were not found in optimizer-fps-dlss5\\; the sky field is off");
+    // The marker's optional passes, each on its own (resources_create.cpp logs what a missing one turns off).
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) \
+    ReadWholeFile(dir + L"temporal_" L## #name L"_cs.dxbc", s.temporal##name);
+#include "core/shaders/temporal_marker_passes.def"
+#undef PW_TEMPORAL_PASS
     if (!s.loaded) Log(true, "Optimizer FPS NGX: shaders were not found in optimizer-fps-dlss5\\ beside the add-on");
     return s.loaded;
 }

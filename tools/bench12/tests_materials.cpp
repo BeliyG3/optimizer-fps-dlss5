@@ -1,14 +1,17 @@
 #include "math.h"
 #include "image_mips.h"
+#include "texture_cache.h"
 #include "shaders/sampling_math.hlsli"
 #include "shaders/reservoir.hlsli"
 #include "shaders/display_math.hlsli"
+#include "display.h"
 #include "shaders/specular_guide.hlsli"
 #pragma warning(push)
 #pragma warning(disable: 4456 4457)
 #include "../bench/pw_gltf.h"
 #pragma warning(pop)
 #include <filesystem>
+#include <random>
 #include <fstream>
 #include <stdexcept>
 #include <cstddef>
@@ -62,6 +65,22 @@ void MipChecks()
     auto hdr=BuildMips(3,1,16,odd,false); float result[4]{};
     std::memcpy(result,hdr.back().bytes.data(),sizeof(result));
     Require(hdr.size()==2 && Near(result[0],1) && Near(result[2],3),"Odd HDR mip includes edge pixel");
+    // The 8-bit table path is the generic loop's bit for bit: FNV-1a of every level of a 37x23 noise image (mt19937
+    // seed 11), the hashes of the loop before the table (image_mips.cpp, 2026-10-10).
+    std::mt19937 noise(11); std::vector<uint8_t> image(37*23*4); for(auto &b:image) b=uint8_t(noise());
+    for(int srgb=0;srgb<2;++srgb) {
+        unsigned long long h=1469598103934665603ull;
+        for(const auto &level:BuildMips(37,23,4,image.data(),srgb!=0)) for(auto v:level.bytes) { h^=v; h*=1099511628211ull; }
+        Require(h==(srgb ? 0xCF2A1E516222AB59ull : 0xB9772D23660B1AA8ull),"8-bit mips equal the generic loop's bytes");
+    }
+    // --texture-cache: a chain written and read back is the same; another key, size or colour flag misses.
+    const auto chain=BuildMips(37,23,4,image.data(),true); const std::filesystem::path dir="obj/mipcache_test";
+    WriteMipCache(dir,MipCacheKey(image),image.size(),true,chain);
+    std::vector<ImageMip> back, untouched;
+    Require(ReadMipCache(dir,MipCacheKey(image),image.size(),true,back) && back.size()==chain.size(),"cached mips read back");
+    for(size_t k=0;k<chain.size();++k) Require(back[k].width==chain[k].width && back[k].bytes==chain[k].bytes,"cached mips equal");
+    Require(!ReadMipCache(dir,MipCacheKey(image),image.size(),false,untouched) && !ReadMipCache(dir,MipCacheKey(image)^1,image.size(),true,untouched) &&
+            !ReadMipCache(dir,MipCacheKey(image),image.size()+1,true,untouched) && untouched.empty(),"cache misses on another key");
 }
 void SamplingChecks()
 {
@@ -98,11 +117,49 @@ void SamplingChecks()
         Require(std::abs(integral-1)<0.0001,"HG phase integrates to unity");
     }
     Require(PhaseHG(1,0.6f)>PhaseHG(-1,0.6f),"HG forward-scattering sign");
+    // The raster fog's sun transmittance against the trace's estimator (random distances, the same boundary), at the
+    // garden's haze: towards, across and away from the sun. 16 steps within 2.4 % (the worst: across the sun at the boundary); across the sun it is well above the old
+    // constant MediumTransmittance(0.008, 300) = 0.091.
+    for(float cosine:{0.95f,0.3f,0.0f,-0.5f,-1.0f}) for(float reach:{20.0f,120.0f,300.0f}) {
+        double mc=0; unsigned state=12345;
+        for(int i=0;i<200000;++i) {
+            state=state*1664525u+1013904223u; const float u=float(state>>8)/16777216.0f;
+            const float t=MediumDistance(0.008f,reach,u), projected=t*cosine;
+            mc+=MediumTransmittance(0.008f,std::max(0.0f,-projected+std::sqrt(std::max(0.0f,300*300-t*t+projected*projected))));
+        }
+        mc/=200000;
+        Require(std::abs(HazeSunTransmittance(0.008f,reach,cosine,300,16)/float(mc)-1)<0.03f,"Raster haze sun transmittance matches the trace");
+    }
+    Require(HazeSunTransmittance(0.008f,300,0,300,16)>1.3f*MediumTransmittance(0.008f,300),"Haze across the sun is brighter than the old constant");
     Require(SpecularGuideF0(0.2f,1,0.8f)>SpecularGuide(0.2f,1),"Metal F0 reaches RR guide");
-    float adapted=1;
-    for(int i=0;i<60;++i) adapted=AdaptExposure(adapted,std::log(0.09f),1.0f/60);
-    Require(std::abs(adapted-(2-std::exp(-1.0f)))<0.0001f,"Exposure one-second response");
-    Require(Near(AdaptExposure(1,std::log(0.18f),1),1) && Filmic(0)==0 && Filmic(1)>Filmic(0.18f),"Exposure midpoint and filmic ordering");
+    // Auto exposure in stops: towards a darker scene (target scale 2, one stop up) at the darker speed, a brighter one
+    // (target 0.5) at the brighter speed; one second at 60 and at 35 frames per second closes the same 1 - exp(-speed).
+    float darker=1, brighter=1, darker35=1;
+    for(int i=0;i<60;++i) { darker=AdaptExposure(darker,2,1.0f/60,3,1.5f); brighter=AdaptExposure(brighter,0.5f,1.0f/60,3,1.5f); }
+    for(int i=0;i<35;++i) darker35=AdaptExposure(darker35,2,1.0f/35,3,1.5f);
+    Require(std::abs(std::log2(darker)-(1-std::exp(-1.5f)))<0.0005f,"Exposure one-second response towards a darker scene");
+    Require(std::abs(std::log2(brighter)+(1-std::exp(-3.0f)))<0.0005f,"Exposure one-second response towards a brighter scene");
+    Require(std::abs(darker35-darker)<0.0005f,"Exposure response does not depend on the frame rate");
+    float settle=1; int frames=0; // 90 % of a 4-stop step outdoors (the scale falls) at 35 fps
+    while(std::log2(settle)>-3.6f && frames<1000) { settle=AdaptExposure(settle,1.0f/16,1.0f/35,3,1.5f); ++frames; }
+    Require(frames/35.0f>0.7f && frames/35.0f<0.85f,"Exposure settles to 90 % in about 0.8 s towards a brighter scene");
+    Require(ExposureSeconds(true,1)==0.1f && ExposureSeconds(true,-1)==0 && ExposureSeconds(false,1)==1.0f/60,"Exposure seconds");
+    // Metering: the log-average to 0.18 unless the highlight percentile would pass HIGHLIGHT_KEY; ev on top.
+    unsigned bins[METER_BINS]={};
+    bins[MeterBin(0.18f)]=80; bins[MeterBin(8.0f)]=20; // 20 % of the weight at 8 (log2 3): the 90th percentile in that bin
+    const float p90=MeterPercentile(bins,0.9f);
+    Require(p90>3 && p90<3+METER_STEP && MeterBin(1e-40f)==0 && MeterBin(1e30f)==METER_BINS-1,"Metering histogram bins and percentile");
+    Require(Near(MeterTarget(std::log(0.18f),-10,1),1) && Near(MeterTarget(std::log(0.18f),-10,2),2),"Average-based target and compensation");
+    Require(Near(MeterTarget(std::log(0.18f),3,1),HIGHLIGHT_KEY/8),"Highlights cap the target");
+    Require(Near(AdaptExposure(1,1,1,3,1.5f),1) && Filmic(0)==0 && Filmic(1)>Filmic(0.18f),"Exposure midpoint and filmic ordering");
+    // The firefly clamp follows the auto exposure. Garden picnic view, --exposure 1.45: sunlit sand writes a luminance of
+    // about 125 and the settled scale is 0.00225, so it is 0.28 on screen. It must not be clamped (the old fixed limit 50
+    // flattened every sunlit surface to one luminance); a firefly 50 on screen still is.
+    const ExposureReading garden{0.00225f,0.0064f,0.00225f,true}, none{};
+    Require(FireflyLimit(50,false,garden)==50 && FireflyLimit(50,false,none)==50,"Firefly limit without auto exposure is --firefly");
+    Require(Near(FireflyLimit(50,true,garden),50/0.00225f) && FireflyLimit(50,true,garden)>125 && 60/0.00225f>FireflyLimit(50,true,garden),
+            "Firefly limit under auto exposure is --firefly on screen");
+    Require(FireflyLimit(50,true,none)>1e37f && FireflyLimit(50,true,{0,1,1,true})>1e37f,"No firefly limit before the first exposure reading");
 }
 }
 void MaterialChecks(const std::filesystem::path &directory) { LoaderChecks(directory); MipChecks(); SamplingChecks(); }

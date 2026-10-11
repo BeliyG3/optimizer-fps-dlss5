@@ -28,6 +28,8 @@ constexpr const char *const kTemporalModeLabels[] = {
     "(withdrawn in 26.26: centre every frame, applied as sync)",
     "Interpolate: model in the background (async)", nullptr};
 constexpr const char *const kWarpPathLabels[] = {"auto", "compute", "pixel", nullptr};
+constexpr const char *const kModelMarkerLabels[] = {"Off", "Classic", "Narrow (default)", nullptr};
+constexpr const char *const kChainRuleLabels[] = {"Classic", "Coherent (default)", nullptr};
 constexpr OfpsSettingDesc Row(OfpsSettingId id, const char *iniKey, OfpsSettingGroup group, const char *label,
                               const char *help, OfpsSettingType type, float lo, float hi,
                               OfpsSettingValue defaultValue, uint32_t flags,
@@ -233,4 +235,50 @@ const OfpsSettingDesc kOfpsSettings[OFPS_SET_COUNT] = {
         "The reprojection of carried frames runs on a grid matched to the model's resolution (faster). Off = as "
         "before.",
         OFPS_TYPE_BOOL, 0.0f, 1.0f, I(1), kPersisted, kTemporalOn),
+    Row(OFPS_SET_TEMPORAL_SKY_FIELD, "TemporalSkyField", OFPS_GROUP_TEMPORAL, "Smooth sky in carried frames",
+        "Carried frames give the sky (pixels at the far plane of the depth buffer) a smooth estimate of the model's sky "
+        "edit instead of carrying it pixel by pixel, so fast turns leave no pale patches on the sky. Off = as before; "
+        "switch it off for a host whose depth is linear.",
+        OFPS_TYPE_BOOL, 0.0f, 1.0f, I(1), kPersisted, kTemporalOn),
+    Row(OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC, "DebugTemporalDumpAcc", OFPS_GROUP_DIAGNOSTICS, "Dump full-pass motion",
+        "Temporal mode 1: every full pass writes the model's motion and the accumulated chain (motion-texture pixels) "
+        "to ofps_acc_<eval>.bin beside the game's executable.",
+        OFPS_TYPE_BOOL, 0.0f, 1.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_DEBUG_TEMPORAL_MARKER_RULE, "DebugTemporalMarkerRule", OFPS_GROUP_DIAGNOSTICS, "Model marker rule",
+        "Where the model is told a pixel has no history: 0 = as before; 1 = depth only (the colour test never marks); "
+        "2 = the colour test marks only with a depth hint; 3 / 4 = 1 / 2, marked only in connected regions (5x5).",
+        OFPS_TYPE_INT, 0.0f, 4.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_DEBUG_TEMPORAL_MARKER_NEIGHBOURS, "DebugTemporalMarkerNeighbours", OFPS_GROUP_DIAGNOSTICS,
+        "Model marker neighbours",
+        "Marker rules 3 and 4: how many of the 25 pixels of a failing pixel's 5x5 neighbourhood (itself included) must "
+        "fail too for it to stay marked. 0 = 12.",
+        OFPS_TYPE_INT, 0.0f, 25.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_TEMPORAL_MODEL_MARKER, "TemporalModelMarker", OFPS_GROUP_TEMPORAL, "Model motion markers",
+        "Where full passes tell the model a pixel has no history. Narrow keeps history on swaying foliage while still "
+        "marking real disocclusions. Classic = the rule of earlier releases; Off = no markers.",
+        OFPS_TYPE_ENUM, 0.0f, 2.0f, I(2), kPersisted, kTemporalOn, kModelMarkerLabels),
+    Row(OFPS_SET_DEBUG_TEMPORAL_CARRY_PROBE, "DebugTemporalCarryProbe", OFPS_GROUP_DIAGNOSTICS, "Carry probe",
+        "Bench attribution of the carry under camera motion (bits): 1 = temporal mode 1 takes the host's motion as the "
+        "finished chain (the bench's offset to the last full pass); 2 = the reprojection accepts every in-frame pixel; "
+        "4 = the residual is fetched bilinearly. 0 = off.",
+        OFPS_TYPE_INT, 0.0f, 7.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC_FROM, "DebugTemporalDumpAccFrom", OFPS_GROUP_DIAGNOSTICS, "Dump chain from",
+        "Bench attribution: the chain is dumped on every evaluate from this one to 63 evaluates later. 0 = off.",
+        OFPS_TYPE_INT, 0.0f, 1000000.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_DEBUG_TEMPORAL_CHAIN_RULE, "DebugTemporalChainRule", OFPS_GROUP_DIAGNOSTICS, "Chain restart rule",
+        "When the carry's chain starts afresh from this frame's vector: 0 = on a depth or colour change (today); "
+        "1 = never; 2 = on a depth change, or a colour change with a depth hint; 3 = rule 2 where at least 8 of the "
+        "25 pixels around fail too; 4 = on a depth change only.",
+        OFPS_TYPE_INT, 0.0f, 4.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_DEBUG_TEMPORAL_CARRY_CHAIN_RULE, "DebugTemporalCarryChainRule", OFPS_GROUP_DIAGNOSTICS, "Carry chain rule",
+        "Bench attribution: carried frames reproject along a second chain that restarts by this rule (1..4 as the chain "
+        "restart rule; 5 = on a depth change, or a colour change shared by at least 18 of the 25 pixels around; 6 = rule 5, "
+        "or where the picture moved against the game's motion over the 25 pixels around), while the model keeps the main "
+        "chain. 0 = no second chain.",
+        OFPS_TYPE_INT, 0.0f, 6.0f, I(0), kDiagnostic),
+    Row(OFPS_SET_TEMPORAL_CHAIN_RULE, "TemporalChainRule", OFPS_GROUP_TEMPORAL, "Carry chain",
+        "How carried frames follow the picture while the camera moves. Coherent keeps following a surface through "
+        "scattered colour changes (swaying foliage, glints) and starts afresh only where the depth or a whole patch "
+        "changes, so moving shots smear and flicker less. Classic = one chain as in earlier releases.",
+        OFPS_TYPE_ENUM, 0.0f, 1.0f, I(1), kPersisted, kTemporalOn, kChainRuleLabels),
 };

@@ -15,6 +15,10 @@ bool RegisterQueue(ID3D12Device *device, ID3D12CommandQueue *queue);
 void SetQueueRegistrationSuppressed(bool suppressed);
 void UnregisterQueue(ID3D12CommandQueue *queue);
 ID3D12CommandQueue *RetainRegisteredQueue(ID3D12CommandQueue *queue);
+// The registered device that stands for these identities when no queue is registered under either: the only one on
+// their adapter (ReShade registers the native device, a host may evaluate on its proxy). Null otherwise. Every lookup
+// below matches it too.
+ID3D12Device *RegisteredAlias(ID3D12Device *device, ID3D12Device *proxyDevice);
 bool WaitForGpu(ID3D12Device *device, ID3D12Device *proxyDevice);
 // Graphics (DIRECT) queues only: the background mode signals and waits where the host submits its
 // frames; an idle compute queue would reach a shared fence value early. CountQueues counts them too.

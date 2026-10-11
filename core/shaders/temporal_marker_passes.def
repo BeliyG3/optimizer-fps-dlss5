@@ -1,0 +1,12 @@
+// The marker's and the chain test's optional passes (temporal_residual.hlsli), the columns of temporal_passes.def. Each
+// one is optional on its own, unlike those rows: without MarkerReason the acc dump (DebugTemporalDumpAcc) is off; without
+// MarkerFail rules 3/4 test every neighbour inline in ModelMotion (the same decisions, one pass); without LinkFail
+// DebugTemporalChainRule 3 runs as rule 2. The machine runs either way.
+PW_TEMPORAL_PASS(MarkerReason, markerReason, 0x008f3, 1, Motion)
+PW_TEMPORAL_PASS(MarkerFail, markerFail, 0x008f1, 1, Motion)
+PW_TEMPORAL_PASS(LinkFail, linkFail, 0x008f9, 1, Motion)
+// DebugTemporalCarryChainRule's carry chain (temporal_chain_pair.hlsli): both chains in one pass each, AccumulatePair's
+// votes in groupshared memory (no mask). Without both there is no carry chain (the carried frames reproject along the
+// main chain, logged once).
+PW_TEMPORAL_PASS(AccumulatePair, accumulatePair, 0x009fd, 2, Motion)
+PW_TEMPORAL_PASS(RefinePair, refinePair, 0x008f5, 2, Motion)

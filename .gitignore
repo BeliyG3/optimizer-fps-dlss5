@@ -32,3 +32,26 @@ tools/bench/assets/*.glb
 tools/bench/assets/*.blend
 tools/bench/assets/*.blend1
 tools/bench/assets/*.bak
+# baked lighting of the lab (tools/bench/blender/bake_lab_lightmaps.py): local, like the scene
+tools/bench/assets/lab_scene_baked.glb
+tools/bench/assets/lab_lightmap_*.hdr
+tools/bench/assets/lab_lightmap.json
+tools/bench/assets/lab_lightmap_lampsplit.json
+# the outdoor yard (tools/bench/blender/build_lab_outdoor.py) and its bake
+tools/bench/assets/lab_scene_outdoor.*
+tools/bench/assets/lab_scene_outdoor_baked.glb
+tools/bench/assets/lab_outdoor_lightmap*
+# the garden scene, its bake, grass atlas and the prepared HDRI (tools/bench/hdri_prepare.py): local assets
+tools/bench/assets/polyhaven/
+tools/bench/assets/lab_scene_garden*
+tools/bench/assets/lab_garden_lightmap*
+tools/bench/assets/garden_grass_atlas.png
+tools/bench/assets/autumn_field_puresky_nosun.*
+tools/bench/assets/garden_*.jpg
+tools/bench/assets/garden_props/
+
+# local agent settings
+.claude/
+
+# local bench folders (tools/bench12/bench_paths.example.json shows the keys)
+tools/bench12/bench_paths.json

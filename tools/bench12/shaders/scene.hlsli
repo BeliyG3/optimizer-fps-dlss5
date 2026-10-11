@@ -1,6 +1,7 @@
 #ifndef PW_SCENE_HLSLI
 #define PW_SCENE_HLSLI
 #include "frame.hlsli"
+#include "sky_uv.hlsli"
 static const float PI=3.14159265359;
 struct TriVertex { float3 pos, prevPos, normal; float2 uv; };
 struct TriMaterial { float3 albedo; float roughness; float3 emission; int textureIndex; float alphaCutoff; uint flags;
@@ -10,7 +11,13 @@ StructuredBuffer<TriVertex> vertices : register(t0);
 StructuredBuffer<TriMaterial> materials : register(t1);
 StructuredBuffer<EmissiveTriangle> lights : register(t2);
 Texture2D<float4> environment : register(t3);
-Texture2D<float4> textures[] : register(t4);
+// Instanced meshes (scene_instances.h): triangles stored once in object space, drawn and traced per instance. The rows of the
+// instance's world and previous-frame transforms, its mesh's first triangle and opaque triangle count (GpuInstance).
+struct SceneInstance { float4 world[3]; float4 previous[3]; uint firstTriangle, opaqueTriangles, padding0, padding1; };
+StructuredBuffer<SceneInstance> instances : register(t4);
+Texture2D<float4> textures[] : register(t5);
+// The instance of a flattened triangle (stored in world space): no transform.
+static const uint NoInstance=0xffffffffu;
 StructuredBuffer<float4> lampGroups : register(t1,space1);
 float3 Emission(TriMaterial m)
 {
@@ -33,6 +40,34 @@ float3 BasisSample(float3 local, float3 axis)
     float3 tangent=normalize(cross(abs(axis.y)<0.99 ? float3(0,1,0) : float3(1,0,0),axis));
     return local.x*tangent+local.y*cross(axis,tangent)+local.z*axis;
 }
+// An instanced draw counts its vertices from 0 (raster_instances.h: StartVertexLocation 0, whether or not SV_VertexID would
+// include it): the instance's mesh starts at its first triangle.
+uint StoredVertex(uint id, uint instance) { return instance!=NoInstance ? instances[instance].firstTriangle*3+id : id; }
+float3 TransformRows(float4 rows[3], float3 p) { return float3(dot(rows[0],float4(p,1)),dot(rows[1],float4(p,1)),dot(rows[2],float4(p,1))); }
+// Stored vertex `index` (triangle*3 + corner) in world space: as stored, or through its instance's transforms. The normal of an
+// instance is the world transform's linear part applied and normalised, as BuildVertices flattens a node's normals.
+TriVertex WorldVertex(uint index, uint instance)
+{
+    TriVertex v=vertices[index];
+    [branch] if(instance!=NoInstance) {
+        SceneInstance t=instances[instance];
+        v.prevPos=TransformRows(t.previous,v.pos); v.pos=TransformRows(t.world,v.pos);
+        float3 n=float3(dot(t.world[0].xyz,v.normal),dot(t.world[1].xyz,v.normal),dot(t.world[2].xyz,v.normal));
+        v.normal=dot(n,n)>0 ? n*rsqrt(dot(n,n)) : 0;
+    }
+    return v;
+}
+float3 WorldPosition(uint index, uint instance)
+{
+    float3 p=vertices[index].pos;
+    [branch] if(instance!=NoInstance) p=TransformRows(instances[instance].world,p);
+    return p;
+}
+float3 TrianglePosition(uint triangleIndex, float2 bary, uint instance)
+{
+    return WorldPosition(triangleIndex*3,instance)*(1-bary.x-bary.y)+WorldPosition(triangleIndex*3+1,instance)*bary.x
+        +WorldPosition(triangleIndex*3+2,instance)*bary.y;
+}
 float2 TriangleUv(uint triangleIndex, float2 bary)
 {
     return vertices[triangleIndex*3].uv*(1-bary.x-bary.y)+vertices[triangleIndex*3+1].uv*bary.x+vertices[triangleIndex*3+2].uv*bary.y;
@@ -47,17 +82,26 @@ float4 BaseTexture(TriMaterial m, float2 uv, float distance)
 {
     return MaterialTexture(m.textureIndex,uv,distance);
 }
-bool Accept(uint triangleIndex, float2 bary)
+bool Accept(uint triangleIndex, float2 bary, uint instance=NoInstance)
 {
     TriMaterial m=materials[triangleIndex];
-    float3 position=vertices[triangleIndex*3].pos*(1-bary.x-bary.y)+vertices[triangleIndex*3+1].pos*bary.x+vertices[triangleIndex*3+2].pos*bary.y;
-    return (m.flags&1)==0 || BaseTexture(m,TriangleUv(triangleIndex,bary),length(position-eye)).a>=m.alphaCutoff;
+    [branch] if((m.flags&1)==0) return true;
+    float3 position=TrianglePosition(triangleIndex,bary,instance);
+    return BaseTexture(m,TriangleUv(triangleIndex,bary),length(position-eye)).a>=m.alphaCutoff;
 }
-struct Intersection { bool hit; uint triangleIndex; float2 bary; float distance; };
-uint TriangleIndex(uint instance, uint geometry, uint primitive)
+// instance: the hit's SceneInstance, NoInstance on a flattened triangle.
+struct Intersection { bool hit; uint triangleIndex; float2 bary; float distance; uint instance; };
+// The TLAS (accel.cpp): InstanceID 0 the static BLAS, 1 the dynamic BLAS, 2 + i the instanced mesh BLAS of SceneInstance i.
+// Every BLAS holds its opaque triangles as geometry 0 and the alpha-tested ones after them.
+uint SceneInstanceOf(uint instanceId) { return instanceId>=2 ? instanceId-2 : NoInstance; }
+uint TriangleIndex(uint instanceId, uint geometry, uint primitive)
 {
-    uint base=instance==1 ? dynamicBase : 0;
-    uint opaque=instance==1 ? dynamicOpaque : opaqueTriangles;
+    [branch] if(instanceId>=2) {
+        SceneInstance t=instances[instanceId-2];
+        return t.firstTriangle+primitive+(geometry>0 ? t.opaqueTriangles : 0);
+    }
+    uint base=instanceId==1 ? dynamicBase : 0;
+    uint opaque=instanceId==1 ? dynamicOpaque : opaqueTriangles;
     return base+primitive+(geometry>0 ? opaque : 0);
 }
 Intersection Trace(float3 origin, float3 direction, float minimum, float maximum, bool shadow)
@@ -68,13 +112,14 @@ Intersection Trace(float3 origin, float3 direction, float minimum, float maximum
     while(query.Proceed()) {
         if(query.CandidateType()==CANDIDATE_NON_OPAQUE_TRIANGLE) {
             uint triangleIndex=TriangleIndex(query.CandidateInstanceID(),query.CandidateGeometryIndex(),query.CandidatePrimitiveIndex());
-            if(Accept(triangleIndex,query.CandidateTriangleBarycentrics())) query.CommitNonOpaqueTriangleHit();
+            if(Accept(triangleIndex,query.CandidateTriangleBarycentrics(),SceneInstanceOf(query.CandidateInstanceID()))) query.CommitNonOpaqueTriangleHit();
         }
     }
-    Intersection result=(Intersection)0;
+    Intersection result=(Intersection)0; result.instance=NoInstance;
     result.hit=query.CommittedStatus()==COMMITTED_TRIANGLE_HIT;
     if(result.hit) {
         result.triangleIndex=TriangleIndex(query.CommittedInstanceID(),query.CommittedGeometryIndex(),query.CommittedPrimitiveIndex());
+        result.instance=SceneInstanceOf(query.CommittedInstanceID());
         result.bary=query.CommittedTriangleBarycentrics(); result.distance=query.CommittedRayT();
     }
     return result;
@@ -85,7 +130,7 @@ struct Surface {
 };
 Surface GetSurface(Intersection hit, float3 incoming)
 {
-    TriVertex a=vertices[hit.triangleIndex*3], b=vertices[hit.triangleIndex*3+1], c=vertices[hit.triangleIndex*3+2];
+    TriVertex a=WorldVertex(hit.triangleIndex*3,hit.instance), b=WorldVertex(hit.triangleIndex*3+1,hit.instance), c=WorldVertex(hit.triangleIndex*3+2,hit.instance);
     float3 weights=float3(1-hit.bary.x-hit.bary.y,hit.bary);
     TriMaterial m=materials[hit.triangleIndex]; Surface s;
     s.position=a.pos*weights.x+b.pos*weights.y+c.pos*weights.z;
@@ -126,10 +171,8 @@ Surface GetSurface(Intersection hit, float3 incoming)
 }
 float3 Sky(float3 direction)
 {
-    float2 uv=float2(atan2(direction.z,direction.x)/(2*PI)+0.5,acos(clamp(direction.y,-1,1))/PI);
-    // Clamp latitude to texel centres; longitude alone is periodic.
-    uint w,h; environment.GetDimensions(w,h); uv.y=clamp(uv.y,0.5/h,1-0.5/h);
-    return environment.SampleLevel(linearWrap,uv,max(0,log2(max(float(w)/width,1)))).rgb;
+    uint w,h; environment.GetDimensions(w,h);
+    return environment.SampleLevel(linearWrap,SkyUv(direction,h),max(0,log2(max(float(w)/width,1)))).rgb;
 }
 float Luminance(float3 v) { return dot(v,float3(0.2126,0.7152,0.0722)); }
 #endif

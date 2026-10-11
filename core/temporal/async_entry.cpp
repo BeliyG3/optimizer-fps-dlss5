@@ -204,7 +204,7 @@ int AsyncTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, cons
     if (!std::isfinite(mvScaleX) || mvScaleX == 0.0f) mvScaleX = 1.0f;
     if (!std::isfinite(mvScaleY) || mvScaleY == 0.0f) mvScaleY = 1.0f;
     c.mvScaleX = mvScaleX; c.mvScaleY = mvScaleY;
-    c.tin = TemporalInputs(inputs.color, inputs.motion, inputs.depth, mvScaleX, mvScaleY, depthInverted != 0, st.modelResolution);
+    c.tin = TemporalInputs(inputs.color, inputs.motion, inputs.depth, mvScaleX, mvScaleY, depthInverted != 0, st.modelResolution, 3); // only mode 3 runs here
     c.tin.depthState = c.depthState;
     c.tin.depthSubresource = c.depthSub;
     const int result = AsyncGuarded(c);

@@ -64,9 +64,10 @@ inline constexpr const char *kIniKeys[] = {
     "Brightness", "Gamma",                                         // SaveColorAdjustToStore
     "TemporalMode", "TemporalEvery", "TemporalMaxQueue",           // SaveTemporalToStore
     "ModelPasses", "SpreadPasses",
-    "MenuMode", "TemporalGrid",                                    // SaveToStore
+    "MenuMode", "TemporalGrid", "TemporalSkyField",                // SaveToStore
+    "TemporalModelMarker", "TemporalChainRule",
 };
-static_assert(std::size(kIniKeys) == 24, "keep the list in step with the Save* functions below");
+static_assert(std::size(kIniKeys) == 27, "keep the list in step with the Save* functions below");
 
 // Only the mode, N and the queue cap are user settings (26.6.J). Everything else of the temporal machine
 // is fixed at the values that were verified on the bench and in the game (depth 0.05, colour 0.08, no
@@ -95,6 +96,9 @@ struct AddonPersisted {
     TemporalConfig temporal{};
     bool menuMode = false;
     bool temporalGrid = true; // TemporalGrid: carried frames reprojected on the model's grid (the core applies it)
+    bool temporalSkyField = true; // TemporalSkyField: smooth sky in carried frames (the core applies it)
+    int temporalModelMarker = 2;  // TemporalModelMarker: 0 off, 1 classic, 2 narrow (the core applies it)
+    int temporalChainRule = 1;    // TemporalChainRule: 0 classic, 1 coherent (the core applies it)
 };
 
 // --- layout -------------------------------------------------------------------------------------
@@ -206,6 +210,9 @@ bool LoadFromStore(const Store &store, AddonPersisted &out)
     if (store.GetInt("WorkShiftEnabled", integer)) out.workShiftEnabled = integer != 0;
     if (store.GetInt("MenuMode", integer)) out.menuMode = integer != 0;
     if (store.GetInt("TemporalGrid", integer)) out.temporalGrid = integer != 0;
+    if (store.GetInt("TemporalSkyField", integer)) out.temporalSkyField = integer != 0;
+    if (store.GetInt("TemporalModelMarker", integer)) out.temporalModelMarker = std::clamp(integer, 0, 2);
+    if (store.GetInt("TemporalChainRule", integer)) out.temporalChainRule = std::clamp(integer, 0, 1);
     float number = 0.0f;
     if (store.GetFloat("Brightness", number) && std::isfinite(number)) out.brightnessPercent = std::clamp(number, -20.0f, 20.0f);
     if (store.GetFloat("Gamma", number) && std::isfinite(number) && number > 0.0f) out.gamma = std::clamp(number, 0.7f, 1.4f);
@@ -225,6 +232,9 @@ void SaveToStore(Store &store, const AddonPersisted &persisted)
     SaveTemporalToStore(store, persisted.temporal);
     store.SetInt("MenuMode", persisted.menuMode ? 1 : 0);
     store.SetInt("TemporalGrid", persisted.temporalGrid ? 1 : 0);
+    store.SetInt("TemporalSkyField", persisted.temporalSkyField ? 1 : 0);
+    store.SetInt("TemporalModelMarker", persisted.temporalModelMarker);
+    store.SetInt("TemporalChainRule", persisted.temporalChainRule);
 }
 
 } // namespace ofps::reshade

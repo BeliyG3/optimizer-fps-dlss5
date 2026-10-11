@@ -33,6 +33,8 @@ Texture2D<int2> PwTFlow : register(t9);
 
 RWTexture2D<float4> PwTOut0 : register(u0);
 RWTexture2D<float4> PwTOut1 : register(u1); // the reprojection's addition + acceptance
+RWTexture2D<uint> PwTOutReason : register(u0); // the R8_UINT target of CSMarkerReason, CSMarkerFail and CSLinkFail
+#include "temporal_chain_pair.hlsli"
 
 PwFullscreenVertex PwTVertex(uint2 id)
 {
@@ -154,7 +156,7 @@ void CSStats(uint3 id : SV_DispatchThreadID)
         float2 fetched = PwTFetchAcc(p, dc);
         float2 q = p + fetched * PwTNative.xy / PwTMotionRect.zw;
         float2 raw = PwTMotion.Load(int3(int2(texel), 0));
-        float df = PwTDepthF.Load(int3(int2(PwTToRect(p, PwTDepthRect)), 0));
+        float df = PwTDepthF.Load(int3(int2(PwTToRect(p, PW_T_DEPTHF_RECT)), 0));
         float edge = saturate(min(min(q.x, PwTNative.x-q.x), min(q.y, PwTNative.y-q.y))/16.0);
         PwTOut0[id.xy] = tile == 1 ? float4(raw, dc, df) : tile == 2 ? float4(direct, fetched) :
             float4(edge, PwTDepthMismatchAround(PwTExpectedDepth(dc, p), q), PwTExpectedDepth(dc, p),
@@ -220,15 +222,74 @@ void CSModelMotion(uint3 id : SV_DispatchThreadID)
     PwTOut0[id.xy] = float4(PSModelMotion(PwTVertex(id.xy)), 0.0, 0.0);
 }
 
+// DebugTemporalDumpAcc: why ModelMotion marked each texel (PwTMarkerReason), for the acc dump's reason plane.
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSMarkerReason(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOutReason[id.xy] = PSMarkerReason(PwTVertex(id.xy));
+}
+
+// DebugTemporalMarkerRule 3/4: every texel's base verdict, read by the ModelMotion / MarkerReason that follow (t1).
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSMarkerFail(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOutReason[id.xy] = PSMarkerFail(PwTVertex(id.xy));
+}
+
+// DebugTemporalChainRule 3: every texel's rule-2 link verdict, read by the Accumulate that follows (t1, PwTLinkVote).
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSLinkFail(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOutReason[id.xy] = PSLinkFail(PwTVertex(id.xy));
+}
+
+// DebugTemporalCarryChainRule (temporal_chain_pair.hlsli): both chains accumulated and refined in one pass each (u0 the
+// main chain, u1 the carry chain). AccumulatePair votes from groupshared memory, on a tile of its own size.
+[numthreads(PW_TEMPORAL_PAIR_THREADS_X, PW_TEMPORAL_PAIR_THREADS_Y, 1)]
+void CSAccumulatePair(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index : SV_GroupIndex)
+{
+    const bool own = !PwTOutside(id.xy);
+    const int2 origin = int2(group.xy) * int2(PW_TEMPORAL_PAIR_THREADS_X, PW_TEMPORAL_PAIR_THREADS_Y);
+    const PwTChainPair o = PwTAccumulatePair(int2(id.xy), int2(local.xy), origin, index, own);
+    if (!own) return;
+    PwTOut0[id.xy] = float4(o.main, 0.0, 0.0);
+    PwTOut1[id.xy] = float4(o.carry, 0.0, 0.0);
+}
+
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSRefinePair(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    const PwTChainPair o = PwTRefinePair(float2(id.xy) + 0.5);
+    PwTOut0[id.xy] = float4(o.main, 0.0, 0.0);
+    PwTOut1[id.xy] = float4(o.carry, 0.0, 0.0);
+}
+
 [numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
 void CSReproject(uint3 id : SV_DispatchThreadID)
 {
     if (PwTOutside(id.xy)) return;
-    const PwTReprojectOut o = PSReproject(PwTVertex(id.xy));
+    const PwFullscreenVertex v = PwTVertex(id.xy);
+    const PwTReprojectOut o = PSReproject(v);
     // Debug views are written as they are. Before the compose pass u0 is not bound: the frame is not
     // decoded and limited only to be thrown away (the addition below still comes from o.color).
     if (PwTSkipOut0 == 0)
-        PwTOut0[id.xy] = PwTParams.z == 0.0 ? float4(PwTLimitToFrame(PwTDecodeFrame(o.color.rgb), id.xy), o.color.a) : o.color;
+    {
+        // Without the compose pass the frame is formed here, and so is the sky policy (temporal_sky.hlsli): a sky
+        // pixel's addition (o.addw, what the reprojection added to the colour) mixed with the field by its weight;
+        // at weight 0 the reprojected colour stays as it is. Not for interpolated frames that show the raw colour
+        // (PwTTune.z).
+        float4 frame = o.color;
+        float3 sky;
+        float skyWeight = PwTSkyAt(v.position.xy, sky);
+        if (!(PwTParams.z == 0.0 && PwTTune.z <= 0.5)) skyWeight = 0.0;
+        if (skyWeight > 0.0)
+            frame.rgb = PwTLoadFrame(PwTColor, int3(PwTRectTexel(v.position.xy, PwTColorRect), 0)).rgb + PwTSkyMix(o.addw.rgb, sky, skyWeight);
+        PwTOut0[id.xy] = PwTParams.z == 0.0 ? float4(PwTLimitToFrame(PwTDecodeFrame(frame.rgb), id.xy), frame.a) : frame;
+    }
     PwTOut1[id.xy] = o.addw;
 }
 
@@ -254,7 +315,9 @@ void CSApply(uint3 id : SV_DispatchThreadID)
     if (PwTOutside(id.xy)) return;
     const float4 frame = PwTLoadFrame(PwTColor, int3(int2(PwTToRect(float2(id.xy) + 0.5, PwTColorRect)), 0));
     float3 residual = PwTResidual.Load(int3(id.xy, 0)).rgb;
-    if (PwTSmooth.w > 0.0 && PwTSmooth.w < 1.0)
+    // A sky pixel (temporal_sky.hlsli) shows the new residual alone: the old pass's sky, moved here along chains a sky
+    // pixel does not really have, would bring back the patches the carried frames no longer show.
+    if (PwTSmooth.w > 0.0 && PwTSmooth.w < 1.0 && !PwTSkyPixel(float2(id.xy) + 0.5))
     {
         const float3 older = PwTResidualOld.Load(int3(id.xy, 0)).rgb;
         if (all(isfinite(older))) residual = lerp(older, residual, PwTSmooth.w);
@@ -269,4 +332,35 @@ void CSCompose(uint3 id : SV_DispatchThreadID)
     if (PwTOutside(id.xy)) return;
     const float4 composed = PSCompose(PwTVertex(id.xy));
     PwTOut0[id.xy] = float4(PwTLimitToFrame(PwTDecodeFrame(composed.rgb), id.xy), composed.a);
+}
+
+// The sky field (temporal_sky.hlsli), optional passes (temporal_sky_passes.def): its finest level from the
+// residual, each coarser level from the one before up to 1x1, then each level filled from the coarser one; and on a
+// carried frame the share of sky in its own depth (CSSkyNow, then CSSkyPull up to 1x1), which weighs the field.
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSSkyDown(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOut0[id.xy] = PwTSkyDown(float2(id.xy) + 0.5);
+}
+
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSSkyPull(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOut0[id.xy] = PwTSkyPull(int2(id.xy));
+}
+
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSSkyPush(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOut0[id.xy] = PwTSkyPush(float2(id.xy) + 0.5);
+}
+
+[numthreads(PW_TEMPORAL_THREADS_X, PW_TEMPORAL_THREADS_Y, 1)]
+void CSSkyNow(uint3 id : SV_DispatchThreadID)
+{
+    if (PwTOutside(id.xy)) return;
+    PwTOut0[id.xy] = PwTSkyNowDown(float2(id.xy) + 0.5);
 }

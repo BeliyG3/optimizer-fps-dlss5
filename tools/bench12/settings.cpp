@@ -54,14 +54,26 @@ std::map<std::string,std::string> OptionValues(const Options &o)
     add("haze-g",o.hazeG);
     add("bloom",o.bloom);
     add("auto-exposure",o.autoExposure);
+    add("exposure-speed-up",o.exposureSpeedUp); add("exposure-speed-down",o.exposureSpeedDown);
+    add("exposure-ev",o.exposureEv); add("exposure-centre",o.exposureCentre);
     add("spp",o.spp);
     add("bounces",o.bounces);
     add("light-candidates",o.lightCandidates);
     add("vsync",o.vsync);
     add("upscaler",o.upscaler);
     add("tonemap",o.tonemap);
+    add("film-slope",o.filmSlope); add("film-toe",o.filmToe); add("film-shoulder",o.filmShoulder);
+    add("film-black-clip",o.filmBlackClip); add("film-white-clip",o.filmWhiteClip);
+    add("local-exposure",o.localExposure); add("local-exposure-highlights",o.localHighlights);
+    add("local-exposure-shadows",o.localShadows); add("local-exposure-detail",o.localDetail); add("local-exposure-blend",o.localBlend);
+    add("exposure-metering",o.exposureMetering); add("exposure-min-ev",o.exposureMinEv); add("exposure-max-ev",o.exposureMaxEv);
+    add("exposure-curve",VectorText(o.exposureCurve));
     add("view",o.view);
     add("jitter",o.jitter);
+    add("render",o.render);
+    add("raster-ambient",o.rasterAmbient);
+    add("snap-deg",o.snapDeg); add("snap-frames",o.snapFrames); add("snap-hold",o.snapHold);
+    add("hud",o.hud); add("fxaa",o.fxaa); add("sky-reflections",o.skyReflections);
     add("sun-dir",VectorText(o.sunDir));
     return values;
 }
@@ -98,12 +110,22 @@ Settings DecodeSettings(const std::string &text, const Settings &defaults)
     const auto &options=root.At("options");
     if(options.kind!=Json::Kind::Object) throw std::runtime_error("Expected settings options object");
     auto allowed=OptionValues(s.options); std::vector<std::string> args{"settings"};
+    bool hud=s.options.hud, fxaa=s.options.fxaa;
     for(const auto &[key,value]:options.object) {
         if(!allowed.contains(key) || value.kind!=Json::Kind::String) throw std::runtime_error("Invalid settings option: "+key);
+        if(key=="hud") { // --hud is a bare flag on the command line, so the saved 0|1 is applied after parsing
+            if(value.string!="0" && value.string!="1") throw std::runtime_error("Settings hud requires 0 or 1");
+            hud=value.string=="1"; continue;
+        }
+        if(key=="fxaa") { // a bare flag as well; the menu's raster FXAA checkbox, applied after parsing so it never needs --render raster
+            if(value.string!="0" && value.string!="1") throw std::runtime_error("Settings fxaa requires 0 or 1");
+            fxaa=value.string=="1"; continue;
+        }
         args.push_back("--"+key); args.push_back(value.string);
     }
     std::vector<char *> pointers; for(auto &arg:args) pointers.push_back(arg.data());
     s.options=ParseOptions(int(pointers.size()),pointers.data(),s.options);
+    s.options.hud=hud; s.options.fxaa=fxaa;
     const auto &a=root.At("accumulation");
     s.options.accumulationEnabled=Boolean(a.At("enabled")); s.options.accumulationInfinite=Boolean(a.At("infinite"));
     s.options.feedAccumulation=Boolean(a.At("feed"));

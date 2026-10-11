@@ -1,9 +1,9 @@
 # Releasing "Optimizer FPS for DLSS5"
 
-This is the release procedure. Local packaging and validation do not publish
-anything or install into a live game. Publication of 2026.9.1 and game rollout
-follow the separate release acceptance work. `.github/workflows/release.yml`
-publishes only when a matching tag is pushed or an existing tag is dispatched.
+This is the release procedure. Development happens in a private repository; the public repository
+(`BeliyG3/optimizer-fps-dlss5`, branch `main`) receives an export of its committed tree, and CI, tags and
+releases run there. Local packaging and validation do not publish anything or install into a live game.
+`.github/workflows/release.yml` publishes only when a matching tag is pushed or an existing tag is dispatched.
 
 ## The two version numbers
 
@@ -41,12 +41,29 @@ Order matters: CMake **refuses to configure** when `CHANGELOG.md` has no line re
 `## <OFPS_RELEASE_VERSION>`. So bumping the version before writing the changelog breaks every local
 build until the section exists — write the changelog first.
 
-### 3. Push to `master` and wait for `build.yml` to go green
+### 3. Export to the public repository, push `main` and wait for `build.yml` to go green
+
+Commit everything in the development repository first: the export reads its `HEAD`, not the working tree.
+`tools\release\export-public.ps1` (not exported itself) archives that tree, drops what is not published
+(planning notes, internal bench protocols, third-party models), and refuses to continue on a personal path,
+an unpublished reference, a control character, a broken relative Markdown link or a file over 50 MB. Run it
+dry first; the working folder holds the exported tree for review:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools\release\export-public.ps1 `
+    -Dev <development checkout> -WorkDir <scratch folder> -DryRun
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools\release\export-public.ps1 `
+    -Dev <development checkout> -Public <public clone> -WorkDir <scratch folder>
+```
+
+The second run needs the public clone on `main` and clean; it replaces the clone's tracked files with the
+export and stages the result (`git add -A`) without committing. Review `git diff --cached` there, commit,
+and push `main`.
 
 `build.yml` builds five presets (`windows-x64`, `windows-x64-mt`,
 `windows-x86`, `windows-x86-remote`, `sdk-only-x64`) on `windows-2022` with
 warnings as errors. It inventories and runs three CTest presets (currently
-45/16/10 tests), checks ABI and core includes, checks file size and PowerShell
+56/18/10 tests), checks ABI and core includes, checks file size and PowerShell
 5.1 compatibility, verifies dependencies, packages and validates the zip, and
 runs installer self-tests. Do not tag on red.
 
@@ -119,8 +136,7 @@ Do not use this command on a live game as part of the package gate.
 
 ### 5. Later release acceptance: two games, both architectures
 
-Do this only as part of the separate release acceptance work, after the local
-package gate. Unzip the release **somewhere clean** (not the build tree) and run
+After the local package gate, unzip the release **somewhere clean** (not the build tree) and run
 the installer on approved game installations:
 
 * **one x64 game** — a renodx-style ReShade install, where the add-on goes beside the game's own
@@ -159,6 +175,8 @@ there touched. Compare against a directory listing taken before the install if i
 
 ### 6. Tag and push
 
+In the public clone, on the `main` commit that passed `build.yml`:
+
 ```
 git tag vX.Y[.Z]
 git push origin refs/tags/vX.Y[.Z]
@@ -171,7 +189,7 @@ with an explicit tag/version mismatch message otherwise, before it builds anythi
 runs the same five builds, three CTest suites, guards, lint, dependency check,
 package validation, and installer self-tests as `build.yml`; it extracts the
 changelog section and creates a **draft** GitHub Release with the zip and a `.zip.sha256`
-sidecar attached. A tag containing a `-` (`v26.27-rc1`) is marked as a **prerelease**. Review the
+sidecar attached. A tag containing a `-` (`v2026.11-rc1`) is marked as a **prerelease**. Review the
 draft (assets, `payload/VERSION.txt`, the body), then publish it by hand:
 
 ```powershell

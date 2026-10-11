@@ -14,6 +14,7 @@ struct SpreadState final : ofps::core::gpu::Disposable {
     D3D12_RESOURCE_STATES carriedState = D3D12_RESOURCE_STATE_COMMON;
     int stages = 0, position = 0, every = 0;
     unsigned int frames = 0;
+    int rawCopy = -1; // how the last raw snapshot was taken (1 copy, 0 reprojection); logged when it changes
     ~SpreadState() override;
 };
 

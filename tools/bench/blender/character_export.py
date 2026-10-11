@@ -7,10 +7,11 @@ import bpy
 import numpy as np
 
 REPLACED = ('girl_complete_03', 'dummy_figure', 'npc_bench_left', 'npc_bench_right')
+LAB_SCENES = ('lab_scene.blend', 'lab_scene_outdoor.blend', 'lab_scene_garden.blend')  # get lab_characters.blend's characters
 
 
 def append_characters():
-    if Path(bpy.data.filepath).name != 'lab_scene.blend':
+    if Path(bpy.data.filepath).name not in LAB_SCENES:
         return []
     path = Path(bpy.data.filepath).with_name('lab_characters.blend')
     if not path.exists():
@@ -34,6 +35,9 @@ def append_characters():
             bpy.data.objects.remove(obj, do_unlink=True)
     scene.frame_set(scene.frame_start)
     print(f'[characters] appended {len(objects)} objects: {[o.name for o in objects]}', flush=True)
+    if Path(bpy.data.filepath).name == 'lab_scene_garden.blend':  # garden v2.4: its people use these characters' meshes
+        from garden_people import use_lab_meshes
+        print(f'[characters] garden people: {use_lab_meshes()} mesh objects use the lab characters meshes', flush=True)
     print(f'[characters] armatures: {[o.name for o in rigs]}', flush=True)
     return [o.name for o in rigs]
 

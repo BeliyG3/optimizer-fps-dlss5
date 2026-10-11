@@ -20,4 +20,5 @@ void Scene::UpdateLamps(Device &d)
     for(const auto &g:groups) factors.push_back({LampFactor(g)});
     if(factors.empty()) factors.push_back({{1,1,1}});
     groupBuffer=d.UploadBuffer(factors.data(),factors.size()*sizeof(Factor));
+    ++lampVersion;
 }

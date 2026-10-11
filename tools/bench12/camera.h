@@ -1,10 +1,11 @@
 #pragma once
 #include "options.h"
+#include "camera_snap.h"
 
 struct CameraState { Vec3 eye, target; };
 inline CameraState CameraAt(int frame, const Options &o, Vec3 anchor)
 {
-    int phase=(o.camera=="static" || o.camera=="follow") ? 0 : o.camera=="yaw" ? 1 : o.camera=="forward" ? 2 : o.camera=="strafe" ? 3 : 4;
+    int phase=(o.camera=="static" || o.camera=="follow" || o.camera=="snap") ? 0 : o.camera=="yaw" ? 1 : o.camera=="forward" ? 2 : o.camera=="strafe" ? 3 : 4;
     float yaw=0, forward=0, strafe=0;
     float yawRate=o.yawSpeed/60*3.14159265f/180, moveRate=o.moveSpeed/60;
     for (int f=0; f<frame; ++f) {
@@ -24,6 +25,11 @@ inline CameraState CameraAt(int frame, const Options &o, Vec3 anchor)
     float ts=float(frame)/60;
     c.eye.x+=o.sway*(std::sin(ts*0.83f)+0.5f*std::sin(ts*1.91f));
     c.eye.y+=o.sway*0.6f*(std::sin(ts*0.57f+1.3f)+0.5f*std::sin(ts*1.37f));
+    if(o.camera=="snap") {
+        const float turn=SnapYawDegrees(frame,o.snapDeg,o.snapFrames,o.snapHold)*3.14159265f/180;
+        const Vec3 look=c.target-c.eye; const float cs=std::cos(turn), sn=std::sin(turn);
+        c.target=c.eye+Vec3{look.x*cs+look.z*sn,look.y,-look.x*sn+look.z*cs};
+    }
     return c;
 }
 inline bool CameraMoved(const CameraState &a, const CameraState &b)

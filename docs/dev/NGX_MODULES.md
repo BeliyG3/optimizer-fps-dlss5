@@ -4,7 +4,7 @@
 static `ofps_core` (`OptimizerFps::Core`) used by tests. The Windows x64 core
 builds independently of the ReShade shell. `hosts/reshade/` and the narrow
 OptiScaler integration consume the same ABI 1 contract. The ReShade payload
-places the DLL and 29 DXBC in `optimizer-fps-dlss5/` beside the x64 add-on;
+places the DLL and 39 DXBC in `optimizer-fps-dlss5/` beside the x64 add-on;
 the x86 remote tab stays beside the x86 ReShade DLL and connects to the x64
 host through IPC V4.
 
@@ -45,6 +45,8 @@ routes explicit inputs between pass-through, warp and temporal paths.
 restores resource states and supplies the existing SEH wrappers and fallback output.
 `host_shape`, `host_depth_state`, `motion_smooth`, `debug_readback` and `timing`
 retain their separate shape, depth-state, smoothing, readback and timestamp responsibilities.
+`acc_dump.h/.cpp` writes DebugTemporalDumpAcc's `ofps_acc_<eval>.bin` (OFAC v2, with the marker reasons); `debug_readback` feeds it from the
+machine's side copy (`core/temporal/acc_dump_copies.cpp`).
 `model_passes`, `spread_passes` and `spread_model` retain sequential and spread model work.
 `carried_grid.h/.cpp` applies the TemporalGrid rule (`core/temporal/grid.h`) to a feature's carried frame on the
 two routes that carry a warped frame (`TemporalInputsWithBase`, the background scheduler's carried frame) and logs
@@ -54,9 +56,14 @@ a change of the chosen size.
 
 `core/temporal/controller.h/.cpp` chooses temporal modes and handles the native path.
 `machine.h/.cpp`, `accumulation.cpp`, `residual.cpp` and `background.cpp` record
-the existing GPU passes. `resources.h/.cpp` supplies bindings and constants;
+the existing GPU passes; `carry_chain.cpp` records the optional second chain the reprojection reads
+(`DebugTemporalCarryChainRule`) together with the main one, in one pass each (`temporal_chain_pair.hlsli`). `resources.h/.cpp` supplies bindings and constants;
 `resources_create.cpp` allocates textures and pipelines. `history.h/.cpp` owns saved
-passes. `phase.h` holds the CPU phase clock, covered by `test_temporal_phase.cpp`.
+passes. `sky_field.h/.cpp` owns the sky field's pyramid (TemporalSkyField): it records the field's optional passes
+(`temporal_sky_passes.def`) after a residual, measures a carried frame's own share of sky, and binds the field (t20)
+and that share (t21, the field's weight) for the passes that form a frame. `model_marker.h` maps TemporalModelMarker
+and its Debug* overrides onto the model's no-history marker rule (`controller.cpp` `ModelMarkerSettings`); `chain_rule.h`
+maps TemporalChainRule and its Debug* overrides onto the main and carry chains' rules (`controller.cpp` `TemporalInputs`). `phase.h` holds the CPU phase clock, covered by `test_temporal_phase.cpp`.
 
 `async_entry.cpp` creates the background job and prepares `AsyncTemporalEvaluate`;
 the core's submission path handles `OnCommandListExecuted`.
@@ -67,7 +74,11 @@ and `AsyncGuarded`, with host states restored after every copy.
 The six temporal/motion shader files now live in `core/shaders/`, byte-identical
 to their previous locations. HLSL identifiers and `pwtemporalcontract` are unchanged.
 Both fxc and dxc search `sdk/shaders` and `core/shaders`. The manifest still produces
-15 temporal DXBC files, alongside five SDK shaders and one motion-smoothing shader.
+15 temporal DXBC files (`temporal_passes.def`). The sky field's optional manifest (`temporal_sky_passes.def`) adds
+four, the marker's and the chains' (`temporal_marker_passes.def`: `MarkerReason`, `MarkerFail`, `LinkFail`,
+`AccumulatePair`, `RefinePair`, each optional on its own) five, and the model-grid and grid variants (`RefineModel`,
+`FlowLumaModel`, `RefinePairModel`, `ReprojectGrid`, `ComposeGrid`, `CellsGrid`) six: 30 temporal DXBC. With the five
+SDK shaders, motion smoothing, the two warp passes and the menu conversion that makes 39.
 
 ## GPU support
 

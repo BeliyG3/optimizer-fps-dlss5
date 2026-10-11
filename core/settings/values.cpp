@@ -94,6 +94,16 @@ void SettingsToValues(const CoreSettings &in, OfpsSettingsValues *out) {
     I(OFPS_SET_DEBUG_WARP_PATH, in.debugWarpPath);
     I(OFPS_SET_MENU_MODE, in.menuMode ? 1 : 0);
     I(OFPS_SET_TEMPORAL_GRID, t.grid ? 1 : 0);
+    I(OFPS_SET_TEMPORAL_SKY_FIELD, t.skyField ? 1 : 0);
+    I(OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC, d.debugTemporalDumpAcc ? 1 : 0);
+    I(OFPS_SET_DEBUG_TEMPORAL_MARKER_RULE, d.temporalMarkerRule);
+    I(OFPS_SET_DEBUG_TEMPORAL_MARKER_NEIGHBOURS, d.temporalMarkerNeighbours);
+    I(OFPS_SET_TEMPORAL_MODEL_MARKER, t.modelMarker);
+    I(OFPS_SET_DEBUG_TEMPORAL_CARRY_PROBE, d.temporalCarryProbe);
+    I(OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC_FROM, d.temporalDumpAccFrom);
+    I(OFPS_SET_DEBUG_TEMPORAL_CHAIN_RULE, d.temporalChainRule);
+    I(OFPS_SET_DEBUG_TEMPORAL_CARRY_CHAIN_RULE, d.temporalCarryChainRule);
+    I(OFPS_SET_TEMPORAL_CHAIN_RULE, t.chainRule);
 }
 int ValuesToSettings(const OfpsSettingsValues &in, CoreSettings *io) {
     if (!io || in.size < offsetof(OfpsSettingsValues, v) || in.count > OFPS_SET_COUNT)
@@ -195,6 +205,24 @@ int ValuesToSettings(const OfpsSettingsValues &in, CoreSettings *io) {
     s.debugWarpPath = std::clamp(s.debugWarpPath, 0, 2);
     B(OFPS_SET_MENU_MODE, s.menuMode);
     B(OFPS_SET_TEMPORAL_GRID, t.grid);
+    B(OFPS_SET_TEMPORAL_SKY_FIELD, t.skyField);
+    B(OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC, d.debugTemporalDumpAcc);
+    I(OFPS_SET_DEBUG_TEMPORAL_MARKER_RULE, d.temporalMarkerRule);
+    d.temporalMarkerRule = std::clamp(d.temporalMarkerRule, 0, 4);
+    I(OFPS_SET_DEBUG_TEMPORAL_MARKER_NEIGHBOURS, d.temporalMarkerNeighbours);
+    d.temporalMarkerNeighbours = std::clamp(d.temporalMarkerNeighbours, 0, 25);
+    I(OFPS_SET_TEMPORAL_MODEL_MARKER, t.modelMarker);
+    t.modelMarker = std::clamp(t.modelMarker, 0, 2);
+    I(OFPS_SET_DEBUG_TEMPORAL_CARRY_PROBE, d.temporalCarryProbe);
+    d.temporalCarryProbe = std::clamp(d.temporalCarryProbe, 0, 7);
+    I(OFPS_SET_DEBUG_TEMPORAL_DUMP_ACC_FROM, d.temporalDumpAccFrom);
+    d.temporalDumpAccFrom = std::clamp(d.temporalDumpAccFrom, 0, 1000000);
+    I(OFPS_SET_DEBUG_TEMPORAL_CHAIN_RULE, d.temporalChainRule);
+    d.temporalChainRule = std::clamp(d.temporalChainRule, 0, 4);
+    I(OFPS_SET_DEBUG_TEMPORAL_CARRY_CHAIN_RULE, d.temporalCarryChainRule);
+    d.temporalCarryChainRule = std::clamp(d.temporalCarryChainRule, 0, 6);
+    I(OFPS_SET_TEMPORAL_CHAIN_RULE, t.chainRule);
+    t.chainRule = std::clamp(t.chainRule, 0, 1);
     *io = s;
     return OFPS_OK;
 }

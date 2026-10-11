@@ -16,7 +16,7 @@ def pixels(path):
 def compare(case, reference):
     errors, temporal_errors, maximum = [], [], 0.0
     previous, previous_reference = None, None
-    for frame in sorted(case.glob("dump_*.bmp"), key=lambda p: int(p.stem.split("_")[1])):
+    for frame in sorted(case.glob("dump_*.[bp][mn][pg]"), key=lambda p: int(p.stem.split("_")[1])):
         current, target = pixels(frame), pixels(reference / frame.name)
         errors.append(float(np.abs(current - target).mean()))
         maximum = max(maximum, float(np.abs(current - target).max()))

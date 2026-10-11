@@ -90,7 +90,8 @@ if(TARGET peripheral_warp_reshade)
 endif()
 install(DIRECTORY core/shaders/ DESTINATION ${CMAKE_INSTALL_DATADIR}/optimizer-fps-sdk/shaders
         FILES_MATCHING PATTERN "*.hlsl" PATTERN "*.hlsli" PATTERN "temporal_layout.h"
-        PATTERN "temporal_passes.def" PATTERN "temporal_passes.md")
+        PATTERN "temporal_passes.def" PATTERN "temporal_sky_passes.def" PATTERN "temporal_marker_passes.def"
+        PATTERN "temporal_passes.md")
 install(EXPORT OptimizerFpsSdkTargets
         FILE OptimizerFpsSdkTargets.cmake
         NAMESPACE OptimizerFps::

@@ -39,7 +39,7 @@ ReShade/RenoDX applications are not bundled; the ReShade add-on API headers (BSD
 Dear ImGui / Microsoft Detours (MIT) are used under their licenses (see NOTICE). Install
 NVIDIA's runtime and your neural-rendering consumer from their own sources.
 
-## Before you start
+## Requirements
 
 | | |
 |---|---|

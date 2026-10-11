@@ -40,6 +40,8 @@ public:
     // onThread (--nr-release-thread) the release runs on a second thread during this frame's present, and Prepare
     // creates the feature again once that thread returned (ngx_nr_release_thread.h).
     void Recreate(Device &device, int frame, bool onThread);
+    // --variants: releases feature 18; it is created again after the next frame's present, as on the run's first frame.
+    void Restart(Device &device);
     // This frame's NR image (frame-size pixel-shader resource) when its evaluate succeeded, otherwise null.
     ID3D12Resource *Presented() const { return presented ? bridge.Presented() : nullptr; }
     bool Active() const { return mode!="off"; }

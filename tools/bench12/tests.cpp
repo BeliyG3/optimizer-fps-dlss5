@@ -13,6 +13,18 @@ void MaterialChecks(const std::filesystem::path &directory);
 void InteractiveChecks(const std::filesystem::path &directory);
 void AnimationChecks(const std::filesystem::path &directory);
 void NrChecks();
+void RasterChecks(const std::filesystem::path &directory);
+void SkyShChecks();
+void ProbeChecks();
+void WindChecks();
+void FoliageChecks();
+void InstanceChecks();
+void TubeChecks();
+void LampShadowChecks();
+void FxaaChecks();
+void TonemapChecks();
+void ReflectionChecks();
+void DumpChecks(const std::filesystem::path &scratch);
 
 namespace {
 void Require(bool condition, const char *message) { if(!condition) throw std::runtime_error(message); }
@@ -187,6 +199,8 @@ void SceneChecks(const char *path)
 }
 }
 void AnimationBenchmark(const std::filesystem::path &path);
+void SkinningChecks();
+void CullingChecks();
 void AnimationWriteCombinedBenchmark(const std::filesystem::path &path);
 int main(int argc, char **argv)
 {
@@ -198,6 +212,9 @@ int main(int argc, char **argv)
         auto display=Parse({"bench","--haze","0","--haze-g","-0.5","--bloom","0","--auto-exposure","1","--tonemap","neutral"});
         Require(display.haze==0 && display.hazeG==-0.5f && display.bloom==0 && display.autoExposure && display.tonemap=="neutral","Display/medium options");
         Reject({"bench","--haze","-1"}); Reject({"bench","--haze-g","1"}); Reject({"bench","--haze-g","-1"});
+        auto speeds=Parse({"bench","--exposure-speed-up","5","--exposure-speed-down","0.5"});
+        Require(Near(display.exposureSpeedUp,3) && Near(display.exposureSpeedDown,1.5f) && Near(speeds.exposureSpeedUp,5) && Near(speeds.exposureSpeedDown,0.5f),"Exposure speed options");
+        Reject({"bench","--exposure-speed-up","0"}); Reject({"bench","--exposure-speed-down","101"});
         Reject({"bench","--bloom","-1"}); Reject({"bench","--auto-exposure","2"}); Reject({"bench","--tonemap","bad"});
         for(const char *mode:{"none","sr","rr"}) {
             auto parsed=Parse({"bench","--upscaler",mode,"--light-candidates","1","--vsync","1"});
@@ -209,10 +226,10 @@ int main(int argc, char **argv)
         Reject({"bench","--jitter","2"}); Reject({"bench","--depth","invalid"}); Reject({"bench","--width","1920x"});
         Reject({"bench","--fov","nan"}); Reject({"bench","--cam-pos","1,2,3"}); Reject({"bench","--bounces","9"});
         Reject({"bench","40","--dump","40"}); Reject({"bench","--sun-dir","0,0,0"}); Reject({"bench","--spp"});
-        CameraChecks(); NgxChecks(); NrChecks(); ReservoirChecks(); HdrChecks(std::filesystem::absolute(argv[0]).parent_path());
+        CameraChecks(); NgxChecks(); NrChecks(); RasterChecks(std::filesystem::absolute(argv[0]).parent_path()); SkyShChecks(); ProbeChecks(); TubeChecks(); LampShadowChecks(); FxaaChecks(); TonemapChecks(); ReflectionChecks(); DumpChecks(std::filesystem::absolute(argv[0]).parent_path()); WindChecks(); FoliageChecks(); InstanceChecks(); ReservoirChecks(); HdrChecks(std::filesystem::absolute(argv[0]).parent_path());
         MaterialChecks(std::filesystem::absolute(argv[0]).parent_path());
         InteractiveChecks(std::filesystem::absolute(argv[0]).parent_path());
-        AnimationChecks(std::filesystem::absolute(argv[0]).parent_path());
+        AnimationChecks(std::filesystem::absolute(argv[0]).parent_path()); SkinningChecks(); CullingChecks();
         auto animation=Parse({"bench","--camera","follow","--follow-node","hero","--anim-speed","-0.5","--anim-start","3","--blas-rebuild","10"});
         Require(animation.camera=="follow" && animation.followNode=="hero" && animation.animSpeed==-0.5f && animation.animStart==3 && animation.blasRebuild==10,"Animation CLI options");
         Reject({"bench","--anim-speed","nan"}); Reject({"bench","--anim-start","inf"});

@@ -17,12 +17,12 @@ float PwTLumaNow(float2 nativePixel)
     return dot(PwTEncodeFrame(PwTColor.SampleLevel(PwTLinearClamp, uv, 0.0).rgb), float3(0.2126, 0.7152, 0.0722));
 }
 
-float2 PSRefine(PwFullscreenVertex input) : SV_Target0
+// One registration step of the chain `acc` of the motion texel at `position`: PSRefine, and RefinePair for both chains.
+float2 PwTRefineChain(float2 position, float2 acc)
 {
-    float2 acc = PwTAccPrev.Load(int3(int2(input.position.xy), 0));
     if (any(!isfinite(acc))) return float2(0.0, 0.0);
     float2 toNative = PwTNative.xy / PwTMotionRect.zw;
-    float2 p = (input.position.xy - PwTMotionRect.xy) * toNative;
+    float2 p = (position - PwTMotionRect.xy) * toNative;
     float2 q = p + acc * toNative;
     const float margin = 8.0;
     if (any(p < margin) || any(p >= PwTNative.xy - margin) || any(q < margin) || any(q >= PwTNative.xy - margin)) return acc;
@@ -58,6 +58,8 @@ float2 PSRefine(PwFullscreenVertex input) : SV_Target0
     d *= min(1.0, 1.0 / len) * 0.8;           // at most a pixel a step, slightly under-corrected: no overshoot on noise
     return acc + d / toNative;
 }
+
+float2 PSRefine(PwFullscreenVertex input) : SV_Target0 { return PwTRefineChain(input.position.xy, PwTAccPrev.Load(int3(int2(input.position.xy), 0))); }
 
 // The accumulated displacement at a native pixel. The chain is stored at the motion texture's
 // resolution; a plain bilinear fetch mixes the vectors of the two surfaces that meet at a depth edge,
@@ -156,7 +158,7 @@ PwTHistoryOut PSHistory(PwFullscreenVertex input)
     }
     else
     {
-        float depth = PwTDepthF.Load(int3(PwTRectTexel(centre, PwTDepthRect), 0));
+        float depth = PwTDepthF.Load(int3(PwTRectTexel(centre, PW_T_DEPTHF_RECT), 0));
         int2 texel = PwTRectTexel(centre, PwTMotionRect);
         float2 chain = PwTAccPrev.Load(int3(texel, 0));
         float then = asfloat(0x7fc00000u);
@@ -327,6 +329,9 @@ float4 PwTReproject(PwFullscreenVertex input, out float accepted, out float3 hea
     // the box-filtered residual, which straddles the outline and carries the other side's contribution -
     // the remaining dark steps beside hair came from there. Inside a surface the soft ramp stays.
     if (onSilhouette) w = wCentre >= 0.5 ? wEdge : 0.0;
+    // DebugTemporalCarryProbe bit 1 (bench attribution R2): what the carry would give if no in-frame pixel were
+    // rejected. wEdge still drops pixels whose source is off screen.
+    if (PwTSky.y > 0.5) w = wEdge > 0.0 ? 1.0 : 0.0;
     // See the fill below: a rejected pixel on a silhouette cannot trust the guides about its own surface.
     const bool lone = onSilhouette && w < 0.5;
 
@@ -392,7 +397,7 @@ float4 PwTReproject(PwFullscreenVertex input, out float accepted, out float3 hea
                 {
                     float ang = k * 0.785398 + ((ring & 1) == 0 ? 0.392699 : 0.0) + turn;
                     float2 qk = clamp(qc + float2(cos(ang), sin(ang)) * r, 0.0, PwTNative.xy - 1.0);
-                    float dfk = PwTDepthF.Load(int3(PwTRectTexel(qk, PwTDepthRect), 0));
+                    float dfk = PwTDepthF.Load(int3(PwTRectTexel(qk, PW_T_DEPTHF_RECT), 0));
                     float wk = 1.0 - smoothstep(PwTParams.w, 2.0 * PwTParams.w, PwTDepthMismatch(dcThen, dfk));
                     // ...and by colour: the residual's frame should have shown something like this pixel
                     // there (teeth uncovered by lips: the lip's blurred residual is not the teeth's tone).
@@ -478,7 +483,7 @@ float4 PwTReproject(PwFullscreenVertex input, out float accepted, out float3 hea
     {
         // Depth diagnostics: R = this frame's depth stretched over its local range, B = relative mismatch
         // with the residual frame's depth at q, x20.
-        float dfq = PwTDepthF.Load(int3(PwTRectTexel(clamp(q, 0.0, PwTNative.xy - 1.0), PwTDepthRect), 0));
+        float dfq = PwTDepthF.Load(int3(PwTRectTexel(clamp(q, 0.0, PwTNative.xy - 1.0), PW_T_DEPTHF_RECT), 0));
         float rel = PwTDepthMismatch(dc, dfq);
         return float4(dc, 0.0, saturate(rel * 20.0), 1.0);
     }

@@ -45,6 +45,7 @@ private:
         ID3D12CommandQueue *queue = nullptr;
         std::uint64_t serial = 0;
         std::uint64_t createdEval = 0;
+        std::uint64_t previousTag = 0; // an earlier evaluate's unclaimed recording on the same list: claimed with this one
         bool signalled = false;
     };
     void SignalRecordings(const Tracked &queue, std::uint64_t target);
@@ -57,5 +58,6 @@ private:
     SubmissionEntry ring_[kSubmissionRing];
     std::uint32_t head_ = 0, count_ = 0;
     std::uint64_t dropped_ = 0;
+    bool unseenLogged_ = false;
 };
 }

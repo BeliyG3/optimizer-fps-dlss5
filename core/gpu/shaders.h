@@ -14,10 +14,22 @@ namespace ofps::core::gpu { struct Shaders { std::vector<char> vertex, pack, unp
 #include "core/shaders/temporal_passes.def"
 #undef PW_TEMPORAL_PASS
 std::vector<char> temporalRefineModel, temporalFlowLumaModel;
+std::vector<char> temporalRefinePairModel; // optional: the carry chain's RefinePair on the model grid
 std::vector<char> temporalReprojectGrid, temporalComposeGrid, temporalCellsGrid; // optional: carried frames on the model's grid
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) std::vector<char> temporal##name; // optional: the sky field
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) std::vector<char> temporal##name; // optional, each on its own
+#include "core/shaders/temporal_marker_passes.def"
+#undef PW_TEMPORAL_PASS
 bool loaded = false; bool tried = false; ofps::sdk::ShaderSet Set() const;
 bool WarpLoaded() const { return !warpPack.empty() && !warpUnpack.empty(); }
 bool TemporalGridLoaded() const { return !temporalReprojectGrid.empty() && !temporalComposeGrid.empty() && !temporalCellsGrid.empty(); }
+bool TemporalSkyLoaded() const {
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (temporal##name.empty()) return false;
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+return true; }
 bool TemporalLoaded() const {
 #define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (temporal##name.empty()) return false;
 #include "core/shaders/temporal_passes.def"

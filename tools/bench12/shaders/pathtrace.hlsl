@@ -32,8 +32,8 @@ float3 Radiance(Surface primary, float3 direction, inout uint rng, out float spe
         if(!hit.hit) { result+=throughput*Sky(bounce); break; }
         Surface next=GetSurface(hit,bounce);
         TriMaterial lamp=materials[hit.triangleIndex];
-        float3 lightNormal=normalize(cross(vertices[hit.triangleIndex*3+1].pos-vertices[hit.triangleIndex*3].pos,
-            vertices[hit.triangleIndex*3+2].pos-vertices[hit.triangleIndex*3].pos));
+        float3 corner=WorldPosition(hit.triangleIndex*3,hit.instance);
+        float3 lightNormal=normalize(cross(WorldPosition(hit.triangleIndex*3+1,hit.instance)-corner,WorldPosition(hit.triangleIndex*3+2,hit.instance)-corner));
         float distance=length(next.position-s.position);
         // Dynamic emissive triangles have no NEE proposal, so their BSDF emission keeps weight one.
         float lampPdf=lightPower>0 && lamp.lampGroup!=0xffffffffu ? Luminance(Emission(lamp))/lightPower*distance*distance/max(abs(dot(lightNormal,-bounce)),1e-8) : 0;
@@ -64,6 +64,7 @@ void CS(uint3 dispatch : SV_DispatchThreadID)
         // First Light convention: raw * (-width/2,+height/2) = current-to-previous pixels.
         float2 delta=old.w>1e-5 ? Pixel(old)-Pixel(now) : float2(0,0);
         motion[pixel]=motionNdc!=0 ? delta/float2(-0.5*width,0.5*height) : delta;
+        if(viewMode==9u) motion[pixel]=float2(old.w,0); // --dump-raw prevdepth: this point's view depth in the span-back camera
         normalRoughness[pixel]=float4(s.normal,s.roughness);
         diffuseAlbedo[pixel]=float4(s.albedo,1);
         float nv=dot(s.normal,-direction);

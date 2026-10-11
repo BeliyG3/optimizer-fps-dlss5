@@ -17,7 +17,44 @@ std::mutex g_queueMutex;
 std::vector<QueueEntry> g_queues;
 bool g_noQueueLogged = false;
 bool g_queueRegistrationSuppressed = false;
+bool g_aliasLogged = false;
 
+bool SameLuid(ID3D12Device *a, ID3D12Device *b)
+{
+    if (a == nullptr || b == nullptr) return false;
+    const LUID x = a->GetAdapterLuid(), y = b->GetAdapterLuid();
+    return x.LowPart == y.LowPart && x.HighPart == y.HighPart;
+}
+
+// The device identities a lookup matches, under g_queueMutex. ReShade registers its queues under the native device;
+// renodx 8.5 and the SF build hand the evaluate ReShade's proxy list, whose device (and the resources') is the proxy, so
+// no pointer matches. Then the one registered device on the same adapter stands for it (a native device and its proxy
+// share the adapter; D3D12 has one device per adapter). Two registered devices on that adapter: no guess, no match.
+struct Keys {
+    ID3D12Device *device, *proxy, *alias;
+    bool Has(const QueueEntry &e) const
+    {
+        return e.device != nullptr && (e.device == device || e.device == proxy || e.device == alias);
+    }
+};
+Keys KeysFor(ID3D12Device *device, ID3D12Device *proxyDevice)
+{
+    Keys k{device, proxyDevice, nullptr};
+    for (const QueueEntry &e : g_queues) if (k.Has(e)) return k;
+    ID3D12Device *only = nullptr;
+    for (const QueueEntry &e : g_queues) {
+        if (!SameLuid(e.device, device) && !SameLuid(e.device, proxyDevice)) continue;
+        if (only != nullptr && only != e.device) return k;
+        only = e.device;
+    }
+    k.alias = only;
+    if (only != nullptr && !g_aliasLogged) {
+        g_aliasLogged = true;
+        Log(false, "Optimizer FPS NGX: device %p has no registered queue; the queues of device %p on the same adapter serve it "
+            "(a proxy of the registered device, logged once)", (void *) (device ? device : proxyDevice), (void *) only);
+    }
+    return k;
+}
 
 } // namespace
 
@@ -48,6 +85,12 @@ bool RegisterQueue(ID3D12Device *device, ID3D12CommandQueue *queue)
     Log(false, "Optimizer FPS NGX: D3D12 %s queue %p (device %p) registered for GPU waits",
         e.graphics ? "graphics" : "compute", (void *) queue, (void *) device);
     return true;
+}
+
+ID3D12Device *RegisteredAlias(ID3D12Device *device, ID3D12Device *proxyDevice)
+{
+    std::lock_guard<std::mutex> lock(g_queueMutex);
+    return KeysFor(device, proxyDevice).alias;
 }
 
 ID3D12CommandQueue *RetainRegisteredQueue(ID3D12CommandQueue *queue)
@@ -117,14 +160,12 @@ bool WaitForGpu(ID3D12Device *device, ID3D12Device *proxyDevice)
         }
         return false;
     }
-    auto onDevice = [&](const QueueEntry &e) {
-        return (device != nullptr && e.device == device) || (proxyDevice != nullptr && e.device == proxyDevice);
-    };
+    const Keys keys = KeysFor(device, proxyDevice);
     bool matched = false;
-    for (const QueueEntry &e : g_queues) matched |= onDevice(e);
+    for (const QueueEntry &e : g_queues) matched |= keys.Has(e);
     bool ok = true;
     for (QueueEntry &e : g_queues) {
-        if (matched && !onDevice(e)) continue;
+        if (matched && !keys.Has(e)) continue;
         const UINT64 value = ++e.value;
         if (FAILED(e.queue->Signal(e.fence, value))) { ok = false; continue; }
         if (!WaitFenceValue(e.fence, value, e.event, kGpuWaitMilliseconds)) ok = false;
@@ -136,9 +177,10 @@ bool WaitForGpu(ID3D12Device *device, ID3D12Device *proxyDevice)
 bool SignalRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D12Fence *fence, UINT64 value)
 {
     std::lock_guard<std::mutex> lock(g_queueMutex);
+    const Keys keys = KeysFor(device, proxyDevice);
     bool any = false;
     for (const QueueEntry &e : g_queues)
-        if (e.graphics && (e.device == device || e.device == proxyDevice)) { any |= SUCCEEDED(e.queue->Signal(fence, value)); }
+        if (e.graphics && keys.Has(e)) { any |= SUCCEEDED(e.queue->Signal(fence, value)); }
     return any;
 }
 
@@ -197,8 +239,9 @@ GateSet SignalGate(ID3D12Device *device, ID3D12Device *proxyDevice)
     std::vector<ID3D12CommandQueue *> queues;
     {
         std::lock_guard<std::mutex> lock(g_queueMutex);
+        const Keys keys = KeysFor(device, proxyDevice);
         for (const QueueEntry &e : g_queues)
-            if (e.device == device || e.device == proxyDevice) { e.queue->AddRef(); queues.push_back(e.queue); }
+            if (keys.Has(e)) { e.queue->AddRef(); queues.push_back(e.queue); }
     }
     for (ID3D12CommandQueue *queue : queues) {
         ID3D12Fence *fence = nullptr;
@@ -238,9 +281,10 @@ GateSet SignalGateAll()
 bool WaitRegisteredQueues(ID3D12Device *device, ID3D12Device *proxyDevice, ID3D12Fence *fence, UINT64 value)
 {
     std::lock_guard<std::mutex> lock(g_queueMutex);
+    const Keys keys = KeysFor(device, proxyDevice);
     bool any = false;
     for (const QueueEntry &e : g_queues)
-        if (e.graphics && (e.device == device || e.device == proxyDevice)) { any |= SUCCEEDED(e.queue->Wait(fence, value)); }
+        if (e.graphics && keys.Has(e)) { any |= SUCCEEDED(e.queue->Wait(fence, value)); }
     return any;
 }
 
@@ -281,8 +325,9 @@ bool WaitEveryRegisteredQueue(ID3D12Device *device, ID3D12Device *proxyDevice, I
 std::size_t CountQueues(ID3D12Device *device, ID3D12Device *proxyDevice, std::size_t *total)
 {
     std::lock_guard<std::mutex> lock(g_queueMutex);
+    const Keys keys = KeysFor(device, proxyDevice);
     std::size_t matching = 0;
-    for (const QueueEntry &e : g_queues) matching += e.graphics && (e.device == device || e.device == proxyDevice) ? 1 : 0;
+    for (const QueueEntry &e : g_queues) matching += e.graphics && keys.Has(e) ? 1 : 0;
     if (total) *total = g_queues.size();
     return matching;
 }
@@ -290,10 +335,11 @@ std::size_t CountQueues(ID3D12Device *device, ID3D12Device *proxyDevice, std::si
 bool TimestampFrequency(ID3D12Device *device, ID3D12Device *proxyDevice, UINT64 *frequency)
 {
     std::lock_guard<std::mutex> lock(g_queueMutex);
+    const Keys keys = KeysFor(device, proxyDevice);
     const QueueEntry *pick = nullptr;
     for (const QueueEntry &e : g_queues) {
         if (!e.graphics) continue;
-        if (e.device == device || e.device == proxyDevice) { pick = &e; break; }
+        if (keys.Has(e)) { pick = &e; break; }
         if (pick == nullptr) pick = &e;
     }
     if (pick == nullptr) return false;

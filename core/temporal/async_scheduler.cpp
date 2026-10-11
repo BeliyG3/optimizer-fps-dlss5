@@ -86,10 +86,11 @@ int AsyncBody(AsyncCtx &c)
         if (!a.discard) {
             c.stage = StageTemporalResidual;
             ofps::core::temporal::FrameInputs bg = c.tin;
-            bg.color = a.colorBg; bg.depth = a.depthBg; bg.motion = a.mvIsAcc ? a.accBg : a.mvBg;
-            // The kick owns these copies; the adoption frame may advertise different views or planes.
+            bg.color = a.colorBg; bg.motion = a.mvIsAcc ? a.accBg : a.mvBg;
+            // The kick owns these copies; the adoption frame may advertise different views, planes, depth sub-rects
+            // or depth orientation.
+            ofps::core::temporal::UseKickDepth(bg, a.depthBg, a.frameSnapshot.depth, a.frameSnapshot.depthInverted != 0);
             bg.colorView = a.frameSnapshot.color.view;
-            bg.depthView = a.frameSnapshot.depth.view;
             bg.motionView = a.frameSnapshot.motion.view;
             bg.hostInputState = bgInputState;
             bg.motionState = bgInputState;
@@ -164,24 +165,29 @@ int AsyncBody(AsyncCtx &c)
         }
         c.stage = StageCopyOut;
         D3D12_RESOURCE_STATES s = bgInputState;
+        std::uint64_t motionAnchor = 0; // the frame the pass's motion reaches back to; 0 = the host's own vectors
         if (st.temporal->PendingMirrorsAcc() && st.temporal->AccValid() && !Ctx().temporal.debugSingleFrameMotion) {
             // Adopted since the last kick: the main chain is the displacement to the last pass's frame.
             st.temporal->RecordCopyAcc(cmd, false, a.accBg, bgInputState);
             a.mvIsAcc = true;
+            motionAnchor = st.temporal->ChainFrame();
         } else if (st.temporal->PendingValid() && !Ctx().temporal.debugSingleFrameMotion) {
             st.temporal->RecordCopyAcc(cmd, true, a.accBg, bgInputState);
             a.mvIsAcc = true;
+            motionAnchor = st.temporal->PendingFrame();
         } else {
             AsyncCopyInput(cmd, c.motion, a.mvBg, s, c.inputs.motion.restState, c.inputs.motion.subresource);
             a.mvIsAcc = false;
         }
         Barrier(cmd, a.modelAccBg, a.modelAccState, bgInputState);
         st.temporal->RecordBackgroundKick(cmd, c.tin, !st.temporal->PendingMirrorsAcc(),
-                                          a.mvIsAcc ? a.modelAccBg : nullptr, bgInputState,
-                                          a.colorBg, a.depthBg, !Ctx().diag.temporalNoBackgroundModelMotion);
+                                          a.mvIsAcc ? a.modelAccBg : nullptr, bgInputState, a.colorBg, a.depthBg,
+                                          {a.depthBgRect.x, a.depthBgRect.y, a.depthBgRect.w, a.depthBgRect.h},
+                                          ModelMarkerSettings().background);
         // Validation still needs the previous kick's guides. Replace them only after the host pass.
         AsyncCopyInput(cmd, c.color, a.colorBg, s, c.inputs.color.restState, c.inputs.color.subresource);
         AsyncCopyInput(cmd, c.depth, a.depthBg, s, c.depthState, c.depthSub);
+        a.depthBgRect = c.depthRect; // kept with the copy: a discarded kick leaves depthBg ahead of the adopted snapshot
         const OfpsResource *extras[7] = {&c.inputs.ui, &c.inputs.uiAlpha, &c.inputs.backbuffer,
             &c.frame.codecInputs[0], &c.frame.codecInputs[1], &c.frame.codecInputs[2], &c.frame.codecInputs[3]};
         for (unsigned i = 0; i < 7; ++i) if (extras[i]->res)
@@ -316,6 +322,7 @@ int AsyncBody(AsyncCtx &c)
             bg.depthSub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
             bg.depthConvention = c.depthInverted ? ofps::sdk::DepthConvention::Reversed : ofps::sdk::DepthConvention::Normal;
             bg.motionIsAcc = false; // the private copy rests in the input state and takes the same barriers as the host's vectors
+            bg.motionAnchor = motionAnchor;
             if (c.useBase && a.baseBg[next]) { bg.wantBase = true; bg.baseTarget = a.baseBg[next]; bg.baseTargetState = &a.baseState[next];
                 if (st.warpPath == warp::PackPath::Pixel) bg.baseRtv = a.BaseRtv(next); }
             c.stage = StageModel;
@@ -327,6 +334,7 @@ int AsyncBody(AsyncCtx &c)
             }
         } else if (result == OFPS_OK) {
             c.stage = StageModel;
+            if (motionAnchor != 0) SetMotionAnchor(st, motionAnchor);
             result = EvaluateModelPasses(st, list, privateInputs);
             if (result == OFPS_OK) result = ResolveCodecFrame(st, list, codec);
         }

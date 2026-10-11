@@ -189,7 +189,7 @@ Protected shader SHA-256 (repository and fork):
 * Manual old payloads are preserved in each applicable folder's
   `_OptimizerFPS/manual-26.28b-20260920`, including Remember Me's separate remote-tab backup.
   Installer-managed backups and updated receipts were produced by the installer.
-* `007 First Light` and all Kits in `25_DLSS5` were not modified. The original bench INI was restored
+* `007 First Light` and all local kits were not modified. The original bench INI was restored
   after measurement; per-run INIs remain in the archived run folders.
 
 Per-installation verification is in `out/background-clean-rollout/verification.json`; its

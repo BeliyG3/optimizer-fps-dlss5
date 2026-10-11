@@ -8,8 +8,8 @@ void Pathtrace::CreatePipelines(Device &d)
     sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_ALL;
     // Match the shader's unbounded texture array; only allocated image indices are accessed.
     D3D12_DESCRIPTOR_RANGE srv[]={
-        {D3D12_DESCRIPTOR_RANGE_TYPE_SRV,4,0,0,0},
-        {D3D12_DESCRIPTOR_RANGE_TYPE_SRV,UINT_MAX,4,0,4}};
+        {D3D12_DESCRIPTOR_RANGE_TYPE_SRV,5,0,0,0},
+        {D3D12_DESCRIPTOR_RANGE_TYPE_SRV,UINT_MAX,5,0,5}};
     D3D12_DESCRIPTOR_RANGE uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV,10,0,0,0};
     D3D12_ROOT_PARAMETER p[5]{};
     p[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor={0,0};
@@ -21,7 +21,7 @@ void Pathtrace::CreatePipelines(Device &d)
     traceRoot=Root(d,rd); auto cs=Shader("pathtrace.cso");
     D3D12_COMPUTE_PIPELINE_STATE_DESC compute{}; compute.pRootSignature=traceRoot.Get(); compute.CS={cs.data(),cs.size()};
     Check(d.gpu->CreateComputePipelineState(&compute,IID_PPV_ARGS(&tracePso)),"Create path tracing PSO");
-    D3D12_DESCRIPTOR_RANGE guides{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,12,0,0,0};
+    D3D12_DESCRIPTOR_RANGE guides{D3D12_DESCRIPTOR_RANGE_TYPE_SRV,14,0,0,0}; // t12, t13: --local-exposure
     D3D12_ROOT_PARAMETER pp[2]{}; pp[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV; pp[0].Descriptor={0,0};
     pp[1].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; pp[1].DescriptorTable={1,&guides}; pp[1].ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
     sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;

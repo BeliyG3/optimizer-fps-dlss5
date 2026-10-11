@@ -175,6 +175,18 @@ void NeuralRendering::Recreate(Device &d, int frame, bool onThread)
     CheckNgx(result,"DLSSNR ReleaseFeature");
     runtime.log.Echo();
 }
+void NeuralRendering::Restart(Device &d)
+{
+    if(mode=="off" || useCore) return;
+    if(feature) {
+        d.Wait();
+        const auto result=runtime.Release(feature);
+        feature=nullptr;
+        CheckNgx(result,"DLSSNR ReleaseFeature");
+        runtime.log.Echo();
+    }
+    deferCreate=true; presented=false;
+}
 void NeuralRendering::Release(Device &d)
 {
     presented=false;

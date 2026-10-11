@@ -65,13 +65,18 @@ keep full resolution there.
 | Interpolate | A full model pass every Nth frame (N = 2…8). The frames in between reuse the last pass's residual, reprojected along the game's own motion vectors, with depth and color acceptance tests, depth-matched hole fill, and Catmull-Rom resampling. | alternating long and short |
 | Interpolate (background) | The model runs on its own GPU queue a few frames behind, on private copies of the inputs. Every displayed frame is a reprojection of the last finished pass. | more even (falls back to the synchronous mode when no host queue is available — for example when OptiScaler loads ReShade after the game's device exists) |
 
+The Temporal group also has **Carry at the model's resolution** (`TemporalGrid`), **Smooth sky in carried frames**
+(`TemporalSkyField`), **Model motion markers** (`TemporalModelMarker`) and **Carry chain** (`TemporalChainRule`).
+All four are described, with their defaults, in [docs/TEMPORAL_MODES.md](docs/TEMPORAL_MODES.md).
+
 ## The NR consumer
 
 The add-on renders nothing by itself; it sits between an NR consumer and NVIDIA's runtime. One of
 these must be installed and working first, by its own instructions:
 
 * **renodx-dlss5**, part of [RenoDX](https://github.com/clshortfuse/renodx) — the usual case for a
-  64-bit game.
+  64-bit game. With renodx 8.5 or the ShortFuse build (26.1003), use 2026.10.2 or newer: older
+  releases lose the background mode there and, with NR at the present, drop NR and stall on some frames.
 * **[DLSS5-Feeder](https://github.com/jlrouzies-fr/DLSS5-Feeder)** — for 32-bit games. NR runs in its
   64-bit helper process, `<game>\host64\dlss5-feed-host64.exe`, and so does this add-on.
 * **a public [OptiScaler](https://github.com/optiscaler/OptiScaler) build with Neural Rendering** —
@@ -89,12 +94,12 @@ these must be installed and working first, by its own instructions:
 ## Using the tab
 
 In the game, open the ReShade overlay (`Home`) → **Add-ons** → **Optimizer FPS for DLSS5**. The
-first line is the status banner: green `Optimizer FPS ACTIVE: model WxH of WxH, N frames` or orange
-`Optimizer FPS NOT ACTIVE: <reason>`. The banner reports **spatial** warping only: with **Mode** set
+first line is the status banner: green `Optimizer FPS ACTIVE: model WxH of WxH` (followed by the temporal
+mode when one runs) or orange `Optimizer FPS NOT ACTIVE: <reason>`. The banner reports **spatial** warping only: with **Mode** set
 to `Off` it says NOT ACTIVE even while a temporal mode runs on the native model.
 
-Below it are the spatial controls, the two outlines, "Output colour (warped frame only)", the
-temporal cadence, and a Diagnostics tree. In a 32-bit game the same tab is drawn by
+Below it are the spatial controls, the two outlines, "Output colour" (warped frames only), the
+Temporal and Model passes groups, and a Diagnostics tree. In a 32-bit game the same tab is drawn by
 `optimizer-fps-dlss5-remote.addon32` beside the game's own ReShade; it drives the add-on running in
 `host64` through shared memory. Current settings are saved to `ReShade.ini` under `[OptimizerFPS]`;
 an existing `[PeripheralWarp]` section is copied once when no new section exists. The
@@ -105,23 +110,23 @@ full list of controls and keys is in [docs/RESHADE_ADDON.md](docs/RESHADE_ADDON.
 
 ## Performance and quality
 
-The numbers below come from the project's own offline bench (procedural scene, 3840×2160, RTX 4080
+The numbers below come from the project's own offline benchmark (procedural scene, 3840×2160, RTX 4080
 SUPER, `nvngx_dlssnr.dll` 310.8), **not** from a game. No before/after captures from a real game
 are published yet.
 
-| Bench run | Frame time | Frame rate |
+| Benchmark run | Frame time | Frame rate |
 |---|---:|---:|
 | Every frame | 18.8 ms | 53 fps |
 | Interpolate N=2 | 11.6 ms | 86 fps |
 | Interpolate N=3 | 9.2 ms | 109 fps |
 | Interpolate N=4 | 7.9 ms | 127 fps |
 
-A full model pass costs 13–15 ms of that, so on the bench the frame time is almost entirely Neural
-Rendering; the bench scene itself renders in about 3 ms. In a real game the model is a smaller share
+A full model pass costs 13–15 ms of that, so in the benchmark the frame time is almost entirely Neural
+Rendering; the benchmark scene itself renders in about 3 ms. In a real game the model is a smaller share
 of the frame, so the percentage gain is smaller than the table suggests, and the milliseconds saved
 per model pass also shift with GPU load. These runs already have the spatial warp on at 80/90, so the
 model processes 81 % of the pixels (3456×1944 instead of 3840×2160), at a cost of 0.3–0.5 ms for
-Pack/Unpack. The bench and its measurement scripts are in [`tools/bench`](tools/bench)
+Pack/Unpack. The benchmark and its measurement scripts are in [`tools/bench`](tools/bench)
 (`run_modes.sh`, `errflick.py`; the run folder needs your own ReShade and NR consumer, see
 `tools/bench/BASELINE.md`). Developed and tested on an RTX 4080 SUPER. DLSS 5 Neural Rendering itself
 runs on RTX 20-series and newer, but the add-on has not been tested there. Your numbers will differ;
@@ -135,7 +140,7 @@ model's output afterwards, the effect on the final picture is not 1:1 with the n
 Peripheral 80/90 with Interpolate N=2 and go from there.
 
 Video memory: at 3840×2160 with the default settings the add-on costs about 358 MiB of video memory
-(bench); a temporal mode, the pixel path or extra model passes add to that.
+(benchmark); a temporal mode, the pixel path or extra model passes add to that.
 
 ## Troubleshooting
 
@@ -165,7 +170,7 @@ retry, and resources remain pending until completion can be confirmed.
 One pinned core DLL is shared per process; the shell loads it through the public ABI.
 The runtime payload contains the x64 add-on, `optimizer-fps-dlss5-core.dll`,
 `nvngx.dll_optimizerfps.dll`, and the built DXBC set in `optimizer-fps-dlss5/`
-beside the core. The current build has 29 DXBC; the package manifest lists the
+beside the core. The current build has 39 DXBC; the package manifest lists the
 exact files.
 The x86 remote overlay stays beside the 32-bit game; its core runs in `host64`.
 The installer migrates older ReShade settings; the verifier checks the core.
@@ -184,7 +189,7 @@ warp itself integrates once per DLSS/NR loader, not once per game.
 [docs/API.md](docs/API.md) (API and ABI) · [docs/CONFIG.md](docs/CONFIG.md) (configuration math) ·
 [docs/INTEGRATION.md](docs/INTEGRATION.md), [docs/DLSSNR_COMMON_STAGE.md](docs/DLSSNR_COMMON_STAGE.md),
 [docs/PORTING_CHECKLIST.md](docs/PORTING_CHECKLIST.md) (integration) ·
-[BUILD.md](BUILD.md) (current build and bench commands) · [docs/BUILD.md](docs/BUILD.md) (build details) · [docs/CI.md](docs/CI.md) ·
+[BUILD.md](BUILD.md) (current build and benchmark commands) · [docs/BUILD.md](docs/BUILD.md) (build details) · [docs/CI.md](docs/CI.md) ·
 [docs/RELEASING.md](docs/RELEASING.md) · [docs/LIMITATIONS.md](docs/LIMITATIONS.md) (known limits) ·
 [CHANGELOG.md](CHANGELOG.md) (history).
 

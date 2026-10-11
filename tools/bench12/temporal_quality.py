@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--cadences", default="0,4,8")
     # Extra bench switches for one-off comparisons, e.g. --extra "--depth linear-negative".
     parser.add_argument("--extra", default="")
+    parser.add_argument("--dump-format", default="bmp", choices=("bmp", "png"))
     args = parser.parse_args()
     runtime = args.runtime.resolve()
     output = runtime / args.label
@@ -53,14 +54,16 @@ def main():
                                "--gltf", "../../bench/assets/lab_scene.glb", "--upscaler", "rr",
                                "--camera", scenario, "--move-speed", "7", "--sun-dir", "0.45,-0.77,0.45",
                                "--sun-strength", "1500", "--exposure", "0.22", "--haze", "0.008",
-                               "--fov", "62", *args.extra.split(), "--dump", ",".join(map(str, dumps))]
+                               "--fov", "62", "--dump-format", args.dump_format, *args.extra.split(),
+                               "--dump", ",".join(map(str, dumps))]
                     with (case / "stdout.txt").open("w", encoding="utf-8") as stream:
                         result = subprocess.run(command, cwd=runtime, stdout=stream, stderr=subprocess.STDOUT)
                     shutil.copy2(runtime / "ReShade.log", case / "ReShade.log")
                     for frame in dumps:
                         # Windows indexers can briefly deny deletion after a successful copy.
                         # The bench overwrites its working dumps on the next run.
-                        shutil.copy2(runtime / f"dump_{frame}.bmp", case / f"dump_{frame}.bmp")
+                        name = f"dump_{frame}.{args.dump_format}"
+                        shutil.copy2(runtime / name, case / name)
                     text = (case / "stdout.txt").read_text(encoding="utf-8")
                     match = re.search(r"gpu frame time: avg ([\d.]+) ms", text)
                     record = dict(scenario=scenario, cadence=cadence, run=run + 1,

@@ -110,6 +110,15 @@ struct TemporalSettings {
     // TemporalGrid (2026.10.1): a warped carried frame's reprojection on the grid matched to the model's
     // density (core/temporal/grid.h, core/frame/carried_grid.h). Off = the native reprojection.
     bool grid = true;
+    // TemporalSkyField (2026.10.2): far-plane pixels of carried frames take the smooth sky field
+    // (core/temporal/sky_field.h) instead of the residual carried pixel by pixel. Off = as before.
+    bool skyField = true;
+    // TemporalModelMarker (2026.10.2): where full passes tell the model a pixel has no history, mapped onto the marker rule
+    // by core/temporal/model_marker.h: 0 = no markers (the plain chain), 1 = classic (rule 0), 2 = narrow (rule 4 at 8).
+    int modelMarker = 2;
+    // TemporalChainRule: the chains carried frames reproject along, mapped by core/temporal/chain_rule.h: 0 = classic
+    // (one chain, rule 0), 1 = coherent (the model's chain rule 0, the carry chain rule 5).
+    int chainRule = 1;
     // Diagnostics (all default off): flip the motion vectors' sign for the temporal machine;
     // interpolated frames show the raw colour; the model gets single-frame vectors on full passes
     // (no accumulation); a status line in the log every 60 interpolated frames.
@@ -135,6 +144,13 @@ struct DiagnosticsConfig {
     bool temporalNoBackgroundModelMotion = false; // Same key; validation improves the measured background combination
     int temporalPhaseIn = -1;           // DebugTemporalPhaseIn: carried frames a new pass fades in over (0 = off, <0 = automatic)
     int temporalBackgroundPhaseIn = -1; // Same key; automatic phase-in, evaluated on the D3D12 path-traced lab
+    bool debugTemporalDumpAcc = false;  // DebugTemporalDumpAcc: each full pass's model motion + chain to ofps_acc_<eval>.bin (acc_dump.h)
+    int temporalMarkerRule = 0;         // DebugTemporalMarkerRule: the model's no-history marker rule (PwTMarkerReason; 0 = today's)
+    int temporalMarkerNeighbours = 0;   // DebugTemporalMarkerNeighbours: rules 3/4's failing texels of 25 to stay marked (0 = 12)
+    int temporalCarryProbe = 0;         // DebugTemporalCarryProbe: bench attribution bits (core/temporal/carry_probe.h; 0 = off)
+    int temporalDumpAccFrom = 0;        // DebugTemporalDumpAccFrom: first evaluate of the 64-evaluate chain dump window (0 = off)
+    int temporalChainRule = 0;          // DebugTemporalChainRule: when the chain restarts (PSAccumulate's link test; 0 = today's)
+    int temporalCarryChainRule = 0;     // DebugTemporalCarryChainRule: the carry chain's restart rule (carry_chain.cpp; 0 = no carry chain)
     bool debugLayerLog = false;       // DebugLayer=1 (which also turns the D3D12 debug layer on): dump its messages
     bool asyncCompute = false;        // DebugAsyncCompute: background pass on a compute queue instead of a direct one
     bool asyncNormalPriority = false; // DebugAsyncNormalPriority: normal instead of high queue priority

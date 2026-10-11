@@ -111,6 +111,35 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
         Log(true, "Optimizer FPS core: temporal grid pipelines unavailable (%s); carried frames keep the native reprojection",
             computeReason.c_str());
     }
+    // Optional as well: without all four the sky field is off (sky_field.h).
+    if (shaders.TemporalSkyLoaded()) {
+        bool skyOk = true;
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) \
+        skyOk = skyOk && gpu::CreateComputePass(device, rootSignature, shaders.temporal##name.data(), \
+                                                shaders.temporal##name.size(), #name, &member##Pso, computeReason);
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+        if (!skyOk) {
+#define PW_TEMPORAL_PASS(name, member, reads, outputs, extent) if (member##Pso) { member##Pso->Release(); member##Pso = nullptr; }
+#include "core/shaders/temporal_sky_passes.def"
+#undef PW_TEMPORAL_PASS
+            Log(true, "Optimizer FPS core: temporal sky field pipelines unavailable (%s); the sky field is off", computeReason.c_str());
+        }
+    }
+
+    // Optional, each on its own (temporal_marker_passes.def): what a missing one turns off is in its log line.
+    const struct { std::vector<char> const &code; const char *name; ID3D12PipelineState **pso; const char *without; } markers[] = {
+        {shaders.temporalMarkerReason, "MarkerReason", &markerReasonPso, "the acc dump (DebugTemporalDumpAcc) is off"},
+        {shaders.temporalMarkerFail, "MarkerFail", &markerFailPso, "marker rules 3/4 test every neighbour inline"},
+        {shaders.temporalLinkFail, "LinkFail", &linkFailPso, "DebugTemporalChainRule 3 runs as rule 2"},
+        {shaders.temporalAccumulatePair, "AccumulatePair", &accumulatePairPso, "TemporalChainRule has no carry chain"},
+        {shaders.temporalRefinePair, "RefinePair", &refinePairPso, "TemporalChainRule has no carry chain"},
+        {shaders.temporalRefinePairModel, "RefinePairModel", &refinePairModelPso,
+         "TemporalChainRule has no carry chain on a host's model grid"}};
+    for (const auto &pass : markers)
+        if (pass.code.empty() || !gpu::CreateComputePass(device, rootSignature, pass.code.data(), pass.code.size(), pass.name, pass.pso,
+                                                          computeReason))
+            Log(true, "Optimizer FPS core: temporal pipeline %s unavailable; %s", pass.name, pass.without);
 
     D3D12_DESCRIPTOR_HEAP_DESC hd{};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -140,6 +169,10 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
         if (!ofps::core::gpu::CreateTexture(device, lowW, lowH, kResidualFormat, kTarget, &residualLow) ||
             !ofps::core::gpu::CreateTexture(device, nativeWidth, nativeHeight, kResidualFormat, kTarget, &toneAcc))
             return fail("low-res residual allocation failed");
+        // The sky field's pyramid, on the same grid (sky_field.h); only with its passes. Optional like them: without
+        // it the field is off (SkyReady() is false), the machine itself is not.
+        if (SkyPassesReady() && !sky.Create(device, lowW, lowH))
+            Log(true, "Optimizer FPS core: temporal sky field allocation failed (%ux%u); the sky field is off", lowW, lowH);
     }
     // 26.28: the passes that only improve the result. Each is optional; without its texture the pass
     // is simply not recorded and the machine behaves as 26.27 did.
@@ -180,6 +213,25 @@ bool Resources::Create(ID3D12Device *dev, const ofps::core::gpu::Shaders &shader
         targets[r.target] = {r.res, r.fmt};
     }
     return true;
+}
+
+bool Resources::EnsureCarryChain(bool unrefined)
+{
+    if (carryChainFailed) return false;
+    for (ID3D12Resource **texture : {&accCarry[0], &accCarry[1], unrefined ? &accUnrefined : &accCarry[0]})
+        if (*texture == nullptr &&
+            !ofps::core::gpu::CreateTexture(device, motionW, motionH, kChainFormat, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, texture)) {
+            carryChainFailed = true;
+            return false;
+        }
+    return true;
+}
+
+bool Resources::EnsureMotionByte(ID3D12Resource *&texture)
+{
+    return texture != nullptr ||
+           ofps::core::gpu::CreateTexture(device, motionW, motionH, DXGI_FORMAT_R8_UINT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                                          &texture);
 }
 
 } // namespace ofps::core::temporal

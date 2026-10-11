@@ -29,6 +29,9 @@ int Feature::Evaluate(ID3D12GraphicsCommandList *cmd, const OfpsFrameInputs *inp
     DrainGraveyard(false);
     core_.DrainReleased();
     auto &st = *state_;
+    // The host's one-frame vectors reach back to this feature's previous evaluate (the NR history rule, model_passes.h).
+    st.previousEvaluate = st.thisEvaluate;
+    st.thisEvaluate = Ctx().evalCounter;
     st.frameModelCalled = false;
     st.frameModelResult = OFPS_OK;
     st.frameCreation = false;

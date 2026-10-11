@@ -10,9 +10,10 @@ set(OFPS_CORE_SOURCES
     gpu/queues.h gpu/shaders.cpp gpu/shaders.h temporal/accumulation.cpp temporal/async_entry.cpp
     temporal/async_frame.h temporal/async_host_sync.cpp temporal/async_scheduler.cpp temporal/async_scheduler.h
     temporal/background.cpp temporal/controller.cpp temporal/controller.h temporal/history.cpp
-    temporal/history.h temporal/machine.cpp temporal/machine.h temporal/mode_select.cpp
+    temporal/history.h temporal/machine.cpp temporal/machine.h temporal/model_marker.h temporal/chain_rule.h temporal/mode_select.cpp
     temporal/phase.h temporal/residual.cpp temporal/resources.cpp temporal/resources.h
-    temporal/resources_create.cpp shaders/temporal_layout.h shaders/temporal_passes.def)
+    temporal/resources_create.cpp shaders/temporal_layout.h shaders/temporal_passes.def shaders/temporal_marker_passes.def)
+list(APPEND OFPS_CORE_SOURCES temporal/sky_field.h temporal/sky_field.cpp shaders/temporal_sky_passes.def)
 list(APPEND OFPS_CORE_SOURCES api/ofps_core.h api/ofps_settings_schema.h settings/schema.cpp)
 list(APPEND OFPS_CORE_SOURCES gpu/descriptor_pool.h gpu/descriptor_pool.cpp gpu/constant_ring.h gpu/constant_ring.cpp gpu/submission.h gpu/submission.cpp
     gpu/submission_recordings.cpp)
@@ -35,6 +36,7 @@ list(APPEND OFPS_CORE_SOURCES temporal/diagnostic_keys.h temporal/diagnostics.h 
 list(APPEND OFPS_CORE_SOURCES temporal/stats.h temporal/stats.cpp)
 list(APPEND OFPS_CORE_SOURCES temporal/pass_timing.h temporal/pass_timing.cpp)
 list(APPEND OFPS_CORE_SOURCES temporal/grid.h temporal/grid.cpp)
+list(APPEND OFPS_CORE_SOURCES temporal/raw_snapshot.h temporal/raw_snapshot.cpp)
 list(APPEND OFPS_CORE_SOURCES flow/Backend.h flow/DriverBackend.cpp flow/OpticalFlow.h flow/OpticalFlowInternal.h flow/OpticalFlow.cpp flow/Registration.cpp flow/Submit.cpp flow/FrameState.h flow/FrameState.cpp flow/motion_source.h)
 
 list(APPEND OFPS_CORE_SOURCES frame/frame_inputs.h frame/frame_inputs.cpp)
@@ -42,3 +44,5 @@ list(APPEND OFPS_CORE_SOURCES frame/frame_inputs.h frame/frame_inputs.cpp)
 list(APPEND OFPS_CORE_SOURCES core_impl.h core_impl.cpp core_feature.cpp core_settings.cpp core_status.cpp settings/values.h settings/values.cpp settings/status.h settings/status.cpp)
 
 list(APPEND OFPS_CORE_SOURCES frame/callback_guard.h)
+list(APPEND OFPS_CORE_SOURCES frame/acc_dump.h frame/acc_dump.cpp temporal/acc_dump_copies.cpp)
+list(APPEND OFPS_CORE_SOURCES temporal/carry_probe.h temporal/carry_probe.cpp temporal/carry_chain.cpp)

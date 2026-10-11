@@ -33,30 +33,31 @@ Version/ABI conflicts leave the shell inactive with a banner naming the first ho
 (or `unknown host` if metadata is unavailable); it does not load a second core.
 Unload unregisters the host while callbacks are alive, without waiting. Normal
 `Detach()` outside callbacks/loader lock also calls `Release`; only the last host
-shuts down the core. Hot-unload/pre-unload handshake and shell draining remain plan 8.
+shuts down the core. A hot-unload/pre-unload handshake and shell draining are not implemented yet.
 
 | File | Where it goes | What it is |
 |---|---|---|
 | `optimizer-fps-dlss5.addon64` | beside the 64-bit ReShade DLL (in `host64\` for a 32-bit game) | the add-on itself |
 | `optimizer-fps-dlss5-core.dll` | beside the x64 add-on | shared frame core, ABI 1, static CRT |
 | `nvngx.dll_optimizerfps.dll` | beside the add-on | forwarder; exports `pw_ngx_call_create` / `_evaluate` / `_release` |
-| `optimizer-fps-dlss5\*.dxbc` | subdirectory beside the core DLL | 29 compiled shaders |
+| `optimizer-fps-dlss5\*.dxbc` | subdirectory beside the core DLL | 39 compiled shaders |
 | `optimizer-fps-dlss5-remote.addon32` | beside the game's 32-bit ReShade DLL | the tab only, for 32-bit games |
 
 The forwarder exists because the NR snippet checks its caller: it accepts calls only from a module
 whose file name contains `nvngx.dll`. It is ours; nothing of NVIDIA's is redistributed.
 
-The shader set is twenty `.dxbc` blobs: one vertex shader (`fullscreen_vs`), the four pixel shaders
-`pack_ps`, `unpack_ps`, `preview_ps` and `outline_ps`, and the fifteen temporal passes, which are
-compute — `temporal_<Name>_cs.dxbc`, the names listed in `shaders/temporal_passes.def`. Pack and
-Unpack are required; of the temporal passes, Residual, Accumulate, Reproject and Expect are required
-for the temporal modes and the rest degrade gracefully — a missing one disables just the pass it
-belongs to, and a missing required one disables the temporal modes with a reason in the tab. "Beside
-the add-on" honors `[ADDON] AddonPath` in `ReShade.ini`. Earlier releases shipped the same passes as
-pixel shaders (`temporal_*_ps.dxbc`); the installer deletes those when it updates.
+The shader set is 39 `.dxbc` files: one vertex shader (`fullscreen_vs`), four pixel shaders (`pack_ps`,
+`unpack_ps`, `preview_ps`, `outline_ps`), four compute shaders for the warp, motion and menu mode (`warp_pack_cs`,
+`warp_unpack_cs`, `motion_smooth_cs`, `menu_convert_cs`) and 30 temporal compute passes (`temporal_<Name>_cs.dxbc`).
+The temporal modes need the fifteen passes listed in `core/shaders/temporal_passes.def` plus
+`temporal_RefineModel_cs` and `temporal_FlowLumaModel_cs`; without one of them the temporal modes are off, with a
+reason in the tab. The other temporal passes (model grid, sky, markers, carry chain) are optional: a missing one
+turns off only its own feature and says so once in the log. "Beside the add-on" honors `[ADDON] AddonPath` in
+`ReShade.ini`. Earlier releases shipped the temporal passes as pixel shaders (`temporal_*_ps.dxbc`); the installer deletes
+those when it updates.
 
-The temporal passes are compiled from `shaders/temporal_cs.hlsl`, a thin wrapper that sets the
-feature macros and the thread group; the maths itself lives in `shaders/temporal.hlsl`, which is
+The temporal passes are compiled from `core/shaders/temporal_cs.hlsl`, a thin wrapper that sets the
+feature macros and the thread group; the maths itself lives in `core/shaders/temporal.hlsl`, which is
 shared by every host of the core. Compile a pass without the wrapper and it
 reads a different register set than the add-on binds.
 
@@ -129,9 +130,9 @@ every filter, so only the compressed region is touched; below 100 the band is sh
 is rebuilt like the rest. The choice behaves the same behind renodx, DLSS5-Reshade-AIO,
 DLSS5-Feeder and a public OptiScaler, with one exception: a host that writes the model's result
 back into its own colour texture gets the plain unpack in `TemporalMode` 0 (the log says "detail
-transfer declined"); the temporal modes still transfer there. On bench12, detail transfer raised
-high-frequency detail from 0.18 to 0.90 of full-resolution NR at 50% uniform (0.755 to 0.973 at
-the periphery) for about +0.1 ms; see [the bench](dev/detail-transfer-bench.md).
+transfer declined"); the temporal modes still transfer there. In the project's D3D12 test scene, detail transfer
+raised high-frequency detail from 0.18 to 0.90 of full-resolution NR at 50% uniform (0.755 to 0.973 at
+the periphery) for about +0.1 ms; see [the measurements](dev/detail-transfer-bench.md).
 
 **Menu mode** — a checkbox under Mode, off by default (`MenuMode`). The line under it says what it does now: `off`,
 `waiting for the game's Neural Rendering`, `waiting for a menu`, `active (NR runs on the menu frame)`, or
@@ -156,11 +157,12 @@ more; unticking the box forces both back to 0.
 final native-resolution pass. Peripheral mode only. They do not enter temporal history and do not
 change layout generation.
 
-**Output colour (warped frame only)** — `Brightness (%)` (−20…20) and `Gamma` (0.7…1.4). Unpack
+**Output colour** (warped frames only) — `Brightness (%)` (−20…20) and `Gamma` (0.7…1.4). Unpack
 writes `(1 + brightness) * rgb ^ (1 / gamma)` in the buffer's linear space. See
 [Tone on a warped frame](#tone-on-a-warped-frame).
 
-**Temporal (Neural Rendering cadence)** — see below.
+**Temporal** (the Neural Rendering cadence) and **Model passes** — see [Temporal modes](#temporal-modes) and
+[Model passes](#model-passes).
 
 **Motion vectors (optical flow in the 64-bit host)** — present only inside
 `dlss5-feed-host64.exe`, recognised by its `dlss5-feed-host64.cfg` sitting next to it. `Source`
@@ -213,14 +215,18 @@ materialized by ordinary saves.
 | `TemporalEvery` | int | frames per model pass: 2…8 sync, 1…8 background |
 | `TemporalMaxQueue` | int | 0…8, background mode: GPU frames allowed unfinished when a frame is recorded |
 | `TemporalGrid` | 0/1 | carried frames reprojected at the model's resolution when the model is compressed (default 1); `0` = as before |
+| `TemporalSkyField` | 0/1 | carried frames give the sky (far-plane pixels) a smooth estimate of the model's sky edit (default 1); `0` = as before |
+| `TemporalModelMarker` | 0/1/2 | **Model motion markers**: where full passes tell the model a pixel has no history. `2` Narrow (default), `1` Classic (as before 2026.10.2), `0` Off |
+| `TemporalChainRule` | 0/1 | **Carry chain**: how carried frames follow the picture while the camera moves. `1` Coherent (default): less smearing and flicker on foliage; `0` Classic (one chain, as in earlier releases) |
+| `ModelPasses`, `SpreadPasses` | int, 0/1 | **Model passes** (1…3, default 1) and **Spread passes over frames** (default 1); see [Model passes](#model-passes) |
 | `ShowAdvanced` | 0/1 | the tab's **Advanced (diagnostics)** checkbox; written only when it is clicked |
 
 `OptiScalerTakeover` and `ForceBridgeWarpOff` are obsolete compatibility inputs;
 they are ignored with a log message and are never written as current settings.
 
 The current installer seeds `Mode=2, CenterX=80, CenterY=80, WorkX=90, WorkY=90`
-in the legacy section, only where keys are absent. The add-on migrates those
-known values when it first loads an old-only INI.
+in `[OptimizerFPS]`, only when neither section exists. The add-on migrates known
+values from an old-only `[PeripheralWarp]` section when it first loads that INI.
 
 ### Read-only keys
 
@@ -253,12 +259,12 @@ The `Debug*` diagnostics of the interposer (`hosts/reshade/addon/config_store.h`
 | `DebugHookDelayMs` | delay hook installation so a host creates its model first (exercises the adoption path) |
 | `DebugKeepBackbuffer` | hand the native UI/back buffer to the warped model |
 | `DebugDepthState` | host depth resting state; `99` (the default) follows the automatic rule |
-| `DebugMenuPass` | menu mode's pass: `0` the model (default), `1` a red 64x64 marker, `2` every pass refused, `3` the first run's 10th f2 signal skipped (D3D12) — bench checks |
+| `DebugMenuPass` | menu mode's pass: `0` the model (default), `1` a red 64x64 marker, `2` every pass refused, `3` the first run's 10th f2 signal skipped (D3D12) — for testing |
 | `DebugMenuDump` | `1` writes `menu_events.log` and `menu_dump_<present>.bmp` next to the exe and a log line per menu run |
 | `DebugMenuEntryMs` | the entry delay in ms after the game's last NR frame (default 150; `0` counts presents only) |
 | `DebugMenuOwnBlock` | `1` (with `MenuMode=1`) runs the game's own NR evaluates with menu mode's parameter block: a check for hosts that never pause |
-| `DebugMenuNoFlow` | menu mode's optical flow, for bench checks: `0` normal (default), `1` act as if there were no optical flow, `2` fake one optical flow failure on a carried menu frame (that frame runs the model again), `3` the same and the last output is shown again; other values are ignored with a warning |
-| `DebugMenuBridgeCanary` | `1` (bench only, with a debug layer): on a D3D11 bridge, the D3D11/D3D12 debug layers' messages in `ReShade.log` at the bridge's open, each run's entry, the first present after an exit and the release. It changes the game's D3D12 info queue for the session (every message stored, no count limit) and creates one invalid zero-width buffer as a check of that channel. Default `0`: the add-on never touches the info queues |
+| `DebugMenuNoFlow` | menu mode's optical flow, for testing: `0` normal (default), `1` act as if there were no optical flow, `2` fake one optical flow failure on a carried menu frame (that frame runs the model again), `3` the same and the last output is shown again; other values are ignored with a warning |
+| `DebugMenuBridgeCanary` | `1` (for testing only, with a debug layer): on a D3D11 bridge, the D3D11/D3D12 debug layers' messages in `ReShade.log` at the bridge's open, each run's entry, the first present after an exit and the release. It changes the game's D3D12 info queue for the session (every message stored, no count limit) and creates one invalid zero-width buffer as a check of that channel. Default `0`: the add-on never touches the info queues |
 
 The add-on reads no environment variables at all; every diagnostic switch is one of these keys.
 
@@ -307,7 +313,13 @@ allocates a fresh descriptor table per draw from a ring of 128.
 ## Temporal modes
 
 The model every N-th frame with the frames between reprojected, synchronously or in the background: see
-[TEMPORAL_MODES.md](TEMPORAL_MODES.md).
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md). With a temporal mode the Temporal group also shows **Model motion markers**
+(`TemporalModelMarker`): `Narrow (default)` keeps history on swaying foliage while still marking real disocclusions,
+`Classic` is the rule before 2026.10.2, `Off` hands the model its vectors without markers; see
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md#model-motion-markers). **Carry chain** (`TemporalChainRule`): `Coherent (default)`
+lets carried frames keep following swaying foliage while the camera moves, so it smears and flickers less; `Classic`
+is the single chain of earlier releases, for when moving shots look worse than before; see
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md#carry-chain).
 
 ## Menu mode
 
@@ -316,13 +328,13 @@ on (`MenuMode=1`) the add-on runs the NR model on the frame the game presents wh
 Mode (Off, Uniform, Peripheral) and your temporal setting: with Interpolate (sync) the model runs every N-th menu frame
 and NVIDIA's optical flow carries its edit to the frames between; the background mode is not used in menus. Native
 D3D12, and D3D11 through a bridge. The full description, the "unavailable" reasons and the cost are in
-[MENU_MODE.md](MENU_MODE.md); limits in [LIMITATIONS.md](LIMITATIONS.md#menu-mode); bench results and the remaining
+[MENU_MODE.md](MENU_MODE.md); limits in [LIMITATIONS.md](LIMITATIONS.md#menu-mode); test results and the remaining
 in-game checks in [dev/menu-mode-acceptance.md](dev/menu-mode-acceptance.md). Checked in game in Star Wars Jedi: Fallen
 Order (OptiScaler's D3D11 path); not yet in Baldur's Gate 3.
 
 ## Tone on a warped frame
 
-On the offline bench the model darkens a *native* frame by about 0.8 % at Intensity 2 / Local Tone 2,
+In the offline test scene the model darkens a *native* frame by about 0.8 % at Intensity 2 / Local Tone 2,
 and does so less on a warped frame (Peripheral 80/90 about +0.65 %, Uniform 90 about +1.6 % relative
 to native NR). At Intensity 0 the difference between native and warped is within 0.2 %. Pack and
 Unpack are linear averages and add no gain, and the host hands the model no UI/back buffer either
@@ -330,7 +342,7 @@ way — so the shift comes from the model's tone processing depending on the fra
 warp.
 
 The Brightness and Gamma sliders compensate. Because Unpack applies them before the host decodes the
-model's output, the effect on the final picture is not 1:1 with the number (on the bench −0.64 %
+model's output, the effect on the final picture is not 1:1 with the number (in the test scene −0.64 %
 brightness moved the mean by about −1.5 %). Tune by eye.
 
 ## OptiScaler
@@ -339,15 +351,15 @@ Public OptiScaler builds with Neural Rendering (Dagherbou OptiScaler_DLSSNR, wil
 OptiScaler-DLSSNR-PreSR-Multipass) run NR themselves and, with `[Plugins] LoadReshade=true`, load
 ReShade and this add-on. OptiScaler creates the NR model before ReShade is loaded, so the hook
 **adopts** it (`feature 18 adopted (created before the hooks were installed)`), re-creates it at the
-work size and warps from then on; the rest works as with any other consumer. Checked on bench12
-(native D3D12) and on the D3D11 stand through OptiScaler's D3D11-on-D3D12 bridge, including
+work size and warps from then on; the rest works as with any other consumer. Checked in the project's
+native D3D12 test scene and on a D3D11 test setup through OptiScaler's D3D11-on-D3D12 bridge, including
 wilsjo2's NR before the upscaler and OptiScaler's own frame generation — see
-[the plan 8 report](dev/plan8-public-optiscaler.md). Two consequences: background mode runs
+[the public OptiScaler report](dev/plan8-public-optiscaler.md). Two consequences: background mode runs
 synchronously (no host queue is visible), and a build with its own peripheral compression must have
 it off, or the frame is compressed twice. Detail transfer works the same here too: under
 OptiScaler's own `[DlssNr] WorkingScale`, it restores only what our compression lost on
 OptiScaler's model grid, not what OptiScaler's own reduction lost — that is its resolve's job; see
-[task 5b](dev/detail-transfer-bench.md#behind-a-public-optiscaler-task-5b).
+[detail transfer behind a public OptiScaler](dev/detail-transfer-bench.md#behind-a-public-optiscaler-task-5b).
 
 **Direct-host protocol.** A program that links the core itself can take NR over from the add-on: it
 declares ownership with the manual-reset event `Local\OptimizerFpsDirectHost_<pid>` and calls
@@ -358,7 +370,7 @@ this event before looking up the core or checking its ABI. Access/wait errors fa
 signal forwards original handles without adoption and logs one warning. The ReShade NGX hooks then
 forward calls untouched. The direct host owns core settings; the add-on does not apply or save its
 local core settings and shows the effective settings as a read-only mirror. Shell-only ini settings
-and diagnostics continue to load normally. No shipped product uses this protocol in 2026.9.1; public
+and diagnostics continue to load normally. No shipped product uses this protocol yet; public
 OptiScaler builds do not signal the event, and the add-on warps their NR as described above.
 
 `OptiScalerTakeover` and `ForceBridgeWarpOff` in `[PeripheralWarp]` or `[OptimizerFPS]`
@@ -454,7 +466,7 @@ The build deployed to games is the static-CRT one, `out/build/x64-mt` — see [B
 
 ### Model passes
 
-The Neural Rendering tab includes **Model passes** (1–3, default 1) and **Spread passes over frames**
+The tab's **Model passes** group has **Model passes** (1–3, default 1) and **Spread passes over frames**
 (default on). Their `[OptimizerFPS]` keys are `ModelPasses` and `SpreadPasses`. Each additional pass
 runs an independent model on the previous pass's output. With temporal mode on, spreading runs one
 stage per host frame, carries the previous completed result until the new cycle finishes, and raises
@@ -466,7 +478,8 @@ are expensive: an earlier OptiScaler build measured 13–15 ms per extra evaluat
 a second model and another ~0.5 GB for spread carry buffers. Gains fade after pass 2, and each pass
 can darken the image by about 1%. A 007 First Light test with that build exceeded VRAM capacity at two passes
 and reached 0.4–0.6 seconds per frame. These observations are also in the tooltips. Since 2026.10 the add-on's own
-textures for two spread passes take about 1175 MiB less at 4K than in 2026.9.2 (bench), on top of the second model.
+textures for two spread passes take about 1175 MiB less at 4K than in 2026.9.2 (measured in the test scene), on top
+of the second model. In a 4K test, 2026.10.2 spread passes cost about 2 ms per frame more than both passes in one
+frame ([CHANGELOG](../CHANGELOG.md#2026102)).
 
-See [local bench report](../tools/bench/MODEL_PASSES_26_28.md); this port has not been installed into or
-tested in games.
+See [the model passes measurements](../tools/bench/MODEL_PASSES_26_28.md).

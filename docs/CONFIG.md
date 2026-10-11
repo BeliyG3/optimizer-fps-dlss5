@@ -24,6 +24,24 @@ and `2` forces pixel. Start with `0`; forcing an unsupported path can leave the
 frame untouched. The Diagnostics tree in the tab and `ReShade.log` explain why a
 frame was passed through. `DebugTiming` enables timing queries; other `Debug*`
 keys are for specific investigations and may need a restart.
+`DebugTemporalDumpAcc=1` (temporal mode 1) writes each full pass's model motion and motion chain to `ofps_acc_<eval>.bin` beside the game's executable (`core/frame/acc_dump.h`).
+`DebugTemporalMarkerRule` (0..4, default 0 = the rule `TemporalModelMarker` selects) narrows where the model is told a pixel has no history: 1 only off-screen, non-finite and depth failures mark; 2 the colour test marks only where the depth mismatch is at least the tolerance; 3 and 4 are 1 and 2 marking only failures with at least 12 of the 25 pixels of their 5x5 neighbourhood failing too (`PwTMarkerReason` in `core/shaders/temporal_residual.hlsli`).
+`DebugTemporalMarkerNeighbours` (0..25, default 0 = 12) is that threshold for rules 3 and 4: how many of the 25 pixels, the failing one included, must fail.
+Both override `TemporalModelMarker` when above 0: its `1` is rule 0, its `2` rule 4 with 8 neighbours, its `0` the plain chain (as `DebugTemporalNoModelMotion=1`).
+A debug rule replaces the setting's neighbour count too: `DebugTemporalMarkerRule=4` under `TemporalModelMarker=2` uses 12 (the `DebugTemporalMarkerNeighbours` default), not 8; and a debug rule above 0 turns the markers on even under `TemporalModelMarker=0`.
+`DebugTemporalCarryProbe` (0..7, default 0; for diagnostics only) adds bits: 1 = temporal mode 1 takes the host's motion as the finished chain (in the project's test scene, that motion is the offset to the last full pass: no accumulation, link test, Refine or expectation; other modes ignore it and log once); 2 = the reprojection accepts every in-frame pixel; 4 = the residual is fetched bilinearly instead of Catmull-Rom.
+`DebugTemporalDumpAccFrom` (0..1000000, default 0 = off; for diagnostics only) dumps the chain on every evaluate from that one to 63 evaluates later (with `DebugTemporalDumpAcc=1`, temporal mode 1), carried frames included: their model plane repeats the chain and their reasons are 0; full passes outside the window are not dumped.
+`DebugTemporalChainRule` (0..4, default 0; for diagnostics only) decides where the carry's motion chain starts afresh from this frame's vector (`PSAccumulate` in `core/shaders/temporal_residual.hlsli`; only where the chain's end is in the frame and the expected depth is known, as before): 0 = a depth mismatch above twice the tolerance or a colour change (the classic rule);
+1 = never; 2 = a depth mismatch above twice the tolerance, or a colour change where the mismatch is at least the tolerance; 3 = rule 2, and a failing pixel restarts only where at least 8 of the 25 pixels of its 5x5 neighbourhood fail rule 2 too (without the `temporal_LinkFail_cs.dxbc` pass rule 3 runs as rule 2 and logs once); 4 = depth only. The background mode's pending chain keeps no link test; the host-motion chain (`DebugTemporalCarryProbe` value 1) overrides every rule.
+`DebugTemporalCarryChainRule` (0..6, default 0; for diagnostics only) adds a second chain, the carry chain, that restarts by that rule (1..4: the values of `DebugTemporalChainRule`), while `DebugTemporalChainRule` keeps driving the main chain.
+Two more tell a change of a whole area (a reflection, a light) from the speckled changes of swaying foliage: 5 = a depth mismatch above twice the tolerance, or a colour change where at least 18 of the 25 pixels of its 5x5 neighbourhood change colour too, whatever the depth;
+6 = rule 5, and a restart where last frame's `Refine` moved the main chain one way over the 5x5 neighbourhood (a mean correction of at least 0.5 native pixels and at least 0.7 of the mean correction's length: the picture moved against the game's motion).
+The thresholds are `PW_TEMPORAL_COHERENT_*` in `core/shaders/temporal_layout.h`. Both chains run in one pass each (`AccumulatePair`, which also takes the 5x5 votes, and `RefinePair`, `core/shaders/temporal_chain_pair.hlsli`); without those binaries there is no carry chain (logged once).
+With `DebugTemporalDumpAcc=1` and a carry rule the dump uses format version 3 (`OFAC` v3): a fourth plane holds the chain the carried frames reproject along (the main chain on a full pass, which records no carry chain).
+The carry chain lives on the main machine only and feeds the carried frames it shows (the reprojection, and so its cells and compose; the background mode's carried frames included). The hidden spread stages keep the main chain alone: their carried frame is the next stage's model input. A full pass records no carry chain.
+The main chain feeds everything a full pass hands the model (its vectors and no-history markers), the history link, the residual blend, the statistics and the chain dump's chain plane (`DebugTemporalDumpAcc`: the model's view).
+Both restart on a full pass; where the carry chain has none of its own (an adopted background pass, an optical-flow seed, the key just turned on) it continues from the main chain. The pending chain is unchanged, and the host-motion chain (`DebugTemporalCarryProbe` value 1) sets both. 0 = no carry chain: nothing extra is created or recorded.
+Both keys override `TemporalChainRule` when either is above 0 (`core/temporal/chain_rule.h`): both chains then follow the two keys as before the setting existed, so `DebugTemporalChainRule=3` alone is one chain by rule 3 even under the default. With both at 0 the setting decides: its `1` is main rule 0 with carry rule 5, its `0` main rule 0 without a carry chain.
 
 An older `[PeripheralWarp]` section is only an input for migration. `Update`
 copies known keys to `[OptimizerFPS]` when the current section is absent. If
@@ -86,9 +104,26 @@ reset state.
 
 With a temporal mode, the layout also decides whether carried frames are reprojected at the model's resolution
 (`TemporalGrid=1`, the default): only when the model gets about 80 % or less of the native resolution on both axes,
-for example Peripheral with Global scale below 80 %. The Quality and Balanced presets above stay at native
+for example Peripheral with Global scale at 80 % or less. The Quality and Balanced presets above stay at native
 resolution. `TemporalGrid=0` keeps carried frames exactly as before; see
 [TEMPORAL_MODES.md](TEMPORAL_MODES.md#carried-frames-at-the-models-resolution).
+
+Carried frames also give the sky a smooth estimate of the model's sky edit (`TemporalSkyField=1`, the default), so
+fast turns leave no pale patches on it. The sky is what lies exactly at the far plane of the game's depth buffer; a
+host that hands over linear depth should switch it off (`TemporalSkyField=0`, carried frames exactly as before); see
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md#smooth-sky-in-carried-frames).
+
+Full passes tell the model where a pixel has no history with the narrow rule (`TemporalModelMarker=2`, the default),
+which keeps the history of swaying foliage and still marks real disocclusions. `TemporalModelMarker=1` is the rule
+before 2026.10.2 and `0` turns the markers off; see
+[TEMPORAL_MODES.md](TEMPORAL_MODES.md#model-motion-markers).
+
+Carried frames follow a chain of their own that keeps following a surface through scattered colour flicker
+(`TemporalChainRule=1`, Coherent, the default), so moving shots smear and flicker less on foliage; the model's own
+frames are unchanged. `TemporalChainRule=0` (Classic) is one chain as in earlier releases: use it if moving shots
+look worse than before, or to compare; see [TEMPORAL_MODES.md](TEMPORAL_MODES.md#carry-chain).
+On a host that seeds the chain from optical flow every frame, Coherent has practically no effect (harmless): both
+chains start from the seeded chain each frame, so the carry rule only decides that frame's last link.
 
 The add-on's own ini keys, including these and the temporal cadence, are listed in
 [RESHADE_ADDON.md](RESHADE_ADDON.md).

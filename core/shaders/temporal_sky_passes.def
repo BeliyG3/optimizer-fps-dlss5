@@ -1,0 +1,6 @@
+// The sky field's passes (temporal_sky.hlsli): the columns of temporal_passes.def. Optional, unlike those rows:
+// without all four binaries the field is off and carried frames keep the ordinary carry on the sky.
+PW_TEMPORAL_PASS(SkyDown, skyDown, 0x00044, 1, Low)
+PW_TEMPORAL_PASS(SkyPull, skyPull, 0x00004, 1, Field)
+PW_TEMPORAL_PASS(SkyPush, skyPush, 0x00006, 1, Field)
+PW_TEMPORAL_PASS(SkyNow, skyNow, 0x00020, 1, Low)

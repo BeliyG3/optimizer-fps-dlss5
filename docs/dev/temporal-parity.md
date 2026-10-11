@@ -6,13 +6,16 @@
 
 | Возможность | OptiScaler fork | ReShade add-on | Причина различий |
 |---|---|---|---|
-| Temporal-исполнение | Compute | Compute | Общие entry points, t0..t19, u0/u1, b0/b1 |
+| Temporal-исполнение | Compute | Compute | Общие entry points, t0..t21, u0/u1, b0/b1 |
 | Модель раз в N кадров, перенос residual | Да | Да | Отдельные host scheduler |
 | Expected depth вдоль цепочки | Да | Да | В фоне add-on отдельно ведёт текущую и pending-цепочки |
 | Refine накопленной цепочки | Да | Да | Pending-цепочка add-on ещё не имеет принятого residual; она уточняется после принятия |
 | Проверенные motion vectors для истории модели | Да | Да | Отбрасывают связи с неверной поверхностью |
 | Два предыдущих полных прохода | Да | Да | Цвет/residual — 1/3, depth/link — 1/6 каждой оси; около 38 МиБ при 4K |
 | Low residual, Cells, Compose | Да | Да | Радиусы/цветовые допуски остаются настройками адаптера |
+| Поле неба (TemporalSkyField, 2026.10.2) | Нет | Да | Копия shader в fork старше; при синхронизации fork нужны t20 (null view = выкл.), t21 (доля неба кадра, вес поля), проход SkyNow и 10-я строка b0 |
+| Снимки глубины со своей рамкой (PwTDepthFRect, 2026.10.2) | Нет | Да | Глубина в t6 читается через рамку своего кадра (динамическое разрешение). При синхронизации fork нужна 11-я строка b0; нули в ней дают прежнее поведение |
+| Цепочка переноса (TemporalChainRule) | Нет | Да | Копия shader в fork старше; что нужно fork при синхронизации SDK — [ниже](#цепочка-переноса-при-синхронизации-fork) |
 | Фазирование нового полного прохода | До трёх кадров | До трёх кадров | Apply и перенос используют одинаковую долю |
 | Фазирование в фоне | Нет фонового scheduler | Включено автоматически | Старое отключение по D3D11-стенду удалено |
 | Прерывание незавершённого фазирования | Не требуется при фиксированном sync N | Замораживает предыдущую смесь | Новое принятие может прийти раньше окончания ramp |
@@ -24,6 +27,20 @@
 | Ratio-domain scale и HDR luminance band | scale=0.01 и band | scale=0, band выключен | Fork получает linear HDR, renodx перед NR переводит кадр в display-referred пространство |
 | Формат root parameters | Descriptor table с CBV | Root constants + SRV/UAV table | Shader register ABI одинаковый |
 | D3D11 host | Через маршруты fork | Через renodx D3D11→D3D12 bridge | Temporal-машина add-on всё равно исполняется в D3D12 |
+
+### Цепочка переноса при синхронизации fork
+
+При синхронизации SDK fork нужны:
+
+- новый `core/shaders/temporal_chain_pair.hlsli`;
+- `PW_TEMPORAL_PAIR_*` и `PW_TEMPORAL_COHERENT_*` в `temporal_layout.h`;
+- null view R8_UINT в t1 у Accumulate: строка Accumulate в `temporal_passes.def` теперь читает t1 (маска LinkFail);
+- `PwTSky.yzw = 0` на всех проходах: y — accept-all на Reproject, z — правило цепочки на Accumulate, w — правило
+  цепочки переноса на AccumulatePair; нули дают прежнее поведение;
+- размер группы AccumulatePair 16×16 (`PW_TEMPORAL_PAIR_THREADS_*`, не 16×8 остальных проходов);
+- `RefinePairModel` — вариант RefinePair с `PW_T_MODEL_GRID` для хоста с сеткой модели;
+- новые строки `temporal_marker_passes.def`: `LinkFail`, `AccumulatePair`, `RefinePair` (необязательные: без них
+  нет цепочки переноса, перенос идёт по основной цепочке).
 
 Математика общая; настройки fork для шумного linear HDR не переносятся автоматически на
 display-referred вход add-on. Успех компиляции и совпадение ABI не заменяют сравнение изображений.

@@ -29,13 +29,23 @@ struct Tracked {
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
 };
 
+// An NR feature's own history: the frame (Ctx().evalCounter) of its last successful evaluate; 0 = none on record.
+struct ModelHistory {
+    void *handle = nullptr;
+    std::uint64_t frame = 0;
+};
+
 struct FeatureState {
     std::unique_ptr<SpreadState> spread;
     int activeModelStage = -1;
     void *passHandles[2] = {};
     int passesRequested = 1;
     int passesReady = 1;
-    bool passReset[2] = {true, true};
+    bool passReset[2] = {true, true}; // a newly created extra pass: its first evaluate resets
+    // The NR history rule (model_passes.h): [0] the host's real feature, [1..2] the extra passes.
+    ModelHistory histories[3];
+    std::uint64_t thisEvaluate = 0, previousEvaluate = 0; // Ctx().evalCounter of this feature's evaluates
+    std::uint64_t motionAnchor = 0, motionAnchorEvaluate = 0; // SetMotionAnchor: the frame, and the evaluate it is for
     ID3D12Resource *passStaging = nullptr;
     D3D12_RESOURCE_STATES passStagingState = D3D12_RESOURCE_STATE_COMMON;
     void *realHandle = nullptr;

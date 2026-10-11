@@ -23,7 +23,11 @@ void OptionChecks()
     Require(defaults.host=="ngx" && defaults.coreMode==2 && defaults.coreTemporal==0 && defaults.coreWarpPath==0,"Core defaults");
     Require(!defaults.coreStateRebind && Parse({"bench","--core-state-rebind"}).coreStateRebind,
             "explicit state rebind option");
-    Require(!defaults.coreFlow && Parse({"bench","--core-flow"}).coreFlow,"core optical flow option");
+    Require(!defaults.coreFlow && Parse({"bench","--core-flow","--host","core","--nr","native","--upscaler","sr"}).coreFlow,
+            "core optical flow option");
+    // Optical flow exists only in the direct core host; the add-on host takes motion from the frame.
+    Require(Rejected({"bench","--core-flow"}) && Rejected({"bench","--core-flow","--host","ngx","--nr","native"}),
+            "--core-flow without --host core accepted");
     for (int mode=0; mode<=2; ++mode) for (int temporal=0; temporal<=1; ++temporal) {
         const auto core=Parse({"bench","--host","core","--nr","native","--upscaler","sr",
             "--core-mode",std::to_string(mode),"--core-temporal",std::to_string(temporal)});

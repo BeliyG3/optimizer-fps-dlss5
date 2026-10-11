@@ -1,7 +1,7 @@
 # Temporal modes
 
-The "Temporal" group has four settings; everything else in the machine is fixed at values verified
-on the bench and in game.
+The "Temporal" group has seven settings. Everything else in the temporal machine is fixed at values verified
+in the project's test scenes and in games.
 
 * **Temporal mode** (`TemporalMode`) — `Every frame`; `Interpolate: full NR every N-th frame (sync)`;
   `Interpolate: model in the background (async)`.
@@ -9,6 +9,10 @@ on the bench and in game.
 * **GPU frames queued ahead** (`TemporalMaxQueue`, background only, default 2).
 * **Carry at the model's resolution** (`TemporalGrid`, default on) — see
   [Carried frames at the model's resolution](#carried-frames-at-the-models-resolution).
+* **Smooth sky in carried frames** (`TemporalSkyField`, default on) — see
+  [Smooth sky in carried frames](#smooth-sky-in-carried-frames).
+* **Model motion markers** (`TemporalModelMarker`, default Narrow) — see [Model motion markers](#model-motion-markers).
+* **Carry chain** (`TemporalChainRule`, default Coherent) — see [Carry chain](#carry-chain).
 
 Fixed: depth tolerance 0.05, color tolerance 0.08 (chromaticity first, luma at twice the
 tolerance), no motion limit, hole fill on, Catmull-Rom resampling on, warp base on, residual age
@@ -60,8 +64,9 @@ model-motion validation are enabled by default. Background phase-in is off: repe
 with free GPU memory favoured the mean error of the two-feature combination. An explicit
 `DebugTemporalPhaseIn=-1` enables the automatic adoption fade over `min(N-1, 3)` carried frames;
 a positive value selects its length. Synchronous phase-in remains automatic by default.
-`DebugTemporalNoModelMotion=1` disables validation in both modes; an absent key enables it.
-See [the background bench report](../tools/bench/BACKGROUND_26_28.md).
+`DebugTemporalNoModelMotion=1` disables validation in both modes, as `TemporalModelMarker=0` does; an absent key
+enables it (see [Model motion markers](#model-motion-markers)).
+See [the background mode measurements](../tools/bench/BACKGROUND_26_28.md).
 
 Two accumulation chains run: one to the residual on screen, one to the frame of the pass in flight.
 The second becomes the first when a pass is adopted, which is what gives each new pass the
@@ -110,6 +115,95 @@ Global scale 100, stay at native resolution. The price is a slightly softer edit
 edges; untick the checkbox (`TemporalGrid=0`) and carried frames are exactly as before. The log says
 `temporal grid WxH for native WxH (model WxH)` whenever the grid size changes (`0x0` = native, which is also what
 it says for an older install that lacks the three grid shader files: it keeps the native reprojection).
+
+## Smooth sky in carried frames
+
+A carried frame takes the model's edit of a pixel from where its motion chain says the pixel was at the last full
+pass. On a flat sky that chain is unreliable: the vectors of a featureless sky are zero or arbitrary, sky that entered
+from the screen edge had no source at all, and the depth and color tests pass sky against sky. Before 2026.10.2, the
+sky then collected pieces of the model's sky edit from the wrong places during a fast turn: pale patches and mosaics
+that grew until the next full pass.
+
+**Smooth sky in carried frames** (`TemporalSkyField=1`, on by default): every full pass also averages its edit over
+the pixels that lie exactly at the far plane of the depth buffer (1.0, or 0.0 with reversed depth) on a coarse grid,
+and fills the cells without sky from their neighbours. A carried frame gives each far-plane pixel that smooth edit at
+the pixel's own screen position instead of the carried one; every other pixel is untouched. A full frame fading in a
+new pass shows the new pass's sky directly. The sky's finest detail on carried frames is traded for smoothness; full
+frames still show the model's own sky. The rule only runs when at least 2 % of the full pass was sky, and not on menu
+frames. Each carried frame also measures its own share of sky on the same coarse grid and compares it with the full
+pass's: when the pass saw much less sky than the frame shows (the camera leaves a building, a doorway opens), the
+pass's few sky cells would paint their edit, often darkened beside the wall they border, over all the newly revealed
+sky. Up to a ratio of 0.35 the frame keeps the ordinary carry on the sky, from 0.60 it takes the smooth edit whole,
+and in between it blends the two; a turn on the spot keeps the ratio near 1. The measurement is nine small passes
+per carried frame that uses the field. A game that draws its sky at another depth keeps the ordinary carry. A host
+that hands over linear depth should untick the checkbox (`TemporalSkyField=0`, carried frames exactly as before). An
+install without the four `temporal_Sky*_cs.dxbc` files keeps the ordinary carry and says so once in the log.
+
+## Model motion markers
+
+On a full pass the model gets the displacement back to its own last pass, and every pixel whose chain does not end
+on the same surface in that pass's frame is marked as having no history, so the model does not blend its old picture
+of an occluder into the wall it uncovered. The classic rule also marked every pixel whose colour no longer matched.
+Swaying foliage fails that colour test almost everywhere, so whole trees lost their history on every pass and
+shimmered from pass to pass.
+
+**Model motion markers** (`TemporalModelMarker`, Temporal group, both temporal modes):
+
+* `2` **Narrow** (the default since 2026.10.2): a colour mismatch marks a pixel only where the depth also disagrees by
+  at least the disocclusion tolerance, and a failing pixel stays marked only when at least 8 of the 25 pixels of its
+  5×5 neighbourhood fail too. Scattered leaf flicker keeps its history; a person walking past a wall is still marked.
+* `1` **Classic**: the rule before 2026.10.2, bit for bit.
+* `0` **Off**: the model gets the chain without markers, as with `DebugTemporalNoModelMotion=1`; in the background
+  mode it also drops the kick's model-motion validation, as that key did.
+
+Measured in the project's D3D12 test scene at N = 8 against the model on every frame (a rasterized garden with
+wind): on full passes the foliage gains 5.9 dB over Classic with the camera held still, 0.86 dB in a slow pan and
+1.23 dB along a walking route, and the carried frames between them gain too. The ghosting checks (people walking past
+walls and a lit door, path traced and rasterized) stay within 0.17 dB of Classic; a forward walk through the lab scene
+at N = 4 scores 0.22 dB lower. A full pass at 4K costs the same as with Classic or less: the marker is two small
+passes, a fail mask and the neighbour count.
+
+The background mode was checked separately at N = 8, in the same test scene with RenoDX as the NR consumer (the
+test scene's own NR host registers no queue, so it falls back to the synchronous mode; the garden goes through
+DLSS SR at full resolution, which RenoDX needs), against the model on every frame of the same build
+(`tools/bench12/foliage/run_background.py`). Narrow is better than Classic in both scenes, and repeated runs are
+byte-identical:
+
+| Scene (background, N = 8) | Classic | Narrow |
+|---|---:|---:|
+| Lab path traced, follow camera: PSNR / MAD | 29.21 dB / 4.88 | 29.82 dB / 4.28 |
+| Garden with wind, held: foliage PSNR / MAD | 23.06 dB / 12.88 | 25.83 dB / 9.35 |
+| Garden with wind, held: rest PSNR / MAD | 30.24 dB / 5.04 | 30.99 dB / 4.21 |
+
+`DebugTemporalMarkerRule` and
+`DebugTemporalMarkerNeighbours` override the setting for diagnostics ([CONFIG.md](CONFIG.md)).
+
+## Carry chain
+
+A carried frame follows each pixel back to the last full pass along a chain of the game's motion vectors, one link
+per frame. Where a link no longer lands on the same surface, the chain starts afresh from that frame's vector. The
+classic rule restarted it on every colour change too, and while the camera moves, swaying leaves and glints change
+colour almost everywhere: the chain kept restarting, and the model's edit slid and flickered on foliage.
+
+**Carry chain** (`TemporalChainRule`, Temporal group, both temporal modes):
+
+* `1` **Coherent** (the default): the carried frames follow a chain of their own that restarts on a depth change, or
+  where a whole patch changes colour (at least 18 of the 25 pixels of a 5×5 neighbourhood, a reflection or a light),
+  but not on scattered colour flicker. The model itself keeps the classic chain, so the full passes are exactly as
+  before.
+* `0` **Classic**: one chain for both, the rule of earlier releases, bit for bit.
+
+Measured in the project's D3D12 test scene at N = 8 against the model on every frame (rasterized scenes: the
+combined camera path and a slow pan in a windy garden, two flights through the lab, a door scene for ghosting): the
+carried frames gain 0.2–0.3 dB in the garden and lose nothing anywhere else (the worst view +0.02 dB), flicker drops
+by up to 5 % on the whole frame and 6–8 % on foliage, ghosting does not change, and the background mode gains 0.2 dB
+on the combined camera path. The model's own frames are byte-identical to Classic. The second chain costs 0.15 ms per
+frame at 4K and video memory for two more textures the size of the game's motion vectors (4 bytes a pixel): about
+16 MB when the vectors are 1080p, about 66 MB at 4K. Switching to Classic stops using them, but the memory is only
+given back when the temporal mode's resources are created again (a resolution change, a restart of the game).
+
+Switch it to Classic if moving shots show smearing that Classic does not have, or to compare with earlier releases.
+`DebugTemporalChainRule` and `DebugTemporalCarryChainRule` override the setting for diagnostics ([CONFIG.md](CONFIG.md)).
 
 ## The warped base
 

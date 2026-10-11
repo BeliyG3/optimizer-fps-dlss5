@@ -38,7 +38,8 @@ add_test(NAME ofps_sdk_fixtures COMMAND ofps_sdk_fixture_tests)
 
 # The add-on's ini schema (hosts/reshade/addon/ini_schema.h) without ReShade: no reshade.hpp, no
 # imgui, just the schema bound to an in-memory ini.
-add_executable(test_settings_schema_tests test_settings_schema.cpp test_ini_migration.cpp)
+add_executable(test_settings_schema_tests test_settings_schema.cpp test_ini_migration.cpp test_settings_marker_rule.cpp
+               test_settings_chain_rule.cpp)
 target_link_libraries(test_settings_schema_tests PRIVATE OptimizerFps::SdkCore)
 target_include_directories(test_settings_schema_tests PRIVATE "${PROJECT_SOURCE_DIR}")
 target_compile_features(test_settings_schema_tests PRIVATE cxx_std_20)
@@ -133,6 +134,7 @@ if(WIN32 AND OFPS_BUILD_D3D_ADAPTERS AND OFPS_COMPILE_SHADERS)
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal.hlsl"
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_mapping.hlsli"
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_reproject.hlsli"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal_sky.hlsli"
         VERBATIM)
     add_custom_target(ofps_depth_shader_binary DEPENDS "${OFPS_DEPTH_SHADER_TEST_BIN}")
     add_executable(ofps_depth_shader_tests test_depth_shader.cpp)
@@ -152,6 +154,7 @@ if(WIN32 AND OFPS_BUILD_D3D_ADAPTERS AND OFPS_COMPILE_SHADERS)
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_mapping.hlsli"
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_residual.hlsli"
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_reproject.hlsli"
+            "${PROJECT_SOURCE_DIR}/core/shaders/temporal_sky.hlsli"
             "${PROJECT_SOURCE_DIR}/core/shaders/temporal_layout.h"
             "${PROJECT_SOURCE_DIR}/sdk/shaders/fullscreen.hlsli"
         VERBATIM)
@@ -175,6 +178,27 @@ if(WIN32 AND OFPS_BUILD_D3D_ADAPTERS AND OFPS_COMPILE_SHADERS)
     target_link_libraries(ofps_temporal_grid_shaders_tests PRIVATE d3d11)
     add_test(NAME ofps_temporal_grid_shaders
         COMMAND ofps_temporal_grid_shaders_tests "${OFPS_SHADER_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_pre_grid")
+    # The sky field (TemporalSkyField): its own passes and the frame passes with the field on WARP, Reproject,
+    # Compose, ComposeGrid and Apply against master's (fixtures/temporal_pre_sky) with the field off, and the field
+    # weighed by the carried frame's share of sky against master's and round 1's (fixtures/temporal_sky_round1).
+    add_executable(ofps_temporal_sky_shaders_tests test_temporal_sky_shaders.cpp test_temporal_sky_compose.cpp
+        test_temporal_sky_master.cpp test_temporal_sky_gate.cpp temporal_sky_scenes.h temporal_grid_scenes.h temporal_cs_harness.h)
+    add_dependencies(ofps_temporal_sky_shaders_tests ofps_shaders)
+    target_compile_features(ofps_temporal_sky_shaders_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_sky_shaders_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    target_link_libraries(ofps_temporal_sky_shaders_tests PRIVATE d3d11)
+    add_test(NAME ofps_temporal_sky_shaders
+        COMMAND ofps_temporal_sky_shaders_tests "${OFPS_SHADER_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_pre_sky"
+                "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_sky_round1")
+    # Why a pixel gets the model's "no history" marker (PwTMarkerReason): CSMarkerReason against CSModelMotion on WARP, and
+    # the two-pass V3 (CSMarkerFail first) against the inline route and 672eb87's single-pass passes (fixtures).
+    add_executable(ofps_temporal_marker_reason_tests test_temporal_marker_reason.cpp temporal_cs_harness.h)
+    add_dependencies(ofps_temporal_marker_reason_tests ofps_shaders)
+    target_compile_features(ofps_temporal_marker_reason_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_marker_reason_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    target_link_libraries(ofps_temporal_marker_reason_tests PRIVATE d3d11)
+    add_test(NAME ofps_temporal_marker_reason COMMAND ofps_temporal_marker_reason_tests "${OFPS_SHADER_OUTPUT_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_marker_single_pass")
     add_executable(ofps_sdk_d3d11_smoke test_d3d11.cpp
         d3d11_cases_adapter.cpp d3d11_cases_fixtures.cpp)
     target_link_libraries(ofps_sdk_d3d11_smoke PRIVATE OptimizerFps::SdkD3D11)
@@ -229,6 +253,12 @@ target_include_directories(ofps_submission_identity_tests PRIVATE "${PROJECT_SOU
 target_compile_features(ofps_submission_identity_tests PRIVATE cxx_std_20)
 target_compile_options(ofps_submission_identity_tests PRIVATE /W4 /WX /EHsc /permissive-)
 add_test(NAME ofps_submission_identity COMMAND ofps_submission_identity_tests)
+add_executable(ofps_unseen_submission_tests test_unseen_submission.cpp)
+target_link_libraries(ofps_unseen_submission_tests PRIVATE ofps_core d3d12 dxgi)
+target_include_directories(ofps_unseen_submission_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+target_compile_features(ofps_unseen_submission_tests PRIVATE cxx_std_20)
+target_compile_options(ofps_unseen_submission_tests PRIVATE /W4 /WX /EHsc /permissive-)
+add_test(NAME ofps_unseen_submission COMMAND ofps_unseen_submission_tests)
 add_executable(ofps_gpu_pools_tests test_gpu_pools.cpp test_compute_pipeline.cpp test_gpu_queue_waits.cpp
     test_temporal_roles.cpp)
 target_link_libraries(ofps_gpu_pools_tests PRIVATE ofps_core d3d12 dxgi d3dcompiler)
@@ -254,6 +284,111 @@ if(TARGET ofps_shaders)
     add_test(NAME ofps_temporal_grid COMMAND ofps_temporal_grid_tests "${OFPS_SHADER_OUTPUT_DIR}")
 else()
     add_test(NAME ofps_temporal_grid COMMAND ofps_temporal_grid_tests)
+endif()
+# The passes that read t6 built with PW_T_DEPTHF_SHARED_RECT: every depth through the current frame's sub-rect, as
+# before 2026.10.2 (instruction for instruction 13cc38f's). The depth-rect and sky tests compare against them.
+if(TARGET ofps_shaders)
+    set(OFPS_DEPTHF_SHARED_DIR "${CMAKE_CURRENT_BINARY_DIR}/temporal_depthf_shared")
+    file(MAKE_DIRECTORY "${OFPS_DEPTHF_SHARED_DIR}")
+    set(_ofps_depthf_outputs)
+    foreach(_ofps_pass IN ITEMS Accumulate Expect History ModelMotion Refine RefineModel Reproject ReprojectGrid ResidualOld
+                                Residual SkyDown Stats)
+        set(_ofps_entry "CS${_ofps_pass}")
+        set(_ofps_defines /D PW_T_DEPTHF_SHARED_RECT=1)
+        if(_ofps_pass STREQUAL "RefineModel")
+            set(_ofps_entry CSRefine)
+            list(APPEND _ofps_defines /D PW_T_MODEL_GRID=1)
+        endif()
+        set(_ofps_out "${OFPS_DEPTHF_SHARED_DIR}/temporal_${_ofps_pass}_cs.dxbc")
+        add_custom_command(OUTPUT "${_ofps_out}"
+            COMMAND "${OFPS_FXC_EXECUTABLE}" /nologo /Ges /WX /O3 /T cs_5_0 /E ${_ofps_entry} ${_ofps_defines}
+                /I "${PROJECT_SOURCE_DIR}/sdk/shaders" /I "${PROJECT_SOURCE_DIR}/core/shaders"
+                /Fo "${_ofps_out}" "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl"
+            DEPENDS "${PROJECT_SOURCE_DIR}/core/shaders/temporal_cs.hlsl"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal.hlsl"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal_mapping.hlsli"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal_residual.hlsli"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal_reproject.hlsli"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal_sky.hlsli"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal_chain_pair.hlsli"
+                "${PROJECT_SOURCE_DIR}/core/shaders/temporal_layout.h"
+                "${PROJECT_SOURCE_DIR}/sdk/shaders/fullscreen.hlsli"
+            VERBATIM)
+        list(APPEND _ofps_depthf_outputs "${_ofps_out}")
+    endforeach()
+    add_custom_target(ofps_depthf_shared_binaries DEPENDS ${_ofps_depthf_outputs})
+endif()
+# TemporalSkyField through the machine on D3D12 WARP: whole sequences against master's passes with the setting off.
+if(TARGET ofps_shaders)
+    add_executable(ofps_temporal_sky_tests test_temporal_sky.cpp test_temporal_sky_machine.cpp test_temporal_sky_background.cpp
+        temporal_background_driver.h temporal_d3d12_fixture.h)
+    target_link_libraries(ofps_temporal_sky_tests PRIVATE ofps_core d3d12 dxgi)
+    target_compile_features(ofps_temporal_sky_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_sky_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_dependencies(ofps_temporal_sky_tests ofps_shaders ofps_depthf_shared_binaries)
+    add_test(NAME ofps_temporal_sky
+        COMMAND ofps_temporal_sky_tests "${OFPS_SHADER_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_pre_sky"
+                "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_sky_round1" "${OFPS_DEPTHF_SHARED_DIR}")
+endif()
+# The depth snapshots keep their own sub-rect (PwTDepthFRect, 2026.10.2): machine sequences on WARP against the
+# shared-rect passes above.
+if(TARGET ofps_shaders AND TARGET ofps_core)
+    add_executable(ofps_temporal_depth_rect_tests test_temporal_depth_rect.cpp temporal_background_driver.h temporal_d3d12_fixture.h)
+    target_link_libraries(ofps_temporal_depth_rect_tests PRIVATE ofps_core d3d12 dxgi)
+    target_compile_features(ofps_temporal_depth_rect_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_depth_rect_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_dependencies(ofps_temporal_depth_rect_tests ofps_shaders ofps_depthf_shared_binaries)
+    add_test(NAME ofps_temporal_depth_rect
+        COMMAND ofps_temporal_depth_rect_tests "${OFPS_SHADER_OUTPUT_DIR}" "${OFPS_DEPTHF_SHARED_DIR}")
+    # The two-pass V3 marker (MarkerFail, optional) in the machine, sync and background, against the inline route.
+    add_executable(ofps_temporal_marker_machine_tests test_temporal_marker_machine.cpp temporal_background_driver.h temporal_d3d12_fixture.h)
+    target_link_libraries(ofps_temporal_marker_machine_tests PRIVATE ofps_core d3d12 dxgi)
+    target_compile_features(ofps_temporal_marker_machine_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_marker_machine_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_dependencies(ofps_temporal_marker_machine_tests ofps_shaders)
+    add_test(NAME ofps_temporal_marker_machine COMMAND ofps_temporal_marker_machine_tests "${OFPS_SHADER_OUTPUT_DIR}")
+    # DebugTemporalCarryProbe (bench attribution): the rows, the gating and the oracle chain (acc = mv) in the machine.
+    add_executable(ofps_temporal_carry_probe_tests test_temporal_carry_probe.cpp temporal_background_driver.h temporal_chain_fixture.h
+                   temporal_d3d12_fixture.h)
+    target_link_libraries(ofps_temporal_carry_probe_tests PRIVATE ofps_core d3d12 dxgi)
+    target_include_directories(ofps_temporal_carry_probe_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_temporal_carry_probe_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_carry_probe_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_dependencies(ofps_temporal_carry_probe_tests ofps_shaders)
+    add_test(NAME ofps_temporal_carry_probe COMMAND ofps_temporal_carry_probe_tests "${OFPS_SHADER_OUTPUT_DIR}")
+    # DebugTemporalChainRule (phase 3 step 1): the row and where each rule restarts the chain (LinkFail's 5x5 vote for rule 3).
+    add_executable(ofps_temporal_chain_rule_tests test_temporal_chain_rule.cpp temporal_chain_fixture.h temporal_d3d12_fixture.h)
+    target_link_libraries(ofps_temporal_chain_rule_tests PRIVATE ofps_core d3d12 dxgi)
+    target_include_directories(ofps_temporal_chain_rule_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_temporal_chain_rule_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_chain_rule_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_dependencies(ofps_temporal_chain_rule_tests ofps_shaders)
+    add_test(NAME ofps_temporal_chain_rule COMMAND ofps_temporal_chain_rule_tests "${OFPS_SHADER_OUTPUT_DIR}")
+    # DebugTemporalCarryChainRule 5/6 and the merged chain passes (phase 3 step 1c): byte identity with the single chain.
+    add_executable(ofps_temporal_carry_rules_tests test_temporal_carry_rules.cpp temporal_chain_fixture.h temporal_d3d12_fixture.h)
+    target_link_libraries(ofps_temporal_carry_rules_tests PRIVATE ofps_core d3d12 dxgi)
+    target_include_directories(ofps_temporal_carry_rules_tests PRIVATE "${PROJECT_SOURCE_DIR}")
+    target_compile_features(ofps_temporal_carry_rules_tests PRIVATE cxx_std_20)
+    target_compile_options(ofps_temporal_carry_rules_tests PRIVATE /W4 /WX /EHsc /permissive-)
+    add_dependencies(ofps_temporal_carry_rules_tests ofps_shaders)
+    add_test(NAME ofps_temporal_carry_rules COMMAND ofps_temporal_carry_rules_tests "${OFPS_SHADER_OUTPUT_DIR}")
+endif()
+# DebugTemporalDumpAcc's OFAC v2/v3 file writer (core/frame/acc_dump.h); writes into the build tree, never %TEMP%.
+add_executable(ofps_acc_dump_tests test_acc_dump.cpp)
+target_link_libraries(ofps_acc_dump_tests PRIVATE ofps_core)
+target_compile_features(ofps_acc_dump_tests PRIVATE cxx_std_20)
+target_compile_options(ofps_acc_dump_tests PRIVATE /W4 /WX /EHsc /permissive-)
+add_test(NAME ofps_acc_dump COMMAND ofps_acc_dump_tests "${CMAKE_CURRENT_BINARY_DIR}")
+# Machine::RecordRaw's plain copy against the format-converting reprojection it replaces (raw_snapshot.h), on WARP.
+add_executable(ofps_temporal_raw_tests test_temporal_raw.cpp temporal_d3d12_fixture.h texel_gpu.h)
+target_link_libraries(ofps_temporal_raw_tests PRIVATE ofps_core d3d12 dxgi)
+target_compile_features(ofps_temporal_raw_tests PRIVATE cxx_std_20)
+target_compile_options(ofps_temporal_raw_tests PRIVATE /W4 /WX /EHsc /permissive-)
+if(TARGET ofps_shaders)
+    add_dependencies(ofps_temporal_raw_tests ofps_shaders)
+    add_test(NAME ofps_temporal_raw COMMAND ofps_temporal_raw_tests "${OFPS_SHADER_OUTPUT_DIR}")
+else()
+    add_test(NAME ofps_temporal_raw COMMAND ofps_temporal_raw_tests)
 endif()
 add_executable(ofps_model_host_ngx_tests test_model_host_ngx.cpp ../hosts/reshade/model_host_ngx.cpp ../hosts/reshade/ngx_params.cpp
     ../hosts/reshade/ngx_param_shim.cpp)
@@ -377,13 +512,15 @@ if(TARGET ofps_core)
 set(OFPS_CORE_API_TEST_SOURCES
     test_core_api.cpp test_core_api_scenarios.cpp test_core_api_compute.cpp test_core_api_half_ulp.cpp
     test_core_api_transfer_core.cpp test_core_api_menu_queue.cpp test_core_api_menu_rebuild.cpp test_core_api_plan_defer.cpp
-    test_core_api_grid.cpp test_core_api_grid_model.h
+    test_core_api_grid.cpp test_core_api_grid_model.h test_core_api_spread.cpp test_core_api_history.cpp
     test_core_api_entry.h
     test_core_api_checks.h test_core_api_codec.h test_core_api_fakes.h
     test_core_api_frame.h test_core_api_gpu.h test_core_api_pattern.h test_core_api_reference.h test_core_api_scenarios.h)
 add_executable(ofps_core_api_tests ${OFPS_CORE_API_TEST_SOURCES})
 target_sources(ofps_core_api_tests PRIVATE test_core_api_compute_direct.cpp test_core_api_compute_transfer.cpp
-    test_core_api_transfer_scene.h)
+    test_core_api_transfer_scene.h test_core_api_sky.cpp)
+# The sky field's spread scenario swaps master's passes (fixtures/temporal_pre_sky) into the static core's shader set.
+target_compile_definitions(ofps_core_api_tests PRIVATE OFPS_SKY_MASTER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/temporal_pre_sky")
 target_link_libraries(ofps_core_api_tests PRIVATE ofps_core OptimizerFps::SdkCore d3d12 dxgi d3dcompiler)
 target_include_directories(ofps_core_api_tests PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/generated")
 target_compile_features(ofps_core_api_tests PRIVATE cxx_std_20)

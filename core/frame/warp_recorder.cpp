@@ -8,6 +8,7 @@
 #include "core/temporal/controller.h"
 #include "core/frame/timing.h"
 #include "core/frame/codec_frame.h"
+#include "core/frame/debug_readback.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -178,7 +179,8 @@ void FallbackOutput(EvalContext &c, const char *why)
 void FallbackFromFrame(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsFrameInputs &frame, const char *why)
 {
     auto tin = TemporalInputs(frame.color, frame.motion, frame.depth,
-                              frame.mvScaleX, frame.mvScaleY, frame.depthInverted != 0, st.modelResolution);
+                              frame.mvScaleX, frame.mvScaleY, frame.depthInverted != 0, st.modelResolution,
+                              ofps::core::temporal::kModeNoProbe); // a colour copy: no probe
     FallbackOutput(st, cmd, frame.color, frame.output, &tin, why);
 }
 
@@ -216,9 +218,12 @@ int WarpedBody(EvalContext &c)
     // ---- temporal: accumulate the host's motion before anything reads the displacement ----
     if (c.temporalActive && c.accumulate) {
         c.stage = StageTemporalAccumulate;
-        st.temporal->RecordAccumulate(cmd, c.tin);
+        st.temporal->RecordAccumulate(cmd, c.temporalFull ? ofps::core::temporal::FullPassInputs(c.tin) : c.tin);
         // The vectors the model gets on this full pass (hook_dispatch pointed Pack's source at them).
-        if (c.modelMotion) st.temporal->RecordModelMotion(cmd, c.tin);
+        if (c.modelMotion) {
+            st.temporal->RecordModelMotion(cmd, c.tin);
+            TemporalAccDumpRecord(st, cmd, c.tin, true); // DebugTemporalDumpAcc: a side copy of what the model gets
+        }
     }
 
     // ---- Pack ----
@@ -251,6 +256,7 @@ int WarpedBody(EvalContext &c)
     Barrier(cmd, st.nrOutput, st.nrOutputState, kModelOutputState);
 
     c.stage = StageModel;
+    if (c.motionAnchor != 0) SetMotionAnchor(st, c.motionAnchor);
     TimingBegin(st, cmd);
     const int result = EvaluateModelPasses(st, cmd, in);
     TimingEnd(st, cmd);
@@ -432,6 +438,7 @@ int InterpolateBody(EvalContext &c)
     FeatureState &st = *c.st;
     c.stage = StageTemporalAccumulate;
     st.temporal->RecordAccumulate(c.cmd, c.tin);
+    TemporalAccDumpRecord(st, c.cmd, c.tin, false); // DebugTemporalDumpAccFrom: the chain of a carried frame in the window
     if (c.wantBase) {
         // The frame's own colour through Pack -> Unpack (no model): the same compression blur as a
         // full frame, so the residual added on top holds only the model's contribution.

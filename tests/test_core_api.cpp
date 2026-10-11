@@ -387,9 +387,12 @@ int main(int argc, char **argv) {
     coretest::ScenarioComputeTransferCore(w, core, frame);
     coretest::ScenarioPlanDeferral(w, core, hostA, frame);
     coretest::ScenarioTemporalGrid(w, core, hostA, frame);
+    coretest::ScenarioSpreadPasses(w, core, hostA, frame);
+    coretest::ScenarioModelHistory(w, core, hostA, frame);
 #ifndef OFPS_TEST_DLL
     coretest::ScenarioComputeDirect(w, frame);
     coretest::ScenarioComputeTransfer(w);
+    coretest::ScenarioSkySpread(w, core, frame);
 #endif
     core->Housekeeping();
     core->UnregisterHost(&hostB);

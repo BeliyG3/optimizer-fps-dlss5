@@ -1,5 +1,6 @@
 #pragma once
 #include "image_mips.h"
+#include "dump_writer.h"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -21,6 +22,8 @@ inline void Check(HRESULT hr, const char *operation)
 std::filesystem::path ExecutableDirectory();
 void Transition(ID3D12GraphicsCommandList *list, ID3D12Resource *r, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after);
 void UavBarrier(ID3D12GraphicsCommandList *list, ID3D12Resource *r);
+// A texture whose levels sit in its own upload buffer (Device::StageMips), copied by Device::CopyStaged.
+struct StagedTexture { ComPtr<ID3D12Resource> texture, upload; std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> layouts; UINT64 bytes=0; };
 
 class Device {
     // Declared first, destroyed last: driver hooks may remain in D3D12 COM objects
@@ -66,6 +69,7 @@ public:
     double lastFrameMs=0, lastTraceMs=0, lastUpscalerMs=0;
     double lastBlasMs=0;
     double wallFrameMs=0;
+    double lastWaitMs=0; // the presenting Submit's wait for the GPU: a frame's wall time minus it is the CPU's own part
     unsigned Allocate(unsigned count=1);
     D3D12_CPU_DESCRIPTOR_HANDLE Cpu(unsigned index) const;
     D3D12_GPU_DESCRIPTOR_HANDLE Gpu(unsigned index) const;
@@ -73,20 +77,28 @@ public:
     ID3D12Resource *BackBuffer() const;
     ComPtr<ID3D12Resource> Buffer(UINT64 bytes, D3D12_HEAP_TYPE type, D3D12_RESOURCE_STATES state,
                                  D3D12_RESOURCE_FLAGS flags=D3D12_RESOURCE_FLAG_NONE);
-    ComPtr<ID3D12Resource> UploadBuffer(const void *data, UINT64 bytes);
+    ComPtr<ID3D12Resource> UploadBuffer(const void *data, UINT64 bytes, D3D12_RESOURCE_FLAGS flags=D3D12_RESOURCE_FLAG_NONE);
     ComPtr<ID3D12Resource> Texture(unsigned w, unsigned h, DXGI_FORMAT format, D3D12_RESOURCE_FLAGS flags,
                                   D3D12_RESOURCE_STATES state, unsigned mips=1);
     ComPtr<ID3D12Resource> UploadTexture(unsigned w, unsigned h, DXGI_FORMAT format, unsigned pixelBytes, const void *data);
     ComPtr<ID3D12Resource> UploadMips(DXGI_FORMAT format, unsigned pixelBytes, const std::vector<ImageMip> &levels);
+    StagedTexture StageMips(DXGI_FORMAT format, unsigned pixelBytes, const std::vector<ImageMip> &levels); // any thread
+    void CopyStaged(std::vector<StagedTexture> &batch); // the device's thread: copies, waits, releases the upload buffers
     void TextureSrv(ID3D12Resource *r, unsigned descriptor);
     void BufferSrv(ID3D12Resource *r, unsigned descriptor, unsigned count, unsigned stride);
     void QueueDump();
-    void WriteDump(int frame);
+    void WriteDump(int frame, bool png=false); // encoded and written on DumpWriter's threads
+    void FinishDumps() { dumpWriter.Finish(); } // every queued dump is on disk
+    std::string dumpPrefix; // --variants: v<k>_ before dump_<frame>
     void PrintMessages();
     void Timestamp(unsigned index);
     void ResolveTimings();
     void CollectTimings();
     void ReportTimings() const;
+    // GPU stage timings: Mark(label) after a stage's commands records a timestamp; the stage's time is from the previous mark of
+    // the frame (the first mark of a frame starts the clock). ResolveTimings/CollectTimings take them with the frame's timings,
+    // ReportTimings prints each label's average over the frames that marked it. `label` must be a string literal.
+    void Mark(const char *label);
 private:
     HWND window=nullptr;
     ComPtr<ID3D12CommandQueue> queue;
@@ -110,4 +122,11 @@ private:
     UINT64 timestampFrequency=0, timedFrames=0;
     double frameMilliseconds=0, traceMilliseconds=0;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT dumpLayout{};
+    DumpWriter dumpWriter;
+    static constexpr unsigned MaxMarks=64;
+    ComPtr<ID3D12QueryHeap> marks;
+    ComPtr<ID3D12Resource> markReadback;
+    std::vector<const char *> markLabels; // this frame's marks
+    unsigned resolvedMarks=0;
+    std::vector<std::pair<const char *,std::pair<double,unsigned>>> stageTotals; // label -> total ms, frames
 };

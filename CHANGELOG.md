@@ -1,5 +1,80 @@
 # Changelog
 
+## 2026.10.2
+
+With a temporal mode, swaying trees and grass keep more of their NR look between the model's runs, also while the
+camera moves. This release also fixes stutter and lagging surroundings during camera turns with two model passes
+spread over frames (`ModelPasses=2` with `SpreadPasses` on, the default), pale shapes on the sky during fast turns,
+and the background mode behind renodx 8.5 and the ShortFuse build.
+
+**Changed**
+
+* **Less smearing and flicker on foliage while the camera moves** (temporal modes). Carried frames now follow a motion
+  chain of their own that ignores scattered colour flicker. In a moving garden this gains 0.2–0.3 dB between model
+  runs and loses nothing elsewhere; it costs 0.15 ms per frame at 4K. The new setting is **Carry chain**
+  (`TemporalChainRule`, Temporal group): `Coherent` (the default) or `Classic` (restores the old behaviour exactly).
+  Coherent uses about 16 MB of video memory with 1080p motion vectors (about 66 MB at 4K). After you switch to
+  Classic, that memory is freed only when the temporal mode's resources are created again (for example, after a
+  resolution change or a game restart).
+* **Foliage shimmers much less between model runs** (temporal modes). On each run, the add-on tells the model which
+  pixels have no usable history, so the model does not smear an old picture into an area a moving object just
+  uncovered. Until now, every pixel whose colour had changed counted. Leaves moving in the wind change colour almost
+  everywhere, so whole trees started from scratch on every run and visibly pulsed. The new default rule marks a pixel
+  only where the depth also shows a different surface, and only in connected patches. Foliage keeps most of its
+  history, and people and objects walking past walls are handled about as well as before (within 0.17 dB). In our
+  test scene (a windy garden, the model every 8th frame), foliage on the model's frames comes 5.9 dB closer to running
+  the model on every frame with the camera held still, 0.86 dB closer in a slow pan and 1.23 dB closer along a walk.
+  The frames in between improve too, and a model run costs no more at 4K. One forward walk with the model every 4th
+  frame scores 0.22 dB lower than before. The new setting is **Model motion markers** (`TemporalModelMarker`, Temporal
+  group): `Narrow` (the default), `Classic` (restores the old rule exactly) or `Off`.
+
+**Fixed**
+
+* **Spread passes cost about as much as passes in one frame again** (temporal modes). Spreading the passes copied the
+  game's frame every frame through the full reprojection pass instead of a plain copy, and that pass gets more
+  expensive the faster the camera moves. In a 4K test (Global scale 50, the model every third frame), spread passes
+  cost 7.5 ms per frame more than both passes in one frame during a fast turn, and 5.3 ms more during a slow one. Now
+  the difference is about 2 ms. During a fast turn the test went from 21.6 to 25.0 fps (25.9 with both passes in one
+  frame). The image is unchanged.
+* **NR's own history now follows the add-on's.** When the add-on restarted its motion chain (after switching spread
+  passes or the temporal mode, a failed frame, or the background mode rebuilding its job), NR kept a history from an
+  older frame but got motion to the newer one. For a few frames its picture drifted (a brightness shift and dark halos
+  around lamps in our test scene). Each NR feature now resets its history exactly when the motion it gets does not
+  reach back to the frame it last ran on, and only then. In steady play nothing resets.
+* **No more pale silhouettes on the sky during fast camera turns** (temporal modes). The frames between the model's
+  runs could paint pale, blotchy shapes onto a flat sky where buildings had stood a moment earlier (seen in Assassin's
+  Creed with two model passes and the model every 8th frame). Those frames took the model's edit of each sky pixel
+  from wherever its motion said it came from, and motion on a featureless sky is unreliable. Now they give the sky
+  (the pixels exactly at the far plane of the game's depth buffer) a smooth estimate of the model's sky edit, so the
+  sky stays free of patches. Its tone can lag the model's a little until the next model run, which shows the model's
+  own sky. When the camera suddenly shows much more sky than the last run saw (leaving a building, a doorway
+  opening), that run's few sky pixels cannot stand in for the new sky. Until the next run, those frames treat the sky
+  as before while the run saw less than about a third of the sky now on screen, and blend in the smooth estimate as
+  that share grows to 60 %. The new setting is **Smooth sky in carried frames** (`TemporalSkyField`, Temporal group),
+  on by default. With it off, the image is exactly as before. Switch it off in a game that hands over linear depth
+  instead of the usual 0-to-1 depth.
+* **Temporal modes in games with dynamic resolution.** The frames between the model's runs check each pixel against
+  the depth saved at the model's last run and at the previous frame. They read that saved depth as if it had the
+  current frame's resolution. When the game changed its render resolution in between, they looked at the wrong spots,
+  so the model's edit could be dropped or carried onto the wrong surface until the next run. In the background mode,
+  the same wrong spots were also used to blend each new result with the previous one and to check the motion handed
+  to the model (also after a dropped result). Saved depth is now read at the resolution it was saved at. With a fixed
+  resolution the image is exactly as before.
+* **renodx 8.5 and the ShortFuse build (26.1003).** These renodx versions hand the add-on ReShade's own copy of the
+  game's command list, whose device is not the one ReShade registered the game's queue under. The background mode
+  (`TemporalMode=3`) therefore switched itself off ("no registered host queue") and the synchronous mode ran instead.
+  The add-on now recognises the game's queue through the shared graphics adapter, and the background mode runs again.
+  With NR at the present (renodx 8.5 `NRHookPoint=2`, the ShortFuse build's hook stage 3), renodx submits its work
+  where no ReShade event sees it. The add-on's descriptor tables were then freed only 16 frames later and ran out
+  every 18 to 24 frames: those frames showed the game's image without NR and stalled for up to 100 ms ("descriptor
+  pool exhausted"). The table pool is now large enough for that delay, and each frame's tables are held exactly 16
+  frames after their own use (before, a frame's tables could be reused one or two frames after it).
+
+**Limits**
+
+* Spread passes still run the model on two consecutive frames, and the motion chain for the first pass still costs
+  about 2 ms per frame.
+
 ## 2026.10.1
 
 Carried frames in Interpolate (sync) are cheaper, with a byte-identical image. With a compressed model, carried frames
@@ -380,7 +455,7 @@ _2026-09-13_ — compatibility hotfix for renodx-dlss5 5.2.1.
   renodx-dlss5 4.55, 4.70 and 5.2.1.
 * A per-frame `host resources` log line: the input signature was compared before it was cleared.
 
-**Bench (`toolsench`, not shipped)**
+**Bench (`tools\bench`, not shipped)**
 
 * `--dlaa` (render size = output size, guides at native resolution), `--fps-jitter MS`, `--fullscreen`;
   the bench warns instead of exiting when the add-on is not loaded; a broken string literal that kept

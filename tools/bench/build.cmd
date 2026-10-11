@@ -1,6 +1,6 @@
 @echo off
 rem Standalone bench harness (tools\bench\run\pw_bench.exe), built from pw_bench.cpp (entry point) and the
-rem bench_*.cpp modules beside it; pw_gltf.h is header-only.
+rem bench_*.cpp modules beside it; pw_gltf.h (and its pw_gltf_*.h parts) is header-only.
 rem bench_ngx.h includes <nvsdk_ngx.h>: point PW_NGX_SDK_ROOT at the directory that holds it
 rem (the NVIDIA DLSS SDK "include" directory), e.g.
 rem     set PW_NGX_SDK_ROOT=C:\src\nvngx_dlss_sdk

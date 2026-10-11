@@ -82,3 +82,64 @@ The exporter duplicates mesh payloads for their separate skins but reuses
 materials. The loader in `pw_gltf.h` merges animations; the single SCENE animation
 also satisfies an animation-0-only player. No git or `tools/bench12` work is needed.
 
+
+## Garden people (garden v2.4)
+
+`build_lab_garden.py` adds 17 copies (v2.5b; 16 in v2.4) of these characters outdoors (`garden_people_layout.py`: who stands or walks where
+and the clearance checks; `garden_people.py`: the copies and their loops; `garden_people_seat.py`: the seated pose). A
+copy is a duplicate rig `people_<character>_<role>_<k>_armature` with mesh objects sharing the source's mesh data; its
+bones replay the source's 43.166667 s loop shifted by a few frames, its root follows its own line or spot. Walkers keep
+the lab walkers' cadence, so their lines are speed x (period / (2 x round trips) - 1.5 s) long. The X Bot sitter uses
+the salsa rig. At export, `character_export.append_characters` points the copies at the appended characters' mesh
+data (`garden_people.use_lab_meshes`) and `glb_share_skins.py` then lets every copy's mesh node use the lab character's
+glTF mesh and inverse bind matrices (checked per triangle corner), so the glb holds no extra character meshes.
+
+### Sitters: seated loops (garden v2.5, v2.5b), Mixamo sitting clips
+
+The four sitters loop a seated animation (`garden_people_sit_motion.py`). With the Mixamo clips in
+`tools/bench/assets/mixamo/out/` (as now) they play those (`garden_people_mixamo_clip.py` reads a clip,
+`garden_people_mixamo.py` fits it on the bench, `garden_people_contact.py` measures the contacts):
+
+| sitter | where | clip used | Mixamo animation |
+| --- | --- | --- | --- |
+| Olivia (`people_olivia_sit_0`) | double bench 1 | `olivia__sitting_idle.fbx`, 6.2 s loop x7, phase 0 s | Sitting Idle ("Sitting In Chair Hands Resting On Thighs"), Ch11 |
+| X Bot (`people_xbot_sit_2`) | single bench 0 | `xbot__sitting_idle.fbx`, 6.2 s loop x7, phase 6.1 s | Sitting Idle, X Bot |
+| Chad (`people_chad_sit_1`) | double bench 0, x -1.85, turned 25 degrees to his left | `chad__sitting_talking.fbx`, 43.2 s loop x1, phase 3.7 s | Sitting Talking ("Sitting And Talking To Another Person", legs crossed), Ch16 |
+| Olivia (`people_olivia_sit_3`) | double bench 0, x -0.45, turned 25 degrees to her right | `olivia__sitting_talking.fbx` mirrored, phase 11 s | the same, left and right swapped |
+
+Chad and the second Olivia talk to each other (v2.5b): the talking clip looks about 65 degrees to the talker's left,
+so Chad sits on the right and turns left, and Olivia plays the clip mirrored (she looks right, her left leg crossed).
+`chad__sitting_idle.fbx` and `xbot__sitting_talking.fbx` are there too; which kind a sitter takes is its style in
+`garden_people_layout.PEOPLE` ('talk' / 'talk_mirrored' look for `__sitting_talking.fbx` first, the others for
+`__sitting_idle.fbx`). Download settings for more clips: Format **FBX Binary (.fbx)**, Skin **With Skin**, Frames per
+Second **30**, Keyframe Reduction **none**, **In Place** if offered, sliders at their defaults; name them
+`<character>__sitting_idle.fbx` / `<character>__sitting_talking.fbx` (character: olivia, chad or xbot). Then rebuild
+the garden (`build_lab_garden.py`, `bake_lab_lightmaps.py --no-bake` for the baked glb).
+
+What the build does with a clip: it maps the clip's bones onto the sitter's rig by name (`mixamorig:*`), carries the
+rotations over relative to the rest pose (any armature axis or unit; mirrored on request), cross-fades the clip's last
+15 frames into its first ones and plays it a whole number of times per period (retimed by under about 10 % for clips up
+to 9 s), shifted by the sitter's phase. It turns the clip so the sitter's hips face the bench's front plus its yaw,
+puts the hips over the seat and then forward until both knees are 7 cm in front of the seat's front edge (the shins
+hang in front of the seat), keeps the pelvis on the seat frame by frame (root height), and lowers each planted foot
+onto the ground by pitching its shin towards the vertical, then its thigh (the foot back by as much). A foot more than
+5 cm above the clip's floor is lifted (the crossed leg): it is not planted and takes the planted thigh's pitch, so it
+stays on the other knee. While a sloping thigh or a calf cuts the seat's front edge deeper than 1 cm, the sitter is
+fitted again further forward (v2.5b; Olivia sits 26 cm further forward than at first, on the front half of the seat:
+the bench is higher than the Mixamo chair). Every sampled frame is checked on the skinned mesh (v2.5c, `garden_people_contact.py`):
+the lowest buttock or thigh underside over the seat (vertices following the hips, thighs or spine whose normals point
+down, each against the seat surface under it by a ray from 5 cm above the seat; v2.5b's rays from 0.3 m hit the arm
+rest beside Chad and lifted him), the buttocks alone (the same within 15 cm of the hips joint along the seat's depth,
+so a thigh on the seat's edge cannot hold a floating pelvis) and each planted foot's sole (vertices whose normals point
+down) against the ground must touch, within -1..+0.5 cm; the back must not go into the bench (only the torso against
+the back rest), a lifted foot not into the ground, and no body part more than 1 cm inside the bench (the seat tested as
+a 3.5 cm slab, the rest by the nearest face); the walkers' bodies stay at least 0.3 m from the sitters' knees and feet
+and the talking partners' joints 18 cm apart (their crossed feet). The build fails otherwise. The log prints `[people] ... Mixamo <file>`, the contact ranges and the
+depth per body part; `lab_scene_garden.layout.json` keeps them under `loop`. `build_lab_garden.py -- --mixamo
+<folder>` reads the clips from another folder.
+
+Without the clips the sitters loop a procedural idle (`garden_people_idle.py`) on top of the static seated pose
+(`garden_people_seat.py`): breathing (about 4 s a breath), head turns of 20-28 degrees held a few seconds, small
+forearm and wrist movements on the thighs; Chad gestures with his right hand as when talking. The pelvis and legs are
+not animated. Loops: 10.8 s (4 per 43.2 s period), X Bot 8.6 s (5), phases 0/3.7/6.1/11 s; the mirrored partner
+gestures with the other hand and looks the other way.

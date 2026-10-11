@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cmath>
 #include <limits>
+#include <cstring>
 
 RgbaImage DecodeImage(const std::vector<uint8_t> &bytes)
 {
@@ -19,6 +20,36 @@ RgbaImage DecodeImage(const std::vector<uint8_t> &bytes)
     if(!image.width || !image.height || image.width>16384 || image.height>16384) throw std::runtime_error("Unsupported glTF image dimensions");
     image.pixels.resize(size_t(image.width)*image.height*4);
     Check(converter->CopyPixels(nullptr,image.width*4,UINT(image.pixels.size()),image.pixels.data()),"Copy WIC pixels"); return image;
+}
+void WriteBmp(const std::filesystem::path &path, unsigned width, unsigned height, const uint8_t *bgra)
+{
+    const size_t bytes=size_t(width)*height*4;
+    BITMAPFILEHEADER file{}; file.bfType=0x4d42; file.bfOffBits=sizeof(file)+sizeof(BITMAPINFOHEADER); file.bfSize=file.bfOffBits+DWORD(bytes);
+    BITMAPINFOHEADER info{}; info.biSize=sizeof(info); info.biWidth=LONG(width); info.biHeight=-LONG(height);
+    info.biPlanes=1; info.biBitCount=32; info.biCompression=BI_RGB; info.biSizeImage=DWORD(bytes);
+    std::ofstream stream(path,std::ios::binary);
+    stream.write(reinterpret_cast<const char *>(&file),sizeof(file)); stream.write(reinterpret_cast<const char *>(&info),sizeof(info));
+    stream.write(reinterpret_cast<const char *>(bgra),std::streamsize(bytes)); stream.close();
+    if(!stream) throw std::runtime_error("Cannot write dump: "+path.string());
+}
+void WritePng(const std::filesystem::path &path, unsigned width, unsigned height, const uint8_t *bgra)
+{
+    if(!width || !height || size_t(width)*height*3>MAXDWORD) throw std::runtime_error("Unsupported dump dimensions");
+    std::vector<BYTE> rgb(size_t(width)*height*3);
+    for(size_t i=0,n=size_t(width)*height;i<n;++i) std::memcpy(&rgb[i*3],&bgra[i*4],3); // 24bppBGR: drop alpha, keep byte order
+    ComPtr<IWICImagingFactory> wic; Check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic)),"Create WIC factory");
+    ComPtr<IWICStream> stream; ComPtr<IWICBitmapEncoder> encoder; ComPtr<IWICBitmapFrameEncode> frame; ComPtr<IPropertyBag2> options;
+    Check(wic->CreateStream(&stream),"Create WIC stream");
+    Check(stream->InitializeFromFilename(path.c_str(),GENERIC_WRITE),"Open PNG dump");
+    Check(wic->CreateEncoder(GUID_ContainerFormatPng,nullptr,&encoder),"Create PNG encoder");
+    Check(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache),"Initialize PNG encoder");
+    Check(encoder->CreateNewFrame(&frame,&options),"Create PNG frame");
+    Check(frame->Initialize(options.Get()),"Initialize PNG frame");
+    Check(frame->SetSize(width,height),"Set PNG size");
+    WICPixelFormatGUID format=GUID_WICPixelFormat24bppBGR; Check(frame->SetPixelFormat(&format),"Set PNG pixel format");
+    if(format!=GUID_WICPixelFormat24bppBGR) throw std::runtime_error("PNG encoder lacks 24bpp BGR");
+    Check(frame->WritePixels(height,width*3,UINT(rgb.size()),rgb.data()),"Write PNG pixels");
+    Check(frame->Commit(),"Commit PNG frame"); Check(encoder->Commit(),"Commit PNG");
 }
 HdrImage LoadHdr(const std::string &path)
 {

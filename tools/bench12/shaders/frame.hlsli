@@ -14,5 +14,8 @@ cbuffer Frame : register(b0) {
     float hazeDensity, hazeG, bloom; uint neutralTonemap;
     int pickX, pickY; uint accumulationLimit, feedAccumulation;
     uint dynamicBase, dynamicOpaque, motionNdc, animationPadding1;
+    float filmSlope, filmToe, filmShoulder, filmBlackClip;
+    float filmWhiteClip, localHighlights, localShadows, localDetail;
+    float localBlend; uint localExposure, displayPadding0, displayPadding1;
 };
 #endif

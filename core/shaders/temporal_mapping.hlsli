@@ -43,6 +43,22 @@ float2 PwTToRect(float2 nativePixel, float4 rect)
     return rect.xy + nativePixel * PwTNative.zw * rect.zw;
 }
 
+// The sub-rect of the depth at t6 (PwTDepthF: the residual frame's snapshot, or the previous frame's depth for
+// PSExpect). A copy keeps the sub-rect its own frame described: a host with dynamic resolution moves or resizes the
+// depth's sub-rect from frame to frame, and the snapshot read through THIS frame's rect lands on other texels. A
+// size of 0 (a producer of the constants that predates the row) means PwTDepthRect, as before.
+float4 PwTDepthFRectOf()
+{
+    return PwTDepthFRect.z > 0.0 && PwTDepthFRect.w > 0.0 ? PwTDepthFRect : PwTDepthRect;
+}
+// What the reads of t6 go through. Tests build the passes with PW_T_DEPTHF_SHARED_RECT, which gives back the source as
+// it was before 2026.10.2 (every depth through this frame's sub-rect), and compare.
+#ifdef PW_T_DEPTHF_SHARED_RECT
+#define PW_T_DEPTHF_RECT PwTDepthRect
+#else
+#define PW_T_DEPTHF_RECT PwTDepthFRectOf()
+#endif
+
 // A colour read can be full-frame while the other guides occupy different
 // sub-rects. Decide the bilinear guard for the resource actually in use.
 #ifdef PW_T_MODEL_GRID
@@ -89,13 +105,15 @@ float2 PwTRectUv(float2 nativePixel, float4 rect, float2 texSize)
 #endif
 }
 
-// The accumulated displacement at a position given in motion-texture pixels, bilinear and likewise held
-// inside the motion sub-rect.
-float2 PwTSampleAccAt(float2 mvPixel)
+// The displacement `chain` holds at a position given in motion-texture pixels, bilinear and likewise held inside the
+// motion sub-rect: the accumulated one (PwTSampleAccAt) or the carry chain (temporal_chain_pair.hlsli).
+float2 PwTSampleChainAt(Texture2D<float2> chain, float2 mvPixel)
 {
     float2 inside = clamp(mvPixel, PwTMotionRect.xy + 0.5, PwTMotionRect.xy + PwTMotionRect.zw - 0.5);
-    return PwTAccPrev.SampleLevel(PwTLinearClamp, inside / PwTMotionTex.xy, 0.0);
+    return chain.SampleLevel(PwTLinearClamp, inside / PwTMotionTex.xy, 0.0);
 }
+
+float2 PwTSampleAccAt(float2 mvPixel) { return PwTSampleChainAt(PwTAccPrev, mvPixel); }
 
 // How far apart two depth samples are, as a fraction, whatever the depth buffer's encoding. The plain
 // relative difference |a - b| / max(a, b) reads distance ratios from a linear or a reversed-Z buffer
@@ -123,10 +141,10 @@ float PwTDepthMismatch(float a, float b)
 float PwTDepthMismatchAround(float depthNow, float2 nativePixel)
 {
     if (!isfinite(depthNow)) return 1e9; // PwTExpectedDepth: the surface was not in the residual's frame
-    float2 g = PwTToRect(nativePixel, PwTDepthRect) - 0.5;
+    float2 g = PwTToRect(nativePixel, PW_T_DEPTHF_RECT) - 0.5;
     int2 base = int2(floor(g));
-    int2 lo = int2(PwTDepthRect.xy);
-    int2 hi = int2(PwTDepthRect.xy + PwTDepthRect.zw) - 1;
+    int2 lo = int2(PW_T_DEPTHF_RECT.xy);
+    int2 hi = int2(PW_T_DEPTHF_RECT.xy + PW_T_DEPTHF_RECT.zw) - 1;
     float best = 1e9;
     [unroll] for (int k = 0; k < 4; ++k)
     {

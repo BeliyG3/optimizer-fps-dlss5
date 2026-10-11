@@ -219,9 +219,11 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
     // 26.28: where the chain does not end on the pixel's own surface in the residual's frame the model
     // must be told there is no history there (PSModelMotion), or it blends its old picture of the
     // occluder into the wall he has left. Both textures are written before Pack reads them.
-    const bool useModelMv = useAcc && !Ctx().diag.temporalNoModelMotion && st.temporal->ModelMv() != nullptr;
+    const bool useModelMv = useAcc && ModelMarkerSettings().sync && st.temporal->ModelMv() != nullptr;
     if (useAcc) motion = useModelMv ? st.temporal->ModelMv() : st.temporal->NextAcc(); // written by the accumulation recorded before Pack
-    ofps::core::temporal::FrameInputs tin = TemporalInputs(frame.color, modelInputs.motion, frame.depth, mvScaleX, mvScaleY, depthInverted != 0, st.modelResolution);
+    // The effective mode is the one written to the status above (no second EffectiveTemporalMode call).
+    ofps::core::temporal::FrameInputs tin = TemporalInputs(frame.color, modelInputs.motion, frame.depth, mvScaleX, mvScaleY, depthInverted != 0, st.modelResolution,
+                                                           plan.active ? Ctx().status.temporalMode : ofps::core::temporal::kModeNoProbe);
     // 26.26: the same depth resting state and barrier subresource the Pack barriers below use (c.depthState /
     // c.depthSub), so the accumulation and the reprojection address a planar depth-stencil host the same way.
     tin.depthState = HostDepthState(frame.depth);
@@ -369,6 +371,7 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
     c.accumulate = plan.active && (!plan.full || useAcc);
     c.motionIsAcc = useAcc;
     c.modelMotion = useModelMv;
+    c.motionAnchor = useAcc ? st.temporal->ChainFrame() : 0;
     c.tin = tin;
     c.wantBase = codec.identity && plan.active && Ctx().temporal.warpBase && st.unpackBase != nullptr &&
                  !TransferReplacesBase(st);
@@ -394,6 +397,7 @@ int EvaluateFrameBody(FeatureState &st, ID3D12GraphicsCommandList *cmd,
         if (TemporalExhausted(st)) { FallbackOutput(c, "temporal descriptor pool exhausted"); return OFPS_OK; }
         DumpDebugLayer(st.realDevice);
         TemporalDebugReadback(st, cmd, c.tin);
+        TemporalAccDumpPoll(st);
         if (r == kCrashed) {
             st.temporalDisabled = true;
             TemporalReason(st, "exception 0x%08lX in stage %s; temporal mode disabled for this feature", Ctx().crash.code, StageName(Ctx().crash.stage));

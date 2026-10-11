@@ -1,21 +1,28 @@
 #include "scene.h"
 #include "animation.h"
+#include "gpu_skinning.h"
 
 Scene::~Scene()
 {
     animation.reset();
     if(mappedAnimation) animationUpload->Unmap(0,nullptr);
 }
-void Scene::Animate(float time, float previousTime)
+void Scene::Animate(float time, float previousTime, unsigned windFrame, unsigned windBefore)
 {
-    animationTime=time; animationMoved=dynamicTriangles>0 && time!=previousTime;
+    animationTime=time; animationMoved=dynamicTriangles>0 && (time!=previousTime || windActive);
     if(!dynamicTriangles) return;
-    animationUploadNeeded=animation->Evaluate(time,previousTime); animationCpuMs=animation->cpuMs;
-    animationRefitNeeded=animation->geometryChanged;
+    if(gpuSkinning) {
+        animationUploadNeeded=gpuSkinning->Evaluate(animation->source,time,previousTime,windFrame,windBefore); animationCpuMs=gpuSkinning->cpuMs;
+        animationRefitNeeded=gpuSkinning->geometryChanged || gpuSkinning->windChanged;
+        return;
+    }
+    animationUploadNeeded=animation->Evaluate(time,previousTime,windFrame,windBefore); animationCpuMs=animation->cpuMs;
+    animationRefitNeeded=animation->geometryChanged || animation->windChanged;
 }
-void Scene::CopyAnimation(Device &d) const
+void Scene::RecordAnimation(Device &d) const
 {
     if(!dynamicTriangles || !animationUploadNeeded) return;
+    if(gpuSkinning) { gpuSkinning->Record(d,vertices.Get()); return; }
     // Device::Submit fences every frame. Reuse this mapped upload only after it retires.
     // Copy into DEFAULT memory so the many secondary rays do not read vertices over PCIe.
     Transition(d.list.Get(),vertices.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COPY_DEST);

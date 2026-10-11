@@ -106,50 +106,112 @@ float4 PSDownsample(PwFullscreenVertex input) : SV_Target0
     return float4(sum / 16.0, 0.0);
 }
 
-// Runs over the whole motion texture. Output in motion-texture pixels (already scaled).
-float2 PSAccumulate(PwFullscreenVertex input) : SV_Target0
+// This frame's vector of the motion texel at `position` (its centre), in motion-texture pixels (already scaled).
+float2 PwTFrameVector(float2 position)
 {
-    int2 q = int2(input.position.xy);
-    float2 mv = PwTMotion.Load(int3(q, 0)) * PwTMotionTex.zw * PwTTune.y;
+    float2 mv = PwTMotion.Load(int3(int2(position), 0)) * PwTMotionTex.zw * PwTTune.y;
     if (any(!isfinite(mv))) mv = float2(0.0, 0.0); // a NaN vector would poison the chain until the next full pass
+    return mv;
+}
+
+// The chain `chain` holds, continued at `position` by this frame's vector `mv`, before the link is tested.
+float2 PwTChainContinued(Texture2D<float2> chain, float2 position, float2 mv)
+{
     float2 acc = mv;
     if (PwTParams.y > 0.5)
     {
-        float2 prev = input.position.xy + mv;
-        float2 nativeHere = (input.position.xy - PwTMotionRect.xy) / PwTMotionRect.zw * PwTNative.xy;
-        float depthHere = PwTDepth.Load(int3(PwTRectTexel(nativeHere, PwTDepthRect), 0));
-        acc += PwTSampleAccAt(prev);
+        acc += PwTSampleChainAt(chain, position + mv);
         if (any(!isfinite(acc))) acc = mv;
-        // A surface the residual's frame did not show has nothing to be validated against; the reprojection
-        // rejects it by its unknown depth. (Lending such a pixel the chain of its neighbours, so that it
-        // knows where it lay under the occluder, was tried: the older passes' lookup finds its way from the
-        // neighbours' links anyway, and in forward flight the lent chains cost 2 % of the whole frame.)
-        if (PwTParams.x > 0.5 && isfinite(PwTExpectedDepth(depthHere, nativeHere)))
-        {
-            // Validate the link (main chain only): the chain is inherited through occluders - a pixel the
-            // lower lip just uncovered takes over the lip's accumulated displacement and lands on the
-            // lip in the residual's frame; every frame of the opening mouth added another copy of the lip
-            // line across the teeth (26.6.Q, cutegirl bench). If the residual's frame does not show this
-            // pixel's surface at the chain's end (depth or colour), start the chain afresh from this
-            // frame's vector: the reprojection then rejects it honestly and fills locally.
-            float2 nativePixel = (input.position.xy - PwTMotionRect.xy) / PwTMotionRect.zw * PwTNative.xy;
-            float2 qN = nativePixel + acc * PwTNative.xy / PwTMotionRect.zw;
-            bool inside = all(qN >= 0.0) && all(qN < PwTNative.xy);
-            if (inside)
-            {
-                float dc = PwTDepth.Load(int3(PwTRectTexel(nativePixel, PwTDepthRect), 0));
-                bool ok = PwTDepthMismatchAround(PwTExpectedDepth(dc, nativePixel), qN) <= 2.0 * PwTParams.w;
-                if (ok && PwTTune.x > 0.0)
-                {
-                    float3 c = PwTLoadFrame(PwTColor, int3(PwTRectTexel(nativePixel, PwTColorRect), 0)).rgb;
-                    float3 cf = PwTLoadFrame(PwTColorF, int3(PwTRectTexel(qN, PwTColorRect), 0)).rgb;
-                    ok = PwTColourGate(c, cf, PwTTune.x) > 0.05;
-                }
-                if (!ok) acc = mv;
-            }
-        }
     }
     return acc;
+}
+
+// The chain of the motion texel at `position` (its centre) before its link is tested, and this frame's vector `mv`,
+// both in motion-texture pixels (already scaled). PSAccumulate and PSLinkFail.
+float2 PwTChainUntested(float2 position, out float2 mv)
+{
+    mv = PwTFrameVector(position);
+    return PwTChainContinued(PwTAccPrev, position, mv);
+}
+
+// Whether PSAccumulate tests the link at `position` at all: the main chain (PwTParams.x), a previous chain to inherit
+// (PwTParams.y) and a surface the residual's frame showed. A surface it did not show has nothing to be validated
+// against; the reprojection rejects it by its unknown depth. (Lending such a pixel the chain of its neighbours, so
+// that it knows where it lay under the occluder, was tried: the older passes' lookup finds its way from the
+// neighbours' links anyway, and in forward flight the lent chains cost 2 % of the whole frame.)
+bool PwTLinkTested(float2 position)
+{
+    float2 nativeHere = (position - PwTMotionRect.xy) / PwTMotionRect.zw * PwTNative.xy;
+    float depthHere = PwTDepth.Load(int3(PwTRectTexel(nativeHere, PwTDepthRect), 0));
+    return PwTParams.y > 0.5 && PwTParams.x > 0.5 && isfinite(PwTExpectedDepth(depthHere, nativeHere));
+}
+
+// Validate the link (main chain only): the chain is inherited through occluders - a pixel the lower lip just uncovered
+// takes over the lip's accumulated displacement and lands on the lip in the residual's frame; every frame of the
+// opening mouth added another copy of the lip line across the teeth (26.6.Q, cutegirl bench). If the residual's frame
+// does not show this pixel's surface at the chain's end (depth or colour), the chain starts afresh from this frame's
+// vector: the reprojection then rejects it honestly and fills locally. Only where the chain's end is in the frame.
+// DebugTemporalChainRule `rule` (PwTSky.z on Accumulate) decides which change restarts it, before rule 3's vote:
+// 0 a depth mismatch above twice the tolerance or the colour gate (today); 2 the colour gate only with a depth hint
+// (a mismatch of at least the tolerance, PwTParams.w); 4 depth only. Rule 1 never restarts and does not call this.
+bool PwTLinkFails(float2 position, float2 acc, int rule)
+{
+    float2 nativePixel = (position - PwTMotionRect.xy) / PwTMotionRect.zw * PwTNative.xy;
+    float2 qN = nativePixel + acc * PwTNative.xy / PwTMotionRect.zw;
+    bool inside = all(qN >= 0.0) && all(qN < PwTNative.xy);
+    if (!inside) return false;
+    float dc = PwTDepth.Load(int3(PwTRectTexel(nativePixel, PwTDepthRect), 0));
+    float mismatch = PwTDepthMismatchAround(PwTExpectedDepth(dc, nativePixel), qN);
+    bool ok = mismatch <= 2.0 * PwTParams.w; // a NaN mismatch fails, as it always did
+    if (ok && PwTTune.x > 0.0 && rule != 4 && (rule == 0 || mismatch >= PwTParams.w))
+    {
+        float3 c = PwTLoadFrame(PwTColor, int3(PwTRectTexel(nativePixel, PwTColorRect), 0)).rgb;
+        float3 cf = PwTLoadFrame(PwTColorF, int3(PwTRectTexel(qN, PwTColorRect), 0)).rgb;
+        ok = PwTColourGate(c, cf, PwTTune.x) > 0.05;
+    }
+    return !ok;
+}
+
+// Rule 3's mask on Accumulate (t1, R8_UINT: PSLinkFail, rule 2's verdict of every texel); a null view otherwise.
+Texture2D<uint> PwTLinkFail : register(t1);
+
+// Rule 3: how many of the 25 texels of the 5x5 neighbourhood of `p` (itself included, clamped to the host's motion
+// sub-rect, as the marker's PwTMarkerReason) fail rule 2.
+uint PwTLinkVote(int2 p)
+{
+    int2 lo = int2(PwTMotionRect.xy);
+    int2 hi = int2(PwTMotionRect.xy + PwTMotionRect.zw) - 1;
+    uint failing = 0;
+    [loop] for (int oy = -2; oy <= 2; ++oy)
+        [loop] for (int ox = -2; ox <= 2; ++ox)
+            if (PwTLinkFail.Load(int3(clamp(p + int2(ox, oy), lo, hi), 0)) != 0) ++failing;
+    return failing;
+}
+
+// Runs over the whole motion texture. Output in motion-texture pixels (already scaled).
+float2 PSAccumulate(PwFullscreenVertex input) : SV_Target0
+{
+    float2 mv;
+    float2 acc = PwTChainUntested(input.position.xy, mv);
+    if (PwTLinkTested(input.position.xy))
+    {
+        // DebugTemporalChainRule (PwTSky.z on Accumulate): 0 today, 1 never restart, 2 colour needs a depth hint,
+        // 3 rule 2 + 5x5 vote (LinkFail mask at t1), 4 depth only. See phase 3 step 1 (MOTION_ATTRIBUTION.md).
+        const int rule = (int) PwTSky.z;
+        bool fail = rule != 1 && PwTLinkFails(input.position.xy, acc, rule);
+        if (rule == 3 && fail) fail = PwTLinkVote(int2(input.position.xy)) >= 8;
+        if (fail) acc = mv;
+    }
+    return acc;
+}
+
+// DebugTemporalChainRule 3, before Accumulate with the same inputs: rule 2's verdict of this texel's own untested
+// chain (1 restart, 0 keep; 0 where the link is not tested), for PwTLinkVote.
+uint PSLinkFail(PwFullscreenVertex input) : SV_Target0
+{
+    float2 mv;
+    float2 acc = PwTChainUntested(input.position.xy, mv);
+    return PwTLinkTested(input.position.xy) && PwTLinkFails(input.position.xy, acc, 2) ? 1u : 0u;
 }
 
 // The chain as the MODEL's motion vectors on a full pass after carried frames (motion-texture size).
@@ -163,23 +225,91 @@ float2 PSAccumulate(PwFullscreenVertex input) : SV_Target0
 // colour on both sides and no test downstream could tell. A pixel whose chain does not end on its own
 // surface in the residual's frame gets a vector that leaves the picture instead: no history there, the
 // model treats it as it treats any disocclusion of its own.
-float2 PSModelMotion(PwFullscreenVertex input) : SV_Target0
+//
+// Why a motion-texture texel (position: its centre) with the chain `acc` gets that marker, the first test that
+// fails: 0 none (the chain is kept), 1 the chain ends off screen, 2 the depth test, 3 the colour gate, 4 a
+// non-finite chain. `colour` says when the colour gate may mark: 0 always (today), 1 never, 2 only where the
+// depth mismatch is at least the tolerance (half the depth test's threshold).
+uint PwTMarkerTest(float2 position, float2 acc, uint colour)
 {
-    float2 acc = PwTAccPrev.Load(int3(int2(input.position.xy), 0));
-    const float2 none = float2(4.0 * PwTMotionTex.x, 0.0);
-    if (any(!isfinite(acc))) return none;
-    float2 nativePixel = (input.position.xy - PwTMotionRect.xy) / PwTMotionRect.zw * PwTNative.xy;
+    if (any(!isfinite(acc))) return 4;
+    float2 nativePixel = (position - PwTMotionRect.xy) / PwTMotionRect.zw * PwTNative.xy;
     float2 qN = nativePixel + acc * PwTNative.xy / PwTMotionRect.zw;
-    if (any(qN < 0.0) || any(qN >= PwTNative.xy)) return none;
+    if (any(qN < 0.0) || any(qN >= PwTNative.xy)) return 1;
     float dc = PwTDepth.Load(int3(PwTRectTexel(nativePixel, PwTDepthRect), 0));
-    if (PwTDepthMismatchAround(PwTExpectedDepth(dc, nativePixel), qN) > 2.0 * PwTParams.w) return none;
-    if (PwTTune.x > 0.0)
+    float mismatch = PwTDepthMismatchAround(PwTExpectedDepth(dc, nativePixel), qN);
+    if (mismatch > 2.0 * PwTParams.w) return 2;
+    if (PwTTune.x > 0.0 && colour != 1 && (colour == 0 || mismatch >= PwTParams.w))
     {
         float3 c = PwTLoadFrame(PwTColor, int3(PwTRectTexel(nativePixel, PwTColorRect), 0)).rgb;
         float3 cf = PwTLoadFrame(PwTColorF, int3(PwTRectTexel(qN, PwTColorRect), 0)).rgb;
-        if (PwTColourGate(c, cf, PwTTune.x) <= 0.05) return none;
+        if (PwTColourGate(c, cf, PwTTune.x) <= 0.05) return 3;
     }
-    return acc;
+    return 0;
+}
+
+// Rules 3/4 in two passes: MarkerFail stores every texel's base verdict (PwTMarkerTest, 0..4) once, here at t1, and
+// ModelMotion / MarkerReason (PwTParams.x = 1) read their own and their neighbours' from it instead of running up to 26
+// tests per failing texel. PwTParams.x = 0 (rules 0-2, or no MarkerFail binary): every test inline. Same decisions.
+Texture2D<uint> PwTMarkerFail : register(t1);
+
+uint PwTMarkerColour()
+{
+    uint rule = (uint) PwTParams.z;
+    return rule > 2 ? rule - 2 : rule;
+}
+
+// The base verdict of the texel n (its centre, its own chain) under the rule's colour test.
+uint PwTMarkerBase(int2 n, uint colour)
+{
+    uint base;
+    [branch] if (PwTParams.x > 0.5) base = PwTMarkerFail.Load(int3(n, 0));
+    else base = PwTMarkerTest(float2(n) + 0.5, PwTAccPrev.Load(int3(n, 0)), colour);
+    return base;
+}
+
+// The marker's final verdict under DebugTemporalMarkerRule (PwTParams.z on these two passes): 0 today's rule;
+// 1 the colour gate never marks; 2 it marks only with a depth hint (see PwTMarkerTest); 3 and 4 = 1 and 2, and
+// a failing texel is marked only where at least PwTParams.y (DebugTemporalMarkerNeighbours, 0 = 12) of the 25
+// texels of its 5x5 neighbourhood (itself included, clamped to the motion sub-rect) fail the same test - off
+// screen and non-finite chains are always marked. PSModelMotion and the diagnostic PSMarkerReason
+// (DebugTemporalDumpAcc) share it, so the reason plane reports the decision.
+uint PwTMarkerReason(float2 position, float2 acc)
+{
+    uint rule = (uint) PwTParams.z;
+    uint colour = PwTMarkerColour();
+    int2 p = int2(position);
+    uint reason;
+    [branch] if (rule > 2 && PwTParams.x > 0.5) reason = PwTMarkerFail.Load(int3(p, 0));
+    else reason = PwTMarkerTest(position, acc, colour);
+    if (rule < 3 || reason == 0 || reason == 1 || reason == 4) return reason;
+    // The host's motion sub-rect, not the texture: with dynamic resolution the texels past it are not this frame's and
+    // would test as off screen. Both routes (mask and inline) read through this clamp.
+    int2 lo = int2(PwTMotionRect.xy);
+    int2 hi = int2(PwTMotionRect.xy + PwTMotionRect.zw) - 1;
+    uint failing = 0;
+    [loop] for (int oy = -2; oy <= 2; ++oy)
+        [loop] for (int ox = -2; ox <= 2; ++ox)
+            if (PwTMarkerBase(clamp(p + int2(ox, oy), lo, hi), colour) != 0) ++failing;
+    uint need = PwTParams.y > 0.5 ? (uint) PwTParams.y : 12u;
+    return failing >= need ? reason : 0;
+}
+
+float2 PSModelMotion(PwFullscreenVertex input) : SV_Target0
+{
+    float2 acc = PwTAccPrev.Load(int3(int2(input.position.xy), 0));
+    return PwTMarkerReason(input.position.xy, acc) != 0 ? float2(4.0 * PwTMotionTex.x, 0.0) : acc;
+}
+
+uint PSMarkerReason(PwFullscreenVertex input) : SV_Target0
+{
+    return PwTMarkerReason(input.position.xy, PwTAccPrev.Load(int3(int2(input.position.xy), 0)));
+}
+
+// Rules 3/4, first of the two passes: the base verdict of this texel.
+uint PSMarkerFail(PwFullscreenVertex input) : SV_Target0
+{
+    return PwTMarkerTest(input.position.xy, PwTAccPrev.Load(int3(int2(input.position.xy), 0)), PwTMarkerColour());
 }
 
 #ifdef PW_T_EXPECT
@@ -198,11 +328,11 @@ float4 PSExpect(PwFullscreenVertex input) : SV_Target0
     float2 before = nativePixel + mv * toNative;
     if (any(before < 0.0) || any(before >= PwTNative.xy)) return float4(asfloat(0x7fc00000u), 0.0, dc, 0.0);
     // The previous frame's texel this surface was in: the best of the four around the vector's end
-    // (render-resolution, jittered guides: see PwTDepthMismatchAround).
-    float2 g = PwTToRect(before, PwTDepthRect) - 0.5;
+    // (render-resolution, jittered guides: see PwTDepthMismatchAround), through the previous frame's own sub-rect.
+    float2 g = PwTToRect(before, PW_T_DEPTHF_RECT) - 0.5;
     int2 base = int2(floor(g));
-    int2 lo = int2(PwTDepthRect.xy);
-    int2 hi = int2(PwTDepthRect.xy + PwTDepthRect.zw) - 1;
+    int2 lo = int2(PW_T_DEPTHF_RECT.xy);
+    int2 hi = int2(PW_T_DEPTHF_RECT.xy + PW_T_DEPTHF_RECT.zw) - 1;
     float best = 1e9;
     int2 bestTexel = clamp(base, lo, hi);
     float bestDepth = 0.0;
@@ -218,13 +348,13 @@ float4 PSExpect(PwFullscreenVertex input) : SV_Target0
     if (best <= 3.0 * PwTParams.w)
     {
         if (PwTParams.y < 0.5) return float4(bestDepth, 1.0, bestDepth, 0.0);
-        float2 there = (float2(bestTexel) + 0.5 - PwTDepthRect.xy) / PwTDepthRect.zw * PwTNative.xy;
+        float2 there = (float2(bestTexel) + 0.5 - PW_T_DEPTHF_RECT.xy) / PW_T_DEPTHF_RECT.zw * PwTNative.xy;
         float4 was = PwTExpect.Load(int3(PwTRectTexel(there, PwTMotionRect), 0));
         return float4(was.w > 0.5 ? asfloat(0x7fc00000u) : was.x, 1.0, !isfinite(was.z) ? dc : was.z, 0.0);
     }
     // Hidden in the previous frame: what is known about it (x) ends here, but how deep it lay in the
     // residual's frame (z) is geometry, and the neighbours of the previous frame at this depth lend it.
-    float2 beforeG = PwTToRect(before, PwTDepthRect);
+    float2 beforeG = PwTToRect(before, PW_T_DEPTHF_RECT);
     [loop] for (int ring = 1; ring <= 4; ++ring)
     {
         float r = (float) (1 << ring); // 2, 4, 8, 16 guide texels
@@ -235,7 +365,7 @@ float4 PSExpect(PwFullscreenVertex input) : SV_Target0
             int2 texel = clamp(int2(floor(beforeG + float2(cos(ang), sin(ang)) * r)), lo, hi);
             float d = PwTDepthF.Load(int3(texel, 0));
             if (PwTDepthMismatch(dc, d) > 3.0 * PwTParams.w) continue;
-            float2 there = (float2(texel) + 0.5 - PwTDepthRect.xy) / PwTDepthRect.zw * PwTNative.xy;
+            float2 there = (float2(texel) + 0.5 - PW_T_DEPTHF_RECT.xy) / PW_T_DEPTHF_RECT.zw * PwTNative.xy;
             float z = PwTParams.y < 0.5 ? d : PwTExpect.Load(int3(PwTRectTexel(there, PwTMotionRect), 0)).z;
             if (!isfinite(z)) continue;
             sum += z; n += 1.0;

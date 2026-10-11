@@ -1,3 +1,4 @@
+#include "core/gpu/descriptor_pool.h"
 #include "core/gpu/host_list.h"
 #include "core/frame/model_passes.h"
 #include "core/frame/codec_frame.h"
@@ -136,7 +137,7 @@ int TryTemporalRoute(FeatureState &st, ID3D12GraphicsCommandList *cmd,
     const bool modelGridCarry = st.modelResolution && st.warped && st.temporal &&
         !PlanTemporal(st, frame.hostReset != 0 || st.forcedReset).full;
     if ((!st.warped || modelGridCarry) && !st.disabled && effectiveMode != 0 && effectiveMode != 3) {
-        const int handled = NativeTemporalEvaluate(st, cmd, inputs, frame);
+        const int handled = NativeTemporalEvaluate(st, cmd, inputs, frame, effectiveMode);
         if (handled != kNotHandled) {
             if (handled == OFPS_S_MODEL_NEXT_FRAME)
                 return CreationFrame(st, cmd, frame, result);
@@ -161,7 +162,7 @@ TemporalPlan PlanTemporal(FeatureState &st, bool hostReset)
 
 ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, const OfpsResource &motion,
                                                  const OfpsResource &depth, float mvScaleX, float mvScaleY,
-                                                 bool depthInverted, bool hostModelGrid) {
+                                                 bool depthInverted, bool hostModelGrid, int effectiveMode) {
     ofps::core::temporal::FrameInputs t;
     const auto& diagnostics = Ctx().temporalDiagnostics;
     const auto& profile = Ctx().frameProfile;
@@ -212,11 +213,29 @@ ofps::core::temporal::FrameInputs TemporalInputs(const OfpsResource &color, cons
     // cadence and three frames - long enough that the model's new opinion of the whole picture is not
     // a click, short enough that the picture is not held back by a residual two passes old.
     t.expectedDepth = !Ctx().diag.temporalNoExpect;
+    const auto marker = ModelMarkerSettings();
+    t.markerRule = marker.rule;
+    t.markerNeighbours = marker.neighbours;
     t.cells = !Ctx().diag.temporalNoCells;
+    t.skyField = Ctx().temporal.skyField; // TemporalSkyField (2026.10.2)
+    t.allowSky = !ofps::core::gpu::NonBlockingAcquire(); // a menu evaluation runs in the non-blocking scope: no sky policy
     const int every = std::clamp(Ctx().temporal.every, 2, 8);
     t.phaseInFrames = Ctx().diag.temporalPhaseIn >= 0 ? static_cast<std::uint32_t>(Ctx().diag.temporalPhaseIn)
                                                       : static_cast<std::uint32_t>(std::min(every - 1, 3));
+    ofps::core::temporal::ApplyCarryProbe(t, effectiveMode, Ctx().diag.temporalCarryProbe, Ctx().diag.temporalDumpAccFrom);
+    // TemporalChainRule (chain_rule.h): the main chain is every machine's (the oracle overrides it), the carry chain the shown one's
+    const auto chains = ofps::core::temporal::ResolveChainRules(Ctx().temporal.chainRule, Ctx().diag.temporalChainRule,
+                                                                Ctx().diag.temporalCarryChainRule);
+    t.chainRule = chains.main;
+    t.carryChainRule = chains.carry;
     return t;
+}
+
+ofps::core::temporal::ModelMarker ModelMarkerSettings()
+{
+    const auto &d = Ctx().diag;
+    return ofps::core::temporal::ResolveModelMarker(Ctx().temporal.modelMarker, d.temporalMarkerRule, d.temporalMarkerNeighbours,
+                                                    d.temporalNoModelMotion, d.temporalNoBackgroundModelMotion);
 }
 
 bool TemporalExhausted(FeatureState &st)
@@ -312,6 +331,7 @@ int NativeTemporalBody(NativeTemporal &n)
     if (accumulate && !n.full) {
         n.stage = StageTemporalAccumulate;
         st.temporal->RecordAccumulate(cmd, n.tin);
+        TemporalAccDumpRecord(st, cmd, n.tin, false); // DebugTemporalDumpAccFrom: the chain of a carried frame in the window
     }
     if (!n.full) {
         n.stage = StageTemporalReproject;
@@ -333,7 +353,7 @@ int NativeTemporalBody(NativeTemporal &n)
     }
     if (accumulate) {
         n.stage = StageTemporalAccumulate;
-        st.temporal->RecordAccumulate(cmd, n.tin);
+        st.temporal->RecordAccumulate(cmd, ofps::core::temporal::FullPassInputs(n.tin));
     }
     ModelGridInputs(st, codec, n.frame, n.inputs);
     n.stage = StageParamsWrite;
@@ -342,8 +362,9 @@ int NativeTemporalBody(NativeTemporal &n)
         // where the chain does not end on the pixel's own surface in the residual's frame, hand the
         // model a vector that leaves the picture instead - there is no history for it there.
         ID3D12Resource *vectors = st.temporal->Acc();
-        if (!Ctx().diag.temporalNoModelMotion && st.temporal->ModelMv() != nullptr) {
+        if (ModelMarkerSettings().sync && st.temporal->ModelMv() != nullptr) {
             st.temporal->RecordModelMotion(cmd, n.tin);
+            TemporalAccDumpRecord(st, cmd, n.tin, true); // DebugTemporalDumpAcc: a side copy of what the model gets
             vectors = st.temporal->ModelMv();
         }
         n.inputs.motion.res = vectors;
@@ -354,6 +375,7 @@ int NativeTemporalBody(NativeTemporal &n)
         // model input grid when the host codec changes resolution.
         n.inputs.mvScaleX = static_cast<float>(codec.modelColor.rect.w) / n.frame.color.rect.w;
         n.inputs.mvScaleY = static_cast<float>(codec.modelColor.rect.h) / n.frame.color.rect.h;
+        SetMotionAnchor(st, st.temporal->ChainFrame());
     }
     n.stage = StageModel;
     TimingBegin(st, cmd);
@@ -398,7 +420,8 @@ int NativeTemporalGuarded(NativeTemporal &n)
     }
 }
 
-int NativeTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs, const OfpsFrameInputs &frame)
+int NativeTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, const OfpsModelInputs &inputs, const OfpsFrameInputs &frame,
+                           int effectiveMode)
 {
     ID3D12Resource *color = inputs.color.res;
     ID3D12Resource *depth = inputs.depth.res;
@@ -432,7 +455,7 @@ int NativeTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, con
     float mvScaleX = inputs.mvScaleX, mvScaleY = inputs.mvScaleY;
     if (!std::isfinite(mvScaleX) || mvScaleX == 0.0f) mvScaleX = 1.0f;
     if (!std::isfinite(mvScaleY) || mvScaleY == 0.0f) mvScaleY = 1.0f;
-    n.tin = TemporalInputs(inputs.color, inputs.motion, inputs.depth, mvScaleX, mvScaleY, depthInverted != 0, st.modelResolution);
+    n.tin = TemporalInputs(inputs.color, inputs.motion, inputs.depth, mvScaleX, mvScaleY, depthInverted != 0, st.modelResolution, effectiveMode);
     // 26.26: the depth guide's resting state and its barrier subresource, as everywhere else the machine
     // touches the host's depth. Without them a planar depth-stencil host (D24S8/D32S8) took whole-resource
     // barriers and copies in the native temporal path.
@@ -444,7 +467,10 @@ int NativeTemporalEvaluate(FeatureState &st, ID3D12GraphicsCommandList *cmd, con
         FallbackOutput(st, cmd, frame.color, frame.output, &n.tin, "temporal descriptor pool exhausted");
         return OFPS_OK;
     }
-    if (result == OFPS_OK && !plan.full) TemporalDebugReadback(st, cmd, n.tin);
+    if (result == OFPS_OK && !plan.full) {
+        TemporalDebugReadback(st, cmd, n.tin);
+        TemporalAccDumpPoll(st);
+    }
     if (result == kCrashed) {
         st.temporalDisabled = true;
         TemporalReason(st, "exception 0x%08lX in stage %s; temporal mode disabled for this feature", Ctx().crash.code, StageName(Ctx().crash.stage));

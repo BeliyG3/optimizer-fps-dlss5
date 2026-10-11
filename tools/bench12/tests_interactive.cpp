@@ -28,6 +28,8 @@ void InteractiveChecks(const std::filesystem::path &directory)
     Require(EncodeSettings(round)==text,"Complete settings round trip");
     auto path=directory/"test_settings.json"; SaveSettings(path,s);
     Require(EncodeSettings(LoadSettings(path))==text,"Settings disk round trip");
+    s.options.exposureSpeedUp=4.5f; s.options.exposureSpeedDown=0.75f; SaveSettings(path,s);
+    Require(Near(LoadSettings(path).options.exposureSpeedUp,4.5f) && Near(LoadSettings(path).options.exposureSpeedDown,0.75f),"Settings keep the exposure speeds");
     s.options.exposure=0.22f; SaveSettings(path,s);
     Require(Near(LoadSettings(path).options.exposure,0.22f),"Atomic settings replacement");
     std::filesystem::remove(path);

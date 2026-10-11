@@ -36,6 +36,7 @@ struct AsyncJob final : public ofps::core::gpu::Disposable {
     ID3D12GraphicsCommandList *lists[kSlots] = {};
     std::uint64_t slotJob[kSlots] = {};
     ID3D12Resource *colorBg = nullptr, *depthBg = nullptr, *mvBg = nullptr, *outputBg[2] = {};
+    OfpsRect depthBgRect{}; // the sub-rect the kick that filled depthBg described its depth with (w = 0: none yet)
     // UI and codec resources belong to the same fenced job as the primary inputs.
     ID3D12Resource *extraBg[7] = {};
     D3D12_RESOURCE_STATES extraState[7] = {};

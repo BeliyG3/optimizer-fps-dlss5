@@ -37,6 +37,9 @@ struct EvalContext {
     bool accumulate;         // record the motion accumulation this frame
     bool motionIsAcc;        // Pack reads the accumulated displacement instead of the host's motion
     bool modelMotion;        // 26.28: that displacement is the tested one (PSModelMotion), recorded after the accumulation
+    // The frame the model's motion reaches back to when it is an accumulated chain (Machine::ChainFrame or
+    // PendingFrame); 0 for the host's own one-frame vectors. WarpedBody names it for the evaluate (model_passes.h).
+    std::uint64_t motionAnchor = 0;
     ofps::core::temporal::FrameInputs tin;
     // Temporal base (stage 26.3): after Pack, unpack the packed colour without the model into
     // `baseTarget` (native, output format) and base the residual / reprojection on it.

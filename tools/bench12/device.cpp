@@ -1,6 +1,8 @@
 #include "device.h"
 #include <d3d12sdklayers.h>
+#include <chrono>
 #include <cstring>
+#include "startup_profile.h"
 
 namespace {
 // Scripted runs open on a secondary monitor when there is one, so the bench does not cover the owner's work.
@@ -60,6 +62,7 @@ Device::Device(unsigned w, unsigned h, bool debug, bool vsync, bool interactive)
         if(FAILED(candidate->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL,&model,sizeof(model))) || model.HighestShaderModel<D3D_SHADER_MODEL_6_5) continue;
         gpu=candidate; std::printf("[info] adapter: %ls\n",desc.Description); break;
     }
+    StartupMark("DXGI factory, D3D12 device (ReShade, the add-on)");
     if(!gpu) throw std::runtime_error("Requires a hardware D3D12 feature-level 12_1 device with DXR tier 1.1 and shader model 6.5");
     D3D12_COMMAND_QUEUE_DESC q{}; q.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
     Check(gpu->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"CreateCommandQueue");
@@ -90,6 +93,7 @@ Device::Device(unsigned w, unsigned h, bool debug, bool vsync, bool interactive)
     Check(list->Close(),"Close initial list"); Check(gpu->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"CreateFence");
     event=CreateEventW(nullptr,FALSE,FALSE,nullptr); if(!event) throw std::runtime_error("CreateEvent failed");
     ShowWindow(window,interactive ? SW_SHOW : SW_SHOWNOACTIVATE); PrintMessages(); // scripted runs never take the focus
+    StartupMark("queue, window, swap chain, heaps");
 }
 Device::~Device()
 {
@@ -114,7 +118,9 @@ void Device::Submit(bool present)
     if(present && onPresenting) onPresenting(presentingContext);
     // Retire even if Present fails, so transient resources cannot be released while in flight.
     HRESULT hr=present ? swap->Present(vsyncEnabled ? 1u : 0u,!vsyncEnabled && tearingSupported ? DXGI_PRESENT_ALLOW_TEARING : 0u) : S_OK;
+    const auto waitStart=std::chrono::steady_clock::now();
     Wait(); PrintMessages(); Check(hr,"Present");
+    if(present) lastWaitMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-waitStart).count();
 }
 bool Device::Pump()
 {
@@ -167,11 +173,11 @@ ComPtr<ID3D12Resource> Device::Buffer(UINT64 bytes, D3D12_HEAP_TYPE type, D3D12_
     d.MipLevels=1; d.SampleDesc.Count=1; d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR; d.Flags=flags;
     ComPtr<ID3D12Resource> r; Check(gpu->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,state,nullptr,IID_PPV_ARGS(&r)),"Create buffer"); return r;
 }
-ComPtr<ID3D12Resource> Device::UploadBuffer(const void *data, UINT64 bytes)
+ComPtr<ID3D12Resource> Device::UploadBuffer(const void *data, UINT64 bytes, D3D12_RESOURCE_FLAGS flags)
 {
     auto upload=Buffer(bytes,D3D12_HEAP_TYPE_UPLOAD,D3D12_RESOURCE_STATE_GENERIC_READ);
     void *p=nullptr; D3D12_RANGE empty{0,0}; Check(upload->Map(0,&empty,&p),"Map upload"); std::memcpy(p,data,size_t(bytes)); upload->Unmap(0,nullptr);
-    auto result=Buffer(bytes,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST);
+    auto result=Buffer(bytes,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_COPY_DEST,flags);
     Begin(); list->CopyBufferRegion(result.Get(),0,upload.Get(),0,bytes);
     Transition(list.Get(),result.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE); Submit(); return result;
 }
